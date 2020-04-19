@@ -18,11 +18,17 @@
  */
 package org.apache.pulsar.protocols.grpc;
 
+import org.apache.pulsar.common.api.proto.PulsarApi;
+import org.apache.pulsar.common.api.proto.PulsarApi.CommandSubscribe.SubType;
+import org.apache.pulsar.common.api.proto.PulsarApi.CommandSubscribe.InitialPosition;
+import org.apache.pulsar.protocols.grpc.api.CommandSubscribe;
+import org.apache.pulsar.protocols.grpc.api.KeySharedMeta;
+import org.apache.pulsar.protocols.grpc.api.KeySharedMode;
 import org.apache.pulsar.protocols.grpc.api.ServerError;
 
 public class ServerErrors {
 
-    public static ServerError convert(org.apache.pulsar.common.api.proto.PulsarApi.ServerError serverError) {
+    public static ServerError convertServerError(PulsarApi.ServerError serverError) {
         switch(serverError) {
             case MetadataError:
                 return ServerError.MetadataError;
@@ -70,5 +76,53 @@ public class ServerErrors {
             default:
                 return ServerError.UnknownError;
         }
+    }
+
+    public static SubType convertSubscribeSubType(CommandSubscribe.SubType subType) {
+        switch (subType) {
+            case Shared:
+                return SubType.Shared;
+            case Failover:
+                return SubType.Failover;
+            case Exclusive:
+                return SubType.Exclusive;
+            case Key_Shared:
+                return SubType.Key_Shared;
+            default:
+                throw new IllegalStateException("Unexpected subscribe subtype: " + subType);
+        }
+    }
+
+    public static InitialPosition convertSubscribeInitialPosition(CommandSubscribe.InitialPosition initialPosition) {
+        switch (initialPosition) {
+            case Latest:
+                return InitialPosition.Latest;
+            case Earliest:
+                return InitialPosition.Earliest;
+            default:
+                throw new IllegalStateException("Unexpected subscribe initial position : " + initialPosition);
+        }
+    }
+
+    public static PulsarApi.KeySharedMode convertKeySharedMode(KeySharedMode mode) {
+        switch (mode) {
+            case STICKY:
+                return PulsarApi.KeySharedMode.STICKY;
+            case AUTO_SPLIT:
+                return PulsarApi.KeySharedMode.AUTO_SPLIT;
+            default:
+                throw new IllegalStateException("Unexpected key shared mode: " + mode);
+        }
+    }
+
+    public static PulsarApi.KeySharedMeta convertKeySharedMeta(KeySharedMeta meta) {
+        PulsarApi.KeySharedMeta.Builder builder = PulsarApi.KeySharedMeta.newBuilder()
+                .setKeySharedMode(convertKeySharedMode(meta.getKeySharedMode()));
+        meta.getHashRangesList().stream()
+                .map(intRange -> PulsarApi.IntRange.newBuilder()
+                        .setStart(intRange.getStart())
+                        .setEnd(intRange.getEnd()))
+                .forEach(builder::addHashRanges);
+        return builder.build();
     }
 }

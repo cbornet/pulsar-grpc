@@ -24,17 +24,21 @@ import io.grpc.stub.StreamObserver;
 import io.netty.channel.EventLoopGroup;
 import org.apache.pulsar.broker.ServiceConfiguration;
 import org.apache.pulsar.broker.authentication.AuthenticationDataSource;
-import org.apache.pulsar.broker.service.BrokerService;
-import org.apache.pulsar.broker.service.BrokerServiceException;
-import org.apache.pulsar.broker.service.Producer;
-import org.apache.pulsar.broker.service.Topic;
+import org.apache.pulsar.broker.service.*;
 import org.apache.pulsar.broker.service.schema.SchemaRegistryService;
 import org.apache.pulsar.broker.service.schema.exceptions.IncompatibleSchemaException;
+import org.apache.pulsar.client.impl.BatchMessageIdImpl;
+import org.apache.pulsar.client.impl.MessageIdImpl;
+import org.apache.pulsar.common.api.proto.PulsarApi;
+import org.apache.pulsar.common.naming.Metadata;
 import org.apache.pulsar.common.naming.TopicName;
 import org.apache.pulsar.common.policies.data.BacklogQuota;
 import org.apache.pulsar.common.protocol.schema.SchemaData;
 import org.apache.pulsar.common.protocol.schema.SchemaInfoUtil;
 import org.apache.pulsar.common.protocol.schema.SchemaVersion;
+import org.apache.pulsar.common.util.FutureUtil;
+import org.apache.pulsar.protocols.grpc.api.CommandSubscribe.SubType;
+import org.apache.pulsar.protocols.grpc.api.CommandSubscribe.InitialPosition;
 import org.apache.pulsar.protocols.grpc.api.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -46,6 +50,7 @@ import java.util.concurrent.Semaphore;
 
 import static org.apache.pulsar.protocols.grpc.Commands.newStatusException;
 import static org.apache.pulsar.protocols.grpc.Constants.*;
+import static org.apache.pulsar.protocols.grpc.ServerErrors.*;
 import static org.apache.pulsar.protocols.grpc.TopicLookup.lookupTopicAsync;
 
 public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
@@ -182,6 +187,7 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
             return NoOpStreamObserver.create();
         }
 
+        // TODO: add authorization
         CompletableFuture<Producer> producerFuture = new CompletableFuture<>();
         service.getOrCreateTopic(topicName.toString()).thenAccept((Topic topik) -> {
             // Before creating producer, check if backlog quota exceeded on topic
@@ -213,7 +219,7 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
 
             schemaVersionFuture.exceptionally(exception -> {
                 responseObserver.onError(newStatusException(Status.FAILED_PRECONDITION, exception,
-                        ServerErrors.convert(BrokerServiceException.getClientErrorCode(exception))));
+                        convertServerError(BrokerServiceException.getClientErrorCode(exception))));
                 return null;
             });
 
@@ -232,7 +238,7 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
                     log.error("[{}] Failed to add producer to topic {}: {}", remoteAddress, topicName,
                             ise.getMessage());
                     responseObserver.onError(newStatusException(Status.FAILED_PRECONDITION, ise,
-                            ServerErrors.convert(BrokerServiceException.getClientErrorCode(ise))));
+                            convertServerError(BrokerServiceException.getClientErrorCode(ise))));
                     producerFuture.completeExceptionally(ise);
                 }
             });
@@ -245,7 +251,7 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
 
             if (producerFuture.completeExceptionally(exception)) {
                 responseObserver.onError(newStatusException(Status.FAILED_PRECONDITION, cause,
-                        ServerErrors.convert(BrokerServiceException.getClientErrorCode(cause))));
+                        convertServerError(BrokerServiceException.getClientErrorCode(cause))));
             }
             return null;
         });
@@ -269,6 +275,194 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
             @Override
             public void onCompleted() {
                 closeProduce(producerFuture, remoteAddress);
+            }
+        };
+    }
+
+    @Override
+    public StreamObserver<ConsumeInput> consume(StreamObserver<ConsumeOutput> responseObserver) {
+        final CommandSubscribe subscribe = CONSUMER_PARAMS_CTX_KEY.get();
+        final String authRole = AUTH_ROLE_CTX_KEY.get();
+        final AuthenticationDataSource authenticationData = AUTH_DATA_CTX_KEY.get();
+        final SocketAddress remoteAddress = REMOTE_ADDRESS_CTX_KEY.get();
+
+        if (subscribe == null) {
+            responseObserver.onError(Status.INVALID_ARGUMENT.withDescription("Missing CommandSubscribe header").asException());
+            return NoOpStreamObserver.create();
+        }
+
+        final long requestId = subscribe.getRequestId();
+        final long consumerId = subscribe.getConsumerId();
+
+        TopicName topicName;
+        try {
+            topicName = TopicName.get(subscribe.getTopic());
+        } catch (Exception e) {
+            if (log.isDebugEnabled()) {
+                log.debug("[{}] Failed to parse topic name '{}'", remoteAddress, subscribe.getTopic(), e);
+            }
+            responseObserver.onError(newStatusException(Status.INVALID_ARGUMENT,
+                    "Invalid topic name: " + e.getMessage(), e, ServerError.InvalidTopicName));
+            return NoOpStreamObserver.create();
+        }
+
+        final String subscriptionName = subscribe.getSubscription();
+        final SubType subType = subscribe.getSubType();
+        final String consumerName = subscribe.getConsumerName();
+        final boolean isDurable = subscribe.getDurable();
+        final MessageIdImpl startMessageId = subscribe.hasStartMessageId() ? new BatchMessageIdImpl(
+                subscribe.getStartMessageId().getLedgerId(), subscribe.getStartMessageId().getEntryId(),
+                subscribe.getStartMessageId().getPartition(), subscribe.getStartMessageId().getBatchIndex())
+                : null;
+        final int priorityLevel = subscribe.hasPriorityLevel() ? subscribe.getPriorityLevel() : 0;
+        final boolean readCompacted = subscribe.getReadCompacted();
+        final Map<String, String> metadata = subscribe.getMetadataMap();
+        final InitialPosition initialPosition = subscribe.getInitialPosition();
+        final long startMessageRollbackDurationSec = subscribe.hasStartMessageRollbackDurationSec()
+                ? subscribe.getStartMessageRollbackDurationSec()
+                : -1;
+        final SchemaData schema = subscribe.hasSchema() ? getSchema(subscribe.getSchema()) : null;
+        final boolean isReplicated = subscribe.hasReplicateSubscriptionState() && subscribe.getReplicateSubscriptionState();
+        final boolean forceTopicCreation = subscribe.getForceTopicCreation();
+        final KeySharedMeta keySharedMeta = subscribe.hasKeySharedMeta() ? subscribe.getKeySharedMeta() : null;
+
+        GrpcConsumerCnx cnx = new GrpcConsumerCnx(service, remoteAddress, authRole, authenticationData, responseObserver);
+
+        CompletableFuture<Boolean> authorizationFuture;
+        if (service.isAuthorizationEnabled()) {
+            authorizationFuture = service.getAuthorizationService().canConsumeAsync(topicName, authRole, authenticationData,
+                    subscriptionName);
+        } else {
+            authorizationFuture = CompletableFuture.completedFuture(true);
+        }
+
+        authorizationFuture.thenApply(isAuthorized -> {
+            if (isAuthorized) {
+                if (log.isDebugEnabled()) {
+                    log.debug("[{}] Client is authorized to subscribe with role {}", remoteAddress, authRole);
+                }
+
+                log.info("[{}] Subscribing on topic {} / {}", remoteAddress, topicName, subscriptionName);
+                try {
+                    Metadata.validateMetadata(metadata);
+                } catch (IllegalArgumentException iae) {
+                    responseObserver.onError(
+                            newStatusException(Status.INVALID_ARGUMENT, iae, ServerError.MetadataError));
+                    return null;
+                }
+                CompletableFuture<Consumer> consumerFuture = new CompletableFuture<>();
+
+
+                boolean createTopicIfDoesNotExist = forceTopicCreation
+                        && service.isAllowAutoTopicCreation(topicName.toString());
+
+                service.getTopic(topicName.toString(), createTopicIfDoesNotExist)
+                        .thenCompose(optTopic -> {
+                            if (!optTopic.isPresent()) {
+                                return FutureUtil
+                                        .failedFuture(new BrokerServiceException.TopicNotFoundException("Topic does not exist"));
+                            }
+
+                            Topic topic = optTopic.get();
+
+                            boolean rejectSubscriptionIfDoesNotExist = isDurable
+                                    && !service.isAllowAutoSubscriptionCreation(topicName.toString())
+                                    && !topic.getSubscriptions().containsKey(subscriptionName);
+
+                            if (rejectSubscriptionIfDoesNotExist) {
+                                return FutureUtil
+                                        .failedFuture(new BrokerServiceException.SubscriptionNotFoundException("Subscription does not exist"));
+                            }
+
+                            if (schema != null) {
+                                return topic.addSchemaIfIdleOrCheckCompatible(schema)
+                                        .thenCompose(v -> topic.subscribe(cnx, subscriptionName, consumerId,
+                                                convertSubscribeSubType(subType), priorityLevel,
+                                                consumerName, isDurable, startMessageId, metadata, readCompacted,
+                                                convertSubscribeInitialPosition(initialPosition),
+                                                startMessageRollbackDurationSec, isReplicated,
+                                                convertKeySharedMeta(keySharedMeta)));
+                            } else {
+                                return topic.subscribe(cnx, subscriptionName, consumerId,
+                                        convertSubscribeSubType(subType), priorityLevel, consumerName, isDurable,
+                                        startMessageId, metadata, readCompacted,
+                                        convertSubscribeInitialPosition(initialPosition),
+                                        startMessageRollbackDurationSec, isReplicated,
+                                        convertKeySharedMeta(keySharedMeta));
+                            }
+                        })
+                        .thenAccept(consumer -> {
+                            if (consumerFuture.complete(consumer)) {
+                                log.info("[{}] Created subscription on topic {} / {}", remoteAddress, topicName,
+                                        subscriptionName);
+                            } else {
+                                // The consumer future was completed before by a close command
+                                try {
+                                    consumer.close();
+                                    log.info("[{}] Cleared consumer created after timeout on client side {}",
+                                            remoteAddress, consumer);
+                                } catch (BrokerServiceException e) {
+                                    log.warn(
+                                            "[{}] Error closing consumer created after timeout on client side {}: {}",
+                                            remoteAddress, consumer, e.getMessage());
+                                }
+                            }
+
+                        }) //
+                        .exceptionally(exception -> {
+                            if (exception.getCause() instanceof BrokerServiceException.ConsumerBusyException) {
+                                if (log.isDebugEnabled()) {
+                                    log.debug(
+                                            "[{}][{}][{}] Failed to create consumer because exclusive consumer is already connected: {}",
+                                            remoteAddress, topicName, subscriptionName,
+                                            exception.getCause().getMessage());
+                                }
+                            } else if (exception.getCause() instanceof BrokerServiceException) {
+                                log.warn("[{}][{}][{}] Failed to create consumer: {}", remoteAddress, topicName,
+                                        subscriptionName, exception.getCause().getMessage());
+                            } else {
+                                log.warn("[{}][{}][{}] Failed to create consumer: {}", remoteAddress, topicName,
+                                        subscriptionName, exception.getCause().getMessage(), exception);
+                            }
+
+                            // If client timed out, the future would have been completed by subsequent close.
+                            // Send error
+                            // back to client, only if not completed already.
+                            if (consumerFuture.completeExceptionally(exception)) {
+                                responseObserver.onError(newStatusException(Status.FAILED_PRECONDITION, exception.getCause(),
+                                        convertServerError(BrokerServiceException.getClientErrorCode(exception))));
+                            }
+
+                            return null;
+
+                        });
+            } else {
+                String msg = "Client is not authorized to subscribe";
+                log.warn("[{}] {} with role {}", remoteAddress, msg, authRole);
+                responseObserver.onError(newStatusException(Status.PERMISSION_DENIED, msg, null, ServerError.AuthorizationError));
+            }
+            return null;
+        }).exceptionally(e -> {
+            String msg = String.format("[%s] %s with role %s", remoteAddress, e.getMessage(), authRole);
+            log.warn(msg);
+            responseObserver.onError(newStatusException(Status.PERMISSION_DENIED, msg, e, ServerError.AuthorizationError));
+            return null;
+        });
+
+        return new StreamObserver<ConsumeInput>() {
+            @Override
+            public void onNext(ConsumeInput consumeInput) {
+
+            }
+
+            @Override
+            public void onError(Throwable throwable) {
+
+            }
+
+            @Override
+            public void onCompleted() {
+
             }
         };
     }

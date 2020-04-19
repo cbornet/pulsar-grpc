@@ -39,9 +39,6 @@ import java.util.List;
 import java.util.concurrent.CompletableFuture;
 
 public class GrpcCnx implements ServerCnx {
-
-    private static final Logger log = LoggerFactory.getLogger(GrpcCnx.class);
-
     private final BrokerService service;
     private final SocketAddress remoteAddress;
     private final String authRole;
@@ -75,11 +72,6 @@ public class GrpcCnx implements ServerCnx {
     }
 
     @Override
-    public String getClientVersion() {
-        return null;
-    }
-
-    @Override
     public SocketAddress clientAddress() {
         return remoteAddress;
     }
@@ -90,18 +82,8 @@ public class GrpcCnx implements ServerCnx {
     }
 
     @Override
-    public boolean isBatchMessageCompatibleVersion() {
-        return true;
-    }
-
-    @Override
     public String getRole() {
         return authRole;
-    }
-
-    @Override
-    public boolean isActive() {
-        return true;
     }
 
     @Override
@@ -121,19 +103,23 @@ public class GrpcCnx implements ServerCnx {
 
     @Override
     public long getMessagePublishBufferSize() {
+        // TODO: implement
         return Long.MAX_VALUE;
     }
 
     @Override
     public void cancelPublishRateLimiting() {
+        // TODO: implement
     }
 
     @Override
     public void cancelPublishBufferLimiting() {
+        // TODO: implement
     }
 
     @Override
     public void disableCnxAutoRead() {
+        // TODO: implement
     }
 
     public void handleSend(CommandSend send, Producer producer) {
@@ -236,7 +222,7 @@ public class GrpcCnx implements ServerCnx {
 
     @Override
     public void sendProducerError(long producerId, long sequenceId, org.apache.pulsar.common.api.proto.PulsarApi.ServerError serverError, String message) {
-        responseObserver.onNext(Commands.newSendError(sequenceId, ServerErrors.convert(serverError), message));
+        responseObserver.onNext(Commands.newSendError(sequenceId, ServerErrors.convertServerError(serverError), message));
     }
 
     @Override
@@ -245,47 +231,7 @@ public class GrpcCnx implements ServerCnx {
     }
 
     @Override
-    public void removedConsumer(Consumer consumer) {
-
-    }
-
-    @Override
-    public void closeConsumer(Consumer consumer) {
-
-    }
-
-    @Override
-    public boolean isWritable() {
-        return false;
-    }
-
-    @Override
     public void sendProducerReceipt(long producerId, long sequenceId, long highestSequenceId, long ledgerId, long entryId) {
         responseObserver.onNext(Commands.newSendReceipt(sequenceId, highestSequenceId, ledgerId, entryId));
-    }
-
-    @Override
-    public void sendActiveConsumerChange(long consumerId, boolean isActive) {
-
-    }
-
-    @Override
-    public void sendSuccess(long requestId) {
-
-    }
-
-    @Override
-    public void sendError(long requestId, PulsarApi.ServerError error, String message) {
-
-    }
-
-    @Override
-    public void sendReachedEndOfTopic(long consumerId) {
-
-    }
-
-    @Override
-    public CompletableFuture<Void> sendMessagesToConsumer(long consumerId, String topicName, Subscription subscription, int partitionIdx, List<Entry> entries, EntryBatchSizes batchSizes, RedeliveryTracker redeliveryTracker) {
-        return null;
     }
 }
