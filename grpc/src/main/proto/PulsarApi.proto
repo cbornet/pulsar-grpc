@@ -228,7 +228,7 @@ message AuthRoleTokenInfo {
 
 message AuthRoleToken {
     required AuthRoleTokenInfo roleInfo  = 1;
-    required bytes signature         = 2;
+    required bytes signature             = 2;
 }
 
 enum KeySharedMode {
@@ -238,7 +238,7 @@ enum KeySharedMode {
 
 message KeySharedMeta {
     required KeySharedMode keySharedMode = 1;
-    repeated IntRange hashRanges         = 3;
+    repeated IntRange hashRanges         = 2;
 }
 
 message CommandSubscribe {
@@ -252,51 +252,49 @@ message CommandSubscribe {
     required string subscription  = 2;
     required SubType subType      = 3;
 
-    required uint64 consumer_id   = 4;
-    required uint64 request_id    = 5;
-    optional string consumer_name = 6;
-    optional int32 priority_level = 7;
+    optional string consumer_name = 5;
+    optional int32 priority_level = 6;
 
     // Signal wether the subscription should be backed by a
     // durable cursor or not
-    optional bool durable         = 8 [default = true];
+    optional bool durable         = 7 [default = true];
     
     // If specified, the subscription will position the cursor
     // markd-delete position  on the particular message id and
     // will send messages from that point
-    optional MessageIdData start_message_id = 9;
+    optional MessageIdData start_message_id = 8;
 
     /// Add optional metadata key=value to this consumer
-    map<string, string>  metadata    = 10;
+    map<string, string>  metadata           = 9;
 
-    optional bool read_compacted  = 11;
+    optional bool read_compacted            = 10;
 
-    optional Schema schema        = 12;
+    optional Schema schema                  = 11;
     enum InitialPosition {
         Latest   = 0;
         Earliest = 1;
     }
     // Signal whether the subscription will initialize on latest
     // or not -- earliest
-    optional InitialPosition initialPosition = 13 [default = Latest];
+    optional InitialPosition initialPosition = 12 [default = Latest];
 
     // Mark the subscription as "replicated". Pulsar will make sure
     // to periodically sync the state of replicated subscriptions
     // across different clusters (when using geo-replication).
-    optional bool replicate_subscription_state = 14;
+    optional bool replicate_subscription_state = 13;
     
     // If true, the subscribe operation will cause a topic to be 
     // created if it does not exist already (and if topic auto-creation
     // is allowed by broker.
     // If false, the subscribe operation will fail if the topic 
     // does not exist.
-    optional bool force_topic_creation = 15 [default = true];
+    optional bool force_topic_creation = 14 [default = true];
 
     // If specified, the subscription will reset cursor's position back 
     // to specified seconds and  will send messages from that point
-    optional uint64 start_message_rollback_duration_sec = 16 [default = 0];
+    optional uint64 start_message_rollback_duration_sec = 15 [default = 0];
 
-    optional KeySharedMeta keySharedMeta = 17;
+    optional KeySharedMeta keySharedMeta = 16;
 }
 
 message CommandPartitionedTopicMetadata {
@@ -491,8 +489,9 @@ message ConsumeInput {
 
 message ConsumeOutput {
     oneof consumer_output_oneof {
-        CommandMessage message                           = 1;
-        CommandActiveConsumerChange activeConsumerChange = 2;
+        CommandSubscribeSuccess subscribeSuccess         = 1;
+        CommandMessage message                           = 2;
+        CommandActiveConsumerChange activeConsumerChange = 3;
     }
 }
 
@@ -508,6 +507,9 @@ message CommandProducerSuccess {
     // This will only be meaningful if deduplication has been enabled.
     optional int64  last_sequence_id = 2 [default = -1];
     optional bytes schema_version    = 3;
+}
+
+message CommandSubscribeSuccess {
 }
 
 message CommandError {

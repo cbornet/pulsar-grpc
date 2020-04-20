@@ -20,7 +20,11 @@ package org.apache.pulsar.protocols.grpc;
 
 import com.google.common.collect.Maps;
 import com.google.common.util.concurrent.MoreExecutors;
-import io.grpc.*;
+import io.grpc.ManagedChannel;
+import io.grpc.Metadata;
+import io.grpc.Server;
+import io.grpc.ServerInterceptors;
+import io.grpc.Status;
 import io.grpc.inprocess.InProcessChannelBuilder;
 import io.grpc.inprocess.InProcessServerBuilder;
 import io.grpc.stub.MetadataUtils;
@@ -30,13 +34,20 @@ import io.netty.buffer.Unpooled;
 import io.netty.channel.nio.NioEventLoopGroup;
 import org.apache.bookkeeper.client.PulsarMockBookKeeper;
 import org.apache.bookkeeper.common.util.OrderedExecutor;
-import org.apache.bookkeeper.mledger.*;
+import org.apache.bookkeeper.mledger.AsyncCallbacks;
+import org.apache.bookkeeper.mledger.ManagedCursor;
+import org.apache.bookkeeper.mledger.ManagedLedger;
+import org.apache.bookkeeper.mledger.ManagedLedgerConfig;
+import org.apache.bookkeeper.mledger.ManagedLedgerException;
+import org.apache.bookkeeper.mledger.ManagedLedgerFactory;
 import org.apache.bookkeeper.mledger.impl.PositionImpl;
 import org.apache.bookkeeper.util.ZkUtils;
 import org.apache.pulsar.broker.NoOpShutdownService;
 import org.apache.pulsar.broker.PulsarService;
 import org.apache.pulsar.broker.ServiceConfiguration;
 import org.apache.pulsar.broker.admin.AdminResource;
+import org.apache.pulsar.broker.authorization.AuthorizationService;
+import org.apache.pulsar.broker.authorization.PulsarAuthorizationProvider;
 import org.apache.pulsar.broker.cache.ConfigurationCacheService;
 import org.apache.pulsar.broker.cache.LocalZooKeeperCacheService;
 import org.apache.pulsar.broker.namespace.NamespaceService;
@@ -49,13 +60,22 @@ import org.apache.pulsar.broker.service.schema.DefaultSchemaRegistryService;
 import org.apache.pulsar.broker.service.schema.LongSchemaVersion;
 import org.apache.pulsar.common.api.proto.PulsarApi;
 import org.apache.pulsar.common.naming.TopicName;
+import org.apache.pulsar.common.policies.data.AuthAction;
 import org.apache.pulsar.common.policies.data.BacklogQuota;
 import org.apache.pulsar.common.policies.data.Policies;
 import org.apache.pulsar.common.protocol.Commands.ChecksumType;
 import org.apache.pulsar.common.protocol.schema.SchemaData;
 import org.apache.pulsar.common.schema.SchemaInfo;
 import org.apache.pulsar.common.schema.SchemaType;
-import org.apache.pulsar.protocols.grpc.api.*;
+import org.apache.pulsar.protocols.grpc.api.CommandProducer;
+import org.apache.pulsar.protocols.grpc.api.CommandSend;
+import org.apache.pulsar.protocols.grpc.api.CommandSubscribe;
+import org.apache.pulsar.protocols.grpc.api.CommandSubscribe.SubType;
+import org.apache.pulsar.protocols.grpc.api.ConsumeInput;
+import org.apache.pulsar.protocols.grpc.api.ConsumeOutput;
+import org.apache.pulsar.protocols.grpc.api.PulsarGrpc;
+import org.apache.pulsar.protocols.grpc.api.SendResult;
+import org.apache.pulsar.protocols.grpc.api.ServerError;
 import org.apache.pulsar.shaded.com.google.protobuf.v241.ByteString;
 import org.apache.pulsar.zookeeper.ZooKeeperCache;
 import org.apache.pulsar.zookeeper.ZooKeeperDataCache;
@@ -65,6 +85,7 @@ import org.apache.zookeeper.MockZooKeeper;
 import org.apache.zookeeper.ZooKeeper;
 import org.apache.zookeeper.data.ACL;
 import org.mockito.ArgumentCaptor;
+import org.mockito.Mockito;
 import org.mockito.invocation.InvocationOnMock;
 import org.mockito.stubbing.Answer;
 import org.slf4j.Logger;
@@ -73,17 +94,38 @@ import org.testng.annotations.AfterMethod;
 import org.testng.annotations.BeforeMethod;
 import org.testng.annotations.Test;
 
+import java.lang.reflect.Field;
 import java.nio.charset.StandardCharsets;
-import java.util.*;
-import java.util.concurrent.*;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.ForkJoinPool;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 
 import static org.apache.pulsar.broker.cache.ConfigurationCacheService.POLICIES;
+import static org.apache.pulsar.protocols.grpc.Constants.CONSUMER_PARAMS_METADATA_KEY;
 import static org.apache.pulsar.protocols.grpc.Constants.ERROR_CODE_METADATA_KEY;
 import static org.apache.pulsar.protocols.grpc.Constants.PRODUCER_PARAMS_METADATA_KEY;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.*;
-import static org.testng.Assert.*;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.matches;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.spy;
+import static org.testng.Assert.assertEquals;
+import static org.testng.Assert.assertFalse;
+import static org.testng.Assert.assertNotNull;
+import static org.testng.Assert.assertNull;
+import static org.testng.Assert.assertTrue;
 
 @Test
 public class PulsarGrpcServiceTest {
@@ -213,7 +255,7 @@ public class PulsarGrpcServiceTest {
         producerStub = MetadataUtils.attachHeaders(stub, headers);
 
         TestStreamObserver<SendResult> observer2 = TestStreamObserver.create();
-        StreamObserver<CommandSend> request2 = producerStub.produce(observer2);
+        producerStub.produce(observer2);
         assertErrorIsStatusExceptionWithServerError(observer2.waitForError(), Status.FAILED_PRECONDITION, ServerError.PersistenceError);
         assertFalse(pulsar.getBrokerService().getTopicReference(failTopicName).isPresent());
 
@@ -225,10 +267,182 @@ public class PulsarGrpcServiceTest {
     @Test(timeOut = 30000)
     public void testProduceMissingHeader() throws Exception {
         TestStreamObserver<SendResult> observer = TestStreamObserver.create();
-        StreamObserver<CommandSend> request = stub.produce(observer);
+        stub.produce(observer);
 
         Status actualStatus = Status.fromThrowable(observer.waitForError());
         assertEquals(actualStatus.getCode(), Status.Code.INVALID_ARGUMENT);
+    }
+
+    @Test(timeOut = 30000)
+    public void testInvalidTopicOnProducer() throws Exception {
+        String invalidTopicName = "xx/ass/aa/aaa";
+
+        CommandProducer producerParams = Commands.newProducer(invalidTopicName, "prod-name", Collections.emptyMap());
+        verifyProduceFails(producerParams, Status.INVALID_ARGUMENT, ServerError.InvalidTopicName);
+    }
+
+    @Test(timeOut = 30000)
+    public void testProducerOnNotOwnedTopic() throws Exception {
+        // Force the case where the broker doesn't own any topic
+        doReturn(false).when(namespaceService).isServiceUnitActive(any(TopicName.class));
+
+        // test PRODUCER failure case
+        CommandProducer producerParams = Commands.newProducer(nonOwnedTopicName, "prod-name", Collections.emptyMap());
+        verifyProduceFails(producerParams, Status.FAILED_PRECONDITION, ServerError.ServiceNotReady);
+
+        assertFalse(pulsar.getBrokerService().getTopicReference(nonOwnedTopicName).isPresent());
+    }
+
+    @Test(timeOut = 30000)
+    public void testProducerCommandWithAuthorizationPositive() throws Exception {
+        AuthorizationService authorizationService = mock(AuthorizationService.class);
+        doReturn(CompletableFuture.completedFuture(true)).when(authorizationService).canProduceAsync(Mockito.any(),
+                Mockito.any(), Mockito.any());
+        doReturn(authorizationService).when(brokerService).getAuthorizationService();
+        doReturn(true).when(brokerService).isAuthenticationEnabled();
+
+        // test PRODUCER success case
+        Metadata headers = new Metadata();
+        CommandProducer producerParams = Commands.newProducer(successTopicName,"prod-name", Collections.emptyMap());
+        headers.put(PRODUCER_PARAMS_METADATA_KEY, producerParams.toByteArray());
+
+        PulsarGrpc.PulsarStub producerStub = MetadataUtils.attachHeaders(stub, headers);
+
+        TestStreamObserver<SendResult> observer = TestStreamObserver.create();
+        StreamObserver<CommandSend> request = producerStub.produce(observer);
+
+        assertTrue(observer.takeOneMessage().hasProducerSuccess());
+
+        PersistentTopic topicRef = (PersistentTopic) brokerService.getTopicReference(successTopicName).get();
+
+        assertNotNull(topicRef);
+        assertEquals(topicRef.getProducers().size(), 1);
+
+        request.onCompleted();
+        observer.waitForCompletion();
+        assertEquals(topicRef.getProducers().size(), 0);
+    }
+
+    @Test(timeOut = 30000)
+    public void testNonExistentTopic() throws Exception {
+        ZooKeeperDataCache<Policies> zkDataCache = mock(ZooKeeperDataCache.class);
+        ConfigurationCacheService configCacheService = mock(ConfigurationCacheService.class);
+        doReturn(configCacheService).when(pulsar).getConfigurationCache();
+        doReturn(zkDataCache).when(configCacheService).policiesCache();
+        doReturn(CompletableFuture.completedFuture(Optional.empty())).when(zkDataCache).getAsync(matches(".*nonexistent.*"));
+
+        AuthorizationService authorizationService = spy(new AuthorizationService(svcConfig, configCacheService));
+        doReturn(authorizationService).when(brokerService).getAuthorizationService();
+        doReturn(true).when(brokerService).isAuthorizationEnabled();
+        svcConfig.setAuthorizationEnabled(true);
+        Field providerField = AuthorizationService.class.getDeclaredField("provider");
+        providerField.setAccessible(true);
+        PulsarAuthorizationProvider authorizationProvider = spy(new PulsarAuthorizationProvider(svcConfig, configCacheService));
+        providerField.set(authorizationService, authorizationProvider);
+        doReturn(CompletableFuture.completedFuture(false)).when(authorizationProvider).isSuperUser(Mockito.anyString(), Mockito.any(), Mockito.any());
+
+        // Test producer creation
+        CommandProducer producerParams = Commands.newProducer(nonExistentTopicName, "prod-name", Collections.emptyMap());
+        verifyProduceFails(producerParams, Status.PERMISSION_DENIED, ServerError.AuthorizationError);
+
+        // Test consumer creation
+        CommandSubscribe consumerParams = Commands.newSubscribe(nonExistentTopicName,
+                successSubName, SubType.Exclusive, 0, "test" /* consumer name */, 0);
+        verifyConsumeFails(consumerParams, Status.PERMISSION_DENIED, ServerError.AuthorizationError);
+    }
+
+    @Test(timeOut = 30000)
+    public void testClusterAccess() throws Exception {
+        svcConfig.setAuthorizationEnabled(true);
+        AuthorizationService authorizationService = spy(new AuthorizationService(svcConfig, configCacheService));
+        Field providerField = AuthorizationService.class.getDeclaredField("provider");
+        providerField.setAccessible(true);
+        PulsarAuthorizationProvider authorizationProvider = spy(new PulsarAuthorizationProvider(svcConfig, configCacheService));
+        providerField.set(authorizationService, authorizationProvider);
+        doReturn(authorizationService).when(brokerService).getAuthorizationService();
+        doReturn(true).when(brokerService).isAuthorizationEnabled();
+        doReturn(CompletableFuture.completedFuture(false)).when(authorizationProvider).isSuperUser(Mockito.anyString(), Mockito.any(), Mockito.any());
+        doReturn(CompletableFuture.completedFuture(true)).when(authorizationProvider).checkPermission(any(TopicName.class), Mockito.any(),
+                any(AuthAction.class));
+
+        Metadata headers = new Metadata();
+        CommandProducer producerParams = Commands.newProducer(successTopicName,"prod-name", Collections.emptyMap());
+        headers.put(PRODUCER_PARAMS_METADATA_KEY, producerParams.toByteArray());
+
+        PulsarGrpc.PulsarStub producerStub = MetadataUtils.attachHeaders(stub, headers);
+
+        TestStreamObserver<SendResult> observer = TestStreamObserver.create();
+        StreamObserver<CommandSend> request = producerStub.produce(observer);
+
+        assertTrue(observer.takeOneMessage().hasProducerSuccess());
+
+        request.onCompleted();
+        observer.waitForCompletion();
+
+        producerParams = Commands.newProducer(topicWithNonLocalCluster,"prod-name", Collections.emptyMap());
+        verifyProduceFails(producerParams, Status.PERMISSION_DENIED, ServerError.AuthorizationError);
+    }
+
+    @Test(timeOut = 30000)
+    public void testNonExistentTopicSuperUserAccess() throws Exception {
+        AuthorizationService authorizationService = spy(new AuthorizationService(svcConfig, configCacheService));
+        doReturn(authorizationService).when(brokerService).getAuthorizationService();
+        doReturn(true).when(brokerService).isAuthorizationEnabled();
+        Field providerField = AuthorizationService.class.getDeclaredField("provider");
+        providerField.setAccessible(true);
+        PulsarAuthorizationProvider authorizationProvider = spy(new PulsarAuthorizationProvider(svcConfig, configCacheService));
+        providerField.set(authorizationService, authorizationProvider);
+        doReturn(CompletableFuture.completedFuture(true)).when(authorizationProvider).isSuperUser(Mockito.anyString(), Mockito.any(), Mockito.any());
+
+        // Test producer creation
+        CommandProducer producerParams = Commands.newProducer(nonExistentTopicName, "prod-name", Collections.emptyMap());
+        PulsarGrpc.PulsarStub producerStub = Commands.attachProducerParams(stub, producerParams);
+        TestStreamObserver<SendResult> observer = new TestStreamObserver<>();
+        StreamObserver<CommandSend> request = producerStub.produce(observer);
+
+        assertTrue(observer.takeOneMessage().hasProducerSuccess());
+
+        PersistentTopic topicRef = (PersistentTopic) brokerService.getTopicReference(nonExistentTopicName).get();
+        assertNotNull(topicRef);
+        assertEquals(topicRef.getProducers().size(), 1);
+        request.onCompleted();
+        observer.waitForCompletion();
+
+        // Test consumer creation
+        Metadata headers = new Metadata();
+        CommandSubscribe consumerParams = Commands.newSubscribe(nonExistentTopicName,
+                successSubName, SubType.Exclusive, 0, "test" /* consumer name */, 0);
+
+        headers.put(CONSUMER_PARAMS_METADATA_KEY, consumerParams.toByteArray());
+
+        PulsarGrpc.PulsarStub consumerStub = MetadataUtils.attachHeaders(stub, headers);
+
+        TestStreamObserver<ConsumeOutput> observer2 = new TestStreamObserver<>();
+
+        StreamObserver<ConsumeInput> consumeInput = consumerStub.consume(observer2);
+
+        assertTrue(observer2.takeOneMessage().hasSubscribeSuccess());
+
+        topicRef = (PersistentTopic) brokerService.getTopicReference(nonExistentTopicName).get();
+        assertNotNull(topicRef);
+        assertTrue(topicRef.getSubscriptions().containsKey(successSubName));
+        assertTrue(topicRef.getSubscription(successSubName).getDispatcher().isConsumerConnected());
+
+        consumeInput.onCompleted();
+        observer2.waitForCompletion();
+    }
+
+    public void testProducerCommandWithAuthorizationNegative() throws Exception {
+        AuthorizationService authorizationService = mock(AuthorizationService.class);
+        doReturn(CompletableFuture.completedFuture(false)).when(authorizationService).canProduceAsync(Mockito.any(),
+                Mockito.any(), Mockito.any());
+        doReturn(authorizationService).when(brokerService).getAuthorizationService();
+        doReturn(true).when(brokerService).isAuthenticationEnabled();
+        doReturn(true).when(brokerService).isAuthorizationEnabled();
+        doReturn("prod1").when(brokerService).generateUniqueProducerName();
+
+        CommandProducer producerParams = Commands.newProducer(successTopicName,null, Collections.emptyMap());
+        verifyProduceFails(producerParams, Status.PERMISSION_DENIED, ServerError.AuthorizationError);
     }
 
     @Test(timeOut = 30000)
@@ -241,16 +455,15 @@ public class PulsarGrpcServiceTest {
 
         TestStreamObserver<SendResult> observer = TestStreamObserver.create();
         StreamObserver<CommandSend> request = producerStub.produce(observer);
-        SendResult result = observer.takeOneMessage();
 
-        assertTrue(result.hasProducerSuccess());
+        assertTrue(observer.takeOneMessage().hasProducerSuccess());
 
         // test SEND success
         PulsarApi.MessageMetadata messageMetadata = PulsarApi.MessageMetadata.newBuilder()
-            .setPublishTime(System.currentTimeMillis())
-            .setProducerName("prod-name")
-            .setSequenceId(0)
-            .build();
+                .setPublishTime(System.currentTimeMillis())
+                .setProducerName("prod-name")
+                .setSequenceId(0)
+                .build();
         ByteBuf data = Unpooled.buffer(1024);
 
         CommandSend clientCommand = Commands.newSend(1, 0, 1, ChecksumType.None, messageMetadata, data);
@@ -261,45 +474,6 @@ public class PulsarGrpcServiceTest {
 
         request.onCompleted();
         observer.waitForCompletion();
-    }
-
-    @Test(timeOut = 30000)
-    public void testInvalidTopicOnProducer() throws Exception {
-        String invalidTopicName = "xx/ass/aa/aaa";
-
-        Metadata headers = new Metadata();
-        CommandProducer producerParams = Commands.newProducer(invalidTopicName, "prod-name", Collections.emptyMap());
-        headers.put(PRODUCER_PARAMS_METADATA_KEY, producerParams.toByteArray());
-
-        PulsarGrpc.PulsarStub producerStub = MetadataUtils.attachHeaders(stub, headers);
-
-        TestStreamObserver<SendResult> observer = new TestStreamObserver<>();
-
-        StreamObserver<CommandSend> request = producerStub.produce(observer);
-
-        assertErrorIsStatusExceptionWithServerError(observer.waitForError(),
-            Status.INVALID_ARGUMENT, ServerError.InvalidTopicName);
-    }
-
-    @Test(timeOut = 30000)
-    public void testProducerOnNotOwnedTopic() throws Exception {
-        // Force the case where the broker doesn't own any topic
-        doReturn(false).when(namespaceService).isServiceUnitActive(any(TopicName.class));
-
-        // test PRODUCER failure case
-        Metadata headers = new Metadata();
-        CommandProducer producerParams = Commands.newProducer(nonOwnedTopicName, "prod-name", Collections.emptyMap());
-        headers.put(PRODUCER_PARAMS_METADATA_KEY, producerParams.toByteArray());
-
-        PulsarGrpc.PulsarStub producerStub = MetadataUtils.attachHeaders(stub, headers);
-
-        TestStreamObserver<SendResult> observer = new TestStreamObserver<>();
-
-        StreamObserver<CommandSend> request = producerStub.produce(observer);
-        assertErrorIsStatusExceptionWithServerError(observer.waitForError(),
-            Status.FAILED_PRECONDITION, ServerError.ServiceNotReady);
-
-        assertFalse(pulsar.getBrokerService().getTopicReference(nonOwnedTopicName).isPresent());
     }
 
     @Test(timeOut = 30000)
@@ -317,53 +491,120 @@ public class PulsarGrpcServiceTest {
         assertTrue(observer.takeOneMessage().hasProducerSuccess());
 
         // Create producer second time
-        TestStreamObserver<SendResult> observer2 = new TestStreamObserver<>();
-        StreamObserver<CommandSend> produce2 = producerStub.produce(observer2);
-
-        assertErrorIsStatusExceptionWithServerError(observer2.waitForError(),
-            Status.FAILED_PRECONDITION, ServerError.ProducerBusy);
+        verifyProduceFails(producerParams, Status.FAILED_PRECONDITION, ServerError.ProducerBusy);
 
         produce.onCompleted();
         observer.waitForCompletion();
     }
 
-    @Test(timeOut = 30000)
-    public void testProducerWithSchema() throws Exception {
-        LongSchemaVersion schemaVersion = new LongSchemaVersion(42L);
-        Map<String, String> schemaProps = new HashMap<>();
-        schemaProps.put("key0", "value0");
-        SchemaInfo schemaInfo = SchemaInfo.builder()
-            .name("my-schema")
-            .type(SchemaType.STRING)
-            .schema("test".getBytes(StandardCharsets.UTF_8))
-            .properties(schemaProps)
-            .build();
+    //@Test(timeOut = 30000)
+    public void testCreateProducerTimeout() throws Exception {
+        // Delay the topic creation in a deterministic way
+        CompletableFuture<Runnable> openTopicFuture = new CompletableFuture<>();
+        doAnswer(invocationOnMock -> {
+            openTopicFuture.complete(() -> {
+                ((AsyncCallbacks.OpenLedgerCallback) invocationOnMock.getArguments()[2]).openLedgerComplete(ledgerMock, null);
+            });
+            return null;
+        }).when(mlFactoryMock).asyncOpen(matches(".*success.*"), any(ManagedLedgerConfig.class),
+                any(AsyncCallbacks.OpenLedgerCallback.class), any(Supplier.class), any());
 
-        Topic spyTopic = spy(new NonPersistentTopic(successTopicName, brokerService));
-        ArgumentCaptor<SchemaData> schemaCaptor = ArgumentCaptor.forClass(SchemaData.class);
-        doReturn(CompletableFuture.completedFuture(schemaVersion)).when(spyTopic).addSchema(schemaCaptor.capture());
-        doReturn(CompletableFuture.completedFuture(spyTopic)).when(brokerService).getOrCreateTopic(successTopicName);
+        // In a create producer timeout from client side we expect to see this sequence of commands :
+        // 1. create producer
+        // 2. close producer (when the timeout is triggered, which may be before the producer was created on the broker
+        // 3. create producer (triggered by reconnection logic)
+
+        // These operations need to be serialized, to allow the last create producer to finally succeed
+        // (There can be more create/close pairs in the sequence, depending on the client timeout
 
         String producerName = "my-producer";
-        Metadata headers = new Metadata();
-        CommandProducer producerParams = Commands.newProducer(successTopicName, producerName, false,
-            Collections.emptyMap(), schemaInfo, 0, false);
-        headers.put(PRODUCER_PARAMS_METADATA_KEY, producerParams.toByteArray());
-        PulsarGrpc.PulsarStub producerStub = MetadataUtils.attachHeaders(stub, headers);
+
+        CommandProducer createProducer1 = Commands.newProducer(successTopicName, producerName, Collections.emptyMap());
+        PulsarGrpc.PulsarStub produceStub = Commands.attachProducerParams(stub, createProducer1);
 
         TestStreamObserver<SendResult> observer = TestStreamObserver.create();
-        StreamObserver<CommandSend> produce = producerStub.produce(observer);
+        StreamObserver<CommandSend> commandSend1 = produceStub.produce(observer);
 
-        SendResult sendResult = observer.takeOneMessage();
-        assertTrue(sendResult.hasProducerSuccess());
-        assertEquals(sendResult.getProducerSuccess().getSchemaVersion().toByteArray(), schemaVersion.bytes());
-        SchemaData schemaData = schemaCaptor.getValue();
-        assertEquals(schemaData.getType(), SchemaType.STRING);
-        assertEquals(schemaData.getProps().get("key0"), "value0");
-        assertEquals(schemaData.getData(), "test".getBytes(StandardCharsets.UTF_8));
+        commandSend1.onCompleted();
 
-        produce.onCompleted();
+        TestStreamObserver<SendResult> observer2 = TestStreamObserver.create();
+        StreamObserver<CommandSend> commandSend2 = produceStub.produce(observer2);
+
+        // Complete the topic opening: It will make 2nd producer creation successful
+        openTopicFuture.get().run();
+
+        // Close succeeds (due to race, it will either end with a complete or an error)
+        observer.waitForErrorOrComplete();
+
+        // 2nd producer will be successfully created as topic is open by then
+        assertTrue(observer2.takeOneMessage().hasProducerSuccess());
+
+        Thread.sleep(100);
+
+        // We should not receive response for 1st producer, since it was cancelled by the close
+        assertNull(observer.pollOneMessage());
+
+        commandSend2.onCompleted();
+        observer2.waitForCompletion();
+    }
+
+    @Test(timeOut = 30000, invocationCount = 1, skipFailedInvocations = true)
+    public void testCreateProducerBookieTimeout() throws Exception {
+        // Delay the topic creation in a deterministic way
+        CompletableFuture<Runnable> openFailedTopic = new CompletableFuture<>();
+        doAnswer(invocationOnMock -> {
+            openFailedTopic.complete(() -> {
+                ((AsyncCallbacks.OpenLedgerCallback) invocationOnMock.getArguments()[2]).openLedgerComplete(ledgerMock, null);
+            });
+            return null;
+        }).when(mlFactoryMock).asyncOpen(matches(".*fail.*"), any(ManagedLedgerConfig.class),
+                any(AsyncCallbacks.OpenLedgerCallback.class), any(Supplier.class), any());
+
+        // In a create producer timeout from client side we expect to see this sequence of commands :
+        // 1. create a failure producer which will timeout creation after 100msec
+        // 2. close producer
+        // 3. Recreate producer (triggered by reconnection logic)
+        // 4. Wait till the timeout of 1, and create producer again.
+
+        // These operations need to be serialized, to allow the last create producer to finally succeed
+        // (There can be more create/close pairs in the sequence, depending on the client timeout
+
+        String producerName = "my-producer";
+
+        CommandProducer createProducer1 = Commands.newProducer(failTopicName, producerName, Collections.emptyMap());
+        PulsarGrpc.PulsarStub produceStub = Commands.attachProducerParams(stub, createProducer1);
+
+        TestStreamObserver<SendResult> observer = TestStreamObserver.create();
+        StreamObserver<CommandSend> commandSend1 = produceStub.produce(observer);
+
+        commandSend1.onCompleted();
+
+        CommandProducer createProducer2 = Commands.newProducer(successTopicName, producerName, Collections.emptyMap());
+        produceStub = Commands.attachProducerParams(stub, createProducer2);
+        TestStreamObserver<SendResult> observer2 = TestStreamObserver.create();
+        StreamObserver<CommandSend> commandSend2 = produceStub.produce(observer2);
+
+        // Now the topic gets opened.. It will make 2nd producer creation successful
+        openFailedTopic.get().run();
+
+        // Close succeeds
         observer.waitForCompletion();
+
+        // 2nd producer success as topic is opened
+        assertTrue(observer2.takeOneMessage().hasProducerSuccess());
+
+        // Wait till the failtopic timeout interval
+        Thread.sleep(500);
+
+        // 3rd producer fails because 2nd is already connected
+        verifyProduceFails(createProducer2, Status.FAILED_PRECONDITION, ServerError.ProducerBusy);
+        Thread.sleep(500);
+
+        // We should not receive response for 1st producer, since it was cancelled by the close
+        assertNull(observer.pollOneMessage());
+
+        commandSend2.onCompleted();
+        observer2.waitForCompletion();
     }
 
     @Test(timeOut = 30000)
@@ -373,17 +614,8 @@ public class PulsarGrpcServiceTest {
         doReturn(true).when(spyTopic).getSchemaValidationEnforced();
         doReturn(CompletableFuture.completedFuture(spyTopic)).when(brokerService).getOrCreateTopic(successTopicName);
 
-        Metadata headers = new Metadata();
         CommandProducer producerParams = Commands.newProducer(successTopicName,"prod-name", Collections.emptyMap());
-        headers.put(PRODUCER_PARAMS_METADATA_KEY, producerParams.toByteArray());
-
-        PulsarGrpc.PulsarStub producerStub = MetadataUtils.attachHeaders(stub, headers);
-
-        TestStreamObserver<SendResult> observer = TestStreamObserver.create();
-        StreamObserver<CommandSend> produce = producerStub.produce(observer);
-
-        assertErrorIsStatusExceptionWithServerError(observer.waitForError(),
-            Status.FAILED_PRECONDITION, ServerError.IncompatibleSchema);
+        verifyProduceFails(producerParams, Status.FAILED_PRECONDITION, ServerError.IncompatibleSchema);
     }
 
     @Test(timeOut = 30000)
@@ -433,17 +665,9 @@ public class PulsarGrpcServiceTest {
         doReturn(zkDataCache).when(configCacheService).policiesCache();
 
         // test success case: encrypted producer can connect
-        Metadata headers = new Metadata();
         CommandProducer producerParams = Commands.newProducer(encryptionRequiredTopicName,
             "unencrypted-producer", false, null);
-        headers.put(PRODUCER_PARAMS_METADATA_KEY, producerParams.toByteArray());
-
-        PulsarGrpc.PulsarStub producerStub = MetadataUtils.attachHeaders(stub, headers);
-
-        TestStreamObserver<SendResult> observer = TestStreamObserver.create();
-        StreamObserver<CommandSend> produce = producerStub.produce(observer);
-
-        assertErrorIsStatusExceptionWithServerError(observer.waitForError(), Status.INVALID_ARGUMENT, ServerError.MetadataError);
+        verifyProduceFails(producerParams, Status.INVALID_ARGUMENT, ServerError.MetadataError);
         PersistentTopic topicRef = (PersistentTopic) brokerService.getTopicReference(encryptionRequiredTopicName).get();
         assertNotNull(topicRef);
         assertEquals(topicRef.getProducers().size(), 0);
@@ -544,18 +768,9 @@ public class PulsarGrpcServiceTest {
         doReturn(CompletableFuture.completedFuture(spyTopic)).when(brokerService).getOrCreateTopic(successTopicName);
 
         // test success case: encrypted producer can connect
-        Metadata headers = new Metadata();
         CommandProducer producerParams =Commands.newProducer(successTopicName,
             "exceeded-producer", true, null);
-        headers.put(PRODUCER_PARAMS_METADATA_KEY, producerParams.toByteArray());
-
-        PulsarGrpc.PulsarStub producerStub = MetadataUtils.attachHeaders(stub, headers);
-
-        TestStreamObserver<SendResult> observer = TestStreamObserver.create();
-        StreamObserver<CommandSend> produce = producerStub.produce(observer);
-
-        assertErrorIsStatusExceptionWithServerError(observer.waitForError(),
-            Status.FAILED_PRECONDITION, ServerError.ProducerBlockedQuotaExceededError);
+        verifyProduceFails(producerParams, Status.FAILED_PRECONDITION, ServerError.ProducerBlockedQuotaExceededError);
     }
 
     @Test(timeOut = 30000)
@@ -566,18 +781,64 @@ public class PulsarGrpcServiceTest {
         doReturn(CompletableFuture.completedFuture(spyTopic)).when(brokerService).getOrCreateTopic(successTopicName);
 
         // test success case: encrypted producer can connect
-        Metadata headers = new Metadata();
         CommandProducer producerParams =Commands.newProducer(successTopicName,
             "exceeded-producer", true, null);
-        headers.put(PRODUCER_PARAMS_METADATA_KEY, producerParams.toByteArray());
+        verifyProduceFails(producerParams, Status.FAILED_PRECONDITION, ServerError.ProducerBlockedQuotaExceededException);
+    }
 
+    @Test(timeOut = 30000)
+    public void testProducerWithSchema() throws Exception {
+        LongSchemaVersion schemaVersion = new LongSchemaVersion(42L);
+        Map<String, String> schemaProps = new HashMap<>();
+        schemaProps.put("key0", "value0");
+        SchemaInfo schemaInfo = SchemaInfo.builder()
+                .name("my-schema")
+                .type(SchemaType.STRING)
+                .schema("test".getBytes(StandardCharsets.UTF_8))
+                .properties(schemaProps)
+                .build();
+
+        Topic spyTopic = spy(new NonPersistentTopic(successTopicName, brokerService));
+        ArgumentCaptor<SchemaData> schemaCaptor = ArgumentCaptor.forClass(SchemaData.class);
+        doReturn(CompletableFuture.completedFuture(schemaVersion)).when(spyTopic).addSchema(schemaCaptor.capture());
+        doReturn(CompletableFuture.completedFuture(spyTopic)).when(brokerService).getOrCreateTopic(successTopicName);
+
+        String producerName = "my-producer";
+        Metadata headers = new Metadata();
+        CommandProducer producerParams = Commands.newProducer(successTopicName, producerName, false,
+                Collections.emptyMap(), schemaInfo, 0, false);
+        headers.put(PRODUCER_PARAMS_METADATA_KEY, producerParams.toByteArray());
         PulsarGrpc.PulsarStub producerStub = MetadataUtils.attachHeaders(stub, headers);
 
         TestStreamObserver<SendResult> observer = TestStreamObserver.create();
         StreamObserver<CommandSend> produce = producerStub.produce(observer);
 
-        assertErrorIsStatusExceptionWithServerError(observer.waitForError(),
-            Status.FAILED_PRECONDITION, ServerError.ProducerBlockedQuotaExceededException);
+        SendResult sendResult = observer.takeOneMessage();
+        assertTrue(sendResult.hasProducerSuccess());
+        assertEquals(sendResult.getProducerSuccess().getSchemaVersion().toByteArray(), schemaVersion.bytes());
+        SchemaData schemaData = schemaCaptor.getValue();
+        assertEquals(schemaData.getType(), SchemaType.STRING);
+        assertEquals(schemaData.getProps().get("key0"), "value0");
+        assertEquals(schemaData.getData(), "test".getBytes(StandardCharsets.UTF_8));
+
+        produce.onCompleted();
+        observer.waitForCompletion();
+    }
+
+    private void verifyProduceFails(CommandProducer producerParams, Status expectedStatus, ServerError expectedCode)
+            throws ExecutionException, InterruptedException {
+        PulsarGrpc.PulsarStub producerStub = Commands.attachProducerParams(stub, producerParams);
+        TestStreamObserver<SendResult> sendResult = new TestStreamObserver<>();
+        producerStub.produce(sendResult);
+        assertErrorIsStatusExceptionWithServerError(sendResult.waitForError(), expectedStatus, expectedCode);
+    }
+
+    private void verifyConsumeFails(CommandSubscribe consumerParams, Status expectedStatus, ServerError expectedCode)
+            throws ExecutionException, InterruptedException {
+        PulsarGrpc.PulsarStub producerStub = Commands.attachConsumerParams(stub, consumerParams);
+        TestStreamObserver<ConsumeOutput> sendResult = new TestStreamObserver<>();
+        producerStub.consume(sendResult);
+        assertErrorIsStatusExceptionWithServerError(sendResult.waitForError(), expectedStatus, expectedCode);
     }
 
     private static class TestStreamObserver<T> implements StreamObserver<T> {
@@ -589,6 +850,7 @@ public class PulsarGrpcServiceTest {
         private LinkedBlockingQueue<T> queue = new LinkedBlockingQueue<>();
         private CompletableFuture<Throwable> error = new CompletableFuture<>();
         private CountDownLatch complete = new CountDownLatch(1);
+        private CountDownLatch errorOrComplete = new CountDownLatch(1);
 
         private TestStreamObserver() {
         }
@@ -600,16 +862,22 @@ public class PulsarGrpcServiceTest {
 
         @Override
         public void onError(Throwable t) {
+            errorOrComplete.countDown();
             error.complete(t);
         }
 
         @Override
         public void onCompleted() {
+            errorOrComplete.countDown();
             complete.countDown();
         }
 
         public T takeOneMessage() throws InterruptedException {
             return queue.take();
+        }
+
+        public T pollOneMessage() throws InterruptedException {
+            return queue.poll();
         }
 
         public Throwable waitForError() throws ExecutionException, InterruptedException {
@@ -619,6 +887,10 @@ public class PulsarGrpcServiceTest {
         public void waitForCompletion() throws InterruptedException {
             complete.await();
         }
+
+        public void waitForErrorOrComplete() throws InterruptedException {
+            errorOrComplete.await();
+        }
     }
 
     private static void assertErrorIsStatusExceptionWithServerError(Throwable actualException, Status expectedStatus, ServerError expectedCode) {
@@ -627,7 +899,7 @@ public class PulsarGrpcServiceTest {
 
         Metadata actualMetadata = Status.trailersFromThrowable(actualException);
         assertNotNull(actualMetadata);
-        assertEquals(actualMetadata.get(ERROR_CODE_METADATA_KEY), String.valueOf(expectedCode.getNumber()));
+        assertEquals(ServerError.forNumber(Integer.parseInt(actualMetadata.get(ERROR_CODE_METADATA_KEY))), expectedCode);
     }
 
     public static MockZooKeeper createMockZooKeeper() throws Exception {

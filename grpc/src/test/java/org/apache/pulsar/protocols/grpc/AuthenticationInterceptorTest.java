@@ -162,6 +162,20 @@ public class AuthenticationInterceptorTest {
     }
 
     @Test
+    public void testAuthenticationMissing() throws Exception {
+        AuthenticationProvider provider = new AuthenticationProviderTls();
+        provider.initialize(null);
+        doReturn(provider).when(authenticationService).getAuthenticationProvider(provider.getAuthMethodName());
+
+        try {
+            stub.getPrincipal(Empty.getDefaultInstance());
+            fail("Should have thrown UNAUTHENTICATED exception");
+        } catch (StatusRuntimeException e) {
+            assertEquals(e.getStatus().getCode(), Status.Code.UNAUTHENTICATED);
+        }
+    }
+
+    @Test
     public void testAuthenticationBasic() throws IOException {
         AuthenticationProvider provider = new AuthenticationProviderBasic();
         provider.initialize(null);

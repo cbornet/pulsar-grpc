@@ -48,6 +48,7 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Semaphore;
 
+import static com.google.common.base.Preconditions.checkArgument;
 import static org.apache.pulsar.protocols.grpc.Commands.newStatusException;
 import static org.apache.pulsar.protocols.grpc.Constants.*;
 import static org.apache.pulsar.protocols.grpc.ServerErrors.*;
@@ -187,72 +188,104 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
             return NoOpStreamObserver.create();
         }
 
-        // TODO: add authorization
+        CompletableFuture<Boolean> authorizationFuture;
+        if (service.isAuthorizationEnabled()) {
+            authorizationFuture = service.getAuthorizationService().canProduceAsync(topicName,
+                    originalPrincipal != null ? originalPrincipal : authRole, authenticationData);
+        } else {
+            authorizationFuture = CompletableFuture.completedFuture(true);
+        }
+
         CompletableFuture<Producer> producerFuture = new CompletableFuture<>();
-        service.getOrCreateTopic(topicName.toString()).thenAccept((Topic topik) -> {
-            // Before creating producer, check if backlog quota exceeded on topic
-            if (topik.isBacklogQuotaExceeded(producerName)) {
-                IllegalStateException illegalStateException = new IllegalStateException(
-                        "Cannot create producer on topic with backlog quota exceeded");
-                BacklogQuota.RetentionPolicy retentionPolicy = topik.getBacklogQuota().getPolicy();
-                if (retentionPolicy == BacklogQuota.RetentionPolicy.producer_request_hold) {
-                    responseObserver.onError(newStatusException(Status.FAILED_PRECONDITION,
-                            illegalStateException, ServerError.ProducerBlockedQuotaExceededError));
-                } else if (retentionPolicy == BacklogQuota.RetentionPolicy.producer_exception) {
-                    responseObserver.onError(newStatusException(Status.FAILED_PRECONDITION,
-                            illegalStateException, ServerError.ProducerBlockedQuotaExceededException));
+        authorizationFuture.thenApply(isAuthorized -> {
+            if (isAuthorized) {
+                if (log.isDebugEnabled()) {
+                    log.debug("[{}] Client is authorized to Produce with role {}", remoteAddress, authRole);
                 }
-                producerFuture.completeExceptionally(illegalStateException);
-                return;
+                service.getOrCreateTopic(topicName.toString()).thenAccept((Topic topik) -> {
+                    // Before creating producer, check if backlog quota exceeded on topic
+                    if (topik.isBacklogQuotaExceeded(producerName)) {
+                        IllegalStateException illegalStateException = new IllegalStateException(
+                                "Cannot create producer on topic with backlog quota exceeded");
+                        BacklogQuota.RetentionPolicy retentionPolicy = topik.getBacklogQuota().getPolicy();
+                        if (retentionPolicy == BacklogQuota.RetentionPolicy.producer_request_hold) {
+                            responseObserver.onError(newStatusException(Status.FAILED_PRECONDITION,
+                                    illegalStateException, ServerError.ProducerBlockedQuotaExceededError));
+                        } else if (retentionPolicy == BacklogQuota.RetentionPolicy.producer_exception) {
+                            responseObserver.onError(newStatusException(Status.FAILED_PRECONDITION,
+                                    illegalStateException, ServerError.ProducerBlockedQuotaExceededException));
+                        }
+                        producerFuture.completeExceptionally(illegalStateException);
+                        return;
+                    }
+
+                    // Check whether the producer will publish encrypted messages or not
+                    if (topik.isEncryptionRequired() && !isEncrypted) {
+                        String msg = String.format("Encryption is required in %s", topicName);
+                        log.warn("[{}] {}", remoteAddress, msg);
+                        responseObserver.onError(newStatusException(Status.INVALID_ARGUMENT, msg, null,
+                                ServerError.MetadataError));
+                        return;
+                    }
+
+                    CompletableFuture<SchemaVersion> schemaVersionFuture = tryAddSchema(topik, schema, remoteAddress);
+
+                    schemaVersionFuture.exceptionally(exception -> {
+                        responseObserver.onError(newStatusException(Status.FAILED_PRECONDITION, exception,
+                                convertServerError(BrokerServiceException.getClientErrorCode(exception))));
+                        return null;
+                    });
+
+                    schemaVersionFuture.thenAccept(schemaVersion -> {
+                        Producer producer = new Producer(topik, cnx, 0L, producerName, authRole,
+                                isEncrypted, metadata, schemaVersion, epoch, userProvidedProducerName);
+
+                        try {
+                            // TODO : check that removeProducer is called even with early client disconnect
+                            topik.addProducer(producer);
+                            if (producerFuture.complete(producer)) {
+                                log.info("[{}] Created new producer: {}", remoteAddress, producer);
+                                responseObserver.onNext(Commands.newProducerSuccess(producerName,
+                                        producer.getLastSequenceId(), producer.getSchemaVersion()));
+                            } else {
+                                // The producer's future was completed before by
+                                // a close command
+                                producer.closeNow(true);
+                                log.info("[{}] Cleared producer created after timeout on client side {}",
+                                        remoteAddress, producer);
+                            }
+                        } catch (BrokerServiceException ise) {
+                            log.error("[{}] Failed to add producer to topic {}: {}", remoteAddress, topicName,
+                                    ise.getMessage());
+                            responseObserver.onError(newStatusException(Status.FAILED_PRECONDITION, ise,
+                                    convertServerError(BrokerServiceException.getClientErrorCode(ise))));
+                            producerFuture.completeExceptionally(ise);
+                        }
+                    });
+                }).exceptionally(exception -> {
+                    Throwable cause = exception.getCause();
+                    if (!(cause instanceof BrokerServiceException.ServiceUnitNotReadyException)) {
+                        // Do not print stack traces for expected exceptions
+                        log.error("[{}] Failed to create topic {}", remoteAddress, topicName, exception);
+                    }
+
+                    if (producerFuture.completeExceptionally(exception)) {
+                        responseObserver.onError(newStatusException(Status.FAILED_PRECONDITION, cause,
+                                convertServerError(BrokerServiceException.getClientErrorCode(cause))));
+                    }
+                    return null;
+                });
+            } else {
+                final String msg = "Proxy Client is not authorized to Produce";
+                log.warn("[{}] {} with role {} on topic {}", remoteAddress, msg, authRole, topicName);
+                responseObserver.onError(newStatusException(Status.PERMISSION_DENIED, msg, null,
+                        ServerError.AuthorizationError));
             }
-
-            // Check whether the producer will publish encrypted messages or not
-            if (topik.isEncryptionRequired() && !isEncrypted) {
-                String msg = String.format("Encryption is required in %s", topicName);
-                log.warn("[{}] {}", remoteAddress, msg);
-                responseObserver.onError(newStatusException(Status.INVALID_ARGUMENT, msg, null,
-                        ServerError.MetadataError));
-                return;
-            }
-
-            CompletableFuture<SchemaVersion> schemaVersionFuture = tryAddSchema(topik, schema, remoteAddress);
-
-            schemaVersionFuture.exceptionally(exception -> {
-                responseObserver.onError(newStatusException(Status.FAILED_PRECONDITION, exception,
-                        convertServerError(BrokerServiceException.getClientErrorCode(exception))));
-                return null;
-            });
-
-            schemaVersionFuture.thenAccept(schemaVersion -> {
-                Producer producer = new Producer(topik, cnx, 0L, producerName, authRole,
-                        isEncrypted, metadata, schemaVersion, epoch, userProvidedProducerName);
-
-                try {
-                    // TODO : check that removeProducer is called even with early client disconnect
-                    topik.addProducer(producer);
-                    log.info("[{}] Created new producer: {}", remoteAddress, producer);
-                    producerFuture.complete(producer);
-                    responseObserver.onNext(Commands.newProducerSuccess(producerName,
-                            producer.getLastSequenceId(), producer.getSchemaVersion()));
-                } catch (BrokerServiceException ise) {
-                    log.error("[{}] Failed to add producer to topic {}: {}", remoteAddress, topicName,
-                            ise.getMessage());
-                    responseObserver.onError(newStatusException(Status.FAILED_PRECONDITION, ise,
-                            convertServerError(BrokerServiceException.getClientErrorCode(ise))));
-                    producerFuture.completeExceptionally(ise);
-                }
-            });
-        }).exceptionally(exception -> {
-            Throwable cause = exception.getCause();
-            if (!(cause instanceof BrokerServiceException.ServiceUnitNotReadyException)) {
-                // Do not print stack traces for expected exceptions
-                log.error("[{}] Failed to create topic {}", remoteAddress, topicName, exception);
-            }
-
-            if (producerFuture.completeExceptionally(exception)) {
-                responseObserver.onError(newStatusException(Status.FAILED_PRECONDITION, cause,
-                        convertServerError(BrokerServiceException.getClientErrorCode(cause))));
-            }
+            return null;
+        }).exceptionally(ex -> {
+            String msg = String.format("[%s] %s with role %s", remoteAddress, ex.getMessage(), authRole);
+            log.warn(msg);
+            responseObserver.onError(newStatusException(Status.PERMISSION_DENIED, ex, ServerError.AuthorizationError));
             return null;
         });
 
@@ -291,9 +324,6 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
             return NoOpStreamObserver.create();
         }
 
-        final long requestId = subscribe.getRequestId();
-        final long consumerId = subscribe.getConsumerId();
-
         TopicName topicName;
         try {
             topicName = TopicName.get(subscribe.getTopic());
@@ -330,12 +360,13 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
 
         CompletableFuture<Boolean> authorizationFuture;
         if (service.isAuthorizationEnabled()) {
-            authorizationFuture = service.getAuthorizationService().canConsumeAsync(topicName, authRole, authenticationData,
-                    subscriptionName);
+            authorizationFuture = service.getAuthorizationService().canConsumeAsync(topicName,
+                    originalPrincipal != null ? originalPrincipal : authRole, authenticationData, subscriptionName);
         } else {
             authorizationFuture = CompletableFuture.completedFuture(true);
         }
 
+        CompletableFuture<Consumer> consumerFuture = new CompletableFuture<>();
         authorizationFuture.thenApply(isAuthorized -> {
             if (isAuthorized) {
                 if (log.isDebugEnabled()) {
@@ -350,8 +381,6 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
                             newStatusException(Status.INVALID_ARGUMENT, iae, ServerError.MetadataError));
                     return null;
                 }
-                CompletableFuture<Consumer> consumerFuture = new CompletableFuture<>();
-
 
                 boolean createTopicIfDoesNotExist = forceTopicCreation
                         && service.isAllowAutoTopicCreation(topicName.toString());
@@ -376,14 +405,14 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
 
                             if (schema != null) {
                                 return topic.addSchemaIfIdleOrCheckCompatible(schema)
-                                        .thenCompose(v -> topic.subscribe(cnx, subscriptionName, consumerId,
+                                        .thenCompose(v -> topic.subscribe(cnx, subscriptionName, 0L,
                                                 convertSubscribeSubType(subType), priorityLevel,
                                                 consumerName, isDurable, startMessageId, metadata, readCompacted,
                                                 convertSubscribeInitialPosition(initialPosition),
                                                 startMessageRollbackDurationSec, isReplicated,
                                                 convertKeySharedMeta(keySharedMeta)));
                             } else {
-                                return topic.subscribe(cnx, subscriptionName, consumerId,
+                                return topic.subscribe(cnx, subscriptionName, 0L,
                                         convertSubscribeSubType(subType), priorityLevel, consumerName, isDurable,
                                         startMessageId, metadata, readCompacted,
                                         convertSubscribeInitialPosition(initialPosition),
@@ -395,6 +424,7 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
                             if (consumerFuture.complete(consumer)) {
                                 log.info("[{}] Created subscription on topic {} / {}", remoteAddress, topicName,
                                         subscriptionName);
+                                responseObserver.onNext(Commands.newSubscriptionSuccess());
                             } else {
                                 // The consumer future was completed before by a close command
                                 try {
@@ -457,12 +487,12 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
 
             @Override
             public void onError(Throwable throwable) {
-
+                closeConsume(consumerFuture, remoteAddress, responseObserver);
             }
 
             @Override
             public void onCompleted() {
-
+                closeConsume(consumerFuture, remoteAddress, responseObserver);
             }
         };
     }
@@ -497,7 +527,7 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
         }
     }
 
-    private void closeProduce(CompletableFuture<Producer> producerFuture, SocketAddress remoteAddress) {
+    private static void closeProduce(CompletableFuture<Producer> producerFuture, SocketAddress remoteAddress) {
         if (!producerFuture.isDone() && producerFuture
                 .completeExceptionally(new IllegalStateException("Closed producer before creation was complete"))) {
             // We have received a request to close the producer before it was actually completed, we have marked the
@@ -513,6 +543,35 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
         Producer producer = producerFuture.getNow(null);
         log.info("[{}][{}] Closing producer on cnx {}", producer.getTopic(), producer.getProducerName(), remoteAddress);
         producer.close(true);
+    }
+
+    private static void closeConsume(CompletableFuture<Consumer> consumerFuture, SocketAddress remoteAddress,
+            StreamObserver<ConsumeOutput> responseObserver) {
+
+        if (!consumerFuture.isDone() && consumerFuture
+                .completeExceptionally(new IllegalStateException("Closed consumer before creation was complete"))) {
+            // We have received a request to close the consumer before it was actually completed, we have marked the
+            // consumer future as failed and we can tell the client the close operation was successful. When the actual
+            // create operation will complete, the new consumer will be discarded.
+            log.info("[{}] Closed consumer before its creation was completed", remoteAddress);
+            return;
+        }
+
+        if (consumerFuture.isCompletedExceptionally()) {
+            log.info("[{}] Closed consumer that already failed to be created", remoteAddress);
+            return;
+        }
+
+        // Proceed with normal consumer close
+        Consumer consumer = consumerFuture.getNow(null);
+        try {
+            consumer.close();
+            log.info("[{}] Closed consumer {}", remoteAddress, consumer);
+        } catch (BrokerServiceException e) {
+            log.warn("[{]] Error closing consumer {} : {}", remoteAddress, consumer, e);
+            responseObserver.onError(newStatusException(Status.INTERNAL, e,
+                    ServerErrors.convertServerError(BrokerServiceException.getClientErrorCode(e))));
+        }
     }
 
     private static class NoOpStreamObserver<T> implements StreamObserver<T> {

@@ -29,6 +29,9 @@ import org.apache.pulsar.protocols.grpc.api.ServerError;
 public class ServerErrors {
 
     public static ServerError convertServerError(PulsarApi.ServerError serverError) {
+        if(serverError == null) {
+            return null;
+        }
         switch(serverError) {
             case MetadataError:
                 return ServerError.MetadataError;
@@ -79,6 +82,9 @@ public class ServerErrors {
     }
 
     public static SubType convertSubscribeSubType(CommandSubscribe.SubType subType) {
+        if(subType == null) {
+            return null;
+        }
         switch (subType) {
             case Shared:
                 return SubType.Shared;
@@ -94,6 +100,9 @@ public class ServerErrors {
     }
 
     public static InitialPosition convertSubscribeInitialPosition(CommandSubscribe.InitialPosition initialPosition) {
+        if(initialPosition == null) {
+            return null;
+        }
         switch (initialPosition) {
             case Latest:
                 return InitialPosition.Latest;
@@ -105,6 +114,9 @@ public class ServerErrors {
     }
 
     public static PulsarApi.KeySharedMode convertKeySharedMode(KeySharedMode mode) {
+        if(mode == null) {
+            return null;
+        }
         switch (mode) {
             case STICKY:
                 return PulsarApi.KeySharedMode.STICKY;
@@ -116,6 +128,9 @@ public class ServerErrors {
     }
 
     public static PulsarApi.KeySharedMeta convertKeySharedMeta(KeySharedMeta meta) {
+        if (meta == null) {
+            return null;
+        }
         PulsarApi.KeySharedMeta.Builder builder = PulsarApi.KeySharedMeta.newBuilder()
                 .setKeySharedMode(convertKeySharedMode(meta.getKeySharedMode()));
         meta.getHashRangesList().stream()

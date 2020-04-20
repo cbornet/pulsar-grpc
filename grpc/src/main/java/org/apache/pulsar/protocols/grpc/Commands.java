@@ -22,19 +22,51 @@ import com.google.protobuf.ByteString;
 import io.grpc.Metadata;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
+import io.grpc.stub.MetadataUtils;
 import io.netty.buffer.ByteBuf;
+import org.apache.pulsar.client.api.KeySharedPolicy;
+import org.apache.pulsar.client.api.Range;
+import org.apache.pulsar.common.api.proto.PulsarApi;
 import org.apache.pulsar.common.api.proto.PulsarApi.MessageMetadata;
+import org.apache.pulsar.common.protocol.CommandUtils;
 import org.apache.pulsar.common.protocol.Commands.ChecksumType;
 import org.apache.pulsar.common.protocol.schema.SchemaVersion;
 import org.apache.pulsar.common.schema.SchemaInfo;
 import org.apache.pulsar.common.schema.SchemaType;
-import org.apache.pulsar.protocols.grpc.api.*;
+import org.apache.pulsar.protocols.grpc.api.AuthData;
+import org.apache.pulsar.protocols.grpc.api.CommandAuthChallenge;
+import org.apache.pulsar.protocols.grpc.api.CommandGetSchema;
+import org.apache.pulsar.protocols.grpc.api.CommandGetSchemaResponse;
+import org.apache.pulsar.protocols.grpc.api.CommandLookupTopicResponse;
+import org.apache.pulsar.protocols.grpc.api.CommandProducer;
+import org.apache.pulsar.protocols.grpc.api.CommandProducerSuccess;
+import org.apache.pulsar.protocols.grpc.api.CommandSend;
+import org.apache.pulsar.protocols.grpc.api.CommandSendError;
+import org.apache.pulsar.protocols.grpc.api.CommandSendReceipt;
+import org.apache.pulsar.protocols.grpc.api.CommandSubscribe;
+import org.apache.pulsar.protocols.grpc.api.CommandSubscribe.SubType;
+import org.apache.pulsar.protocols.grpc.api.CommandSubscribe.InitialPosition;
+import org.apache.pulsar.protocols.grpc.api.CommandSubscribeSuccess;
+import org.apache.pulsar.protocols.grpc.api.CommandSuccess;
+import org.apache.pulsar.protocols.grpc.api.ConsumeOutput;
+import org.apache.pulsar.protocols.grpc.api.IntRange;
+import org.apache.pulsar.protocols.grpc.api.KeySharedMeta;
+import org.apache.pulsar.protocols.grpc.api.KeySharedMode;
+import org.apache.pulsar.protocols.grpc.api.MessageIdData;
+import org.apache.pulsar.protocols.grpc.api.PulsarGrpc;
+import org.apache.pulsar.protocols.grpc.api.Schema;
+import org.apache.pulsar.protocols.grpc.api.SendResult;
+import org.apache.pulsar.protocols.grpc.api.ServerError;
 
+import java.util.Collections;
+import java.util.List;
 import java.util.Map;
 
 import static com.google.protobuf.ByteString.copyFrom;
 import static org.apache.pulsar.common.protocol.Commands.serializeMetadataAndPayload;
+import static org.apache.pulsar.protocols.grpc.Constants.CONSUMER_PARAMS_METADATA_KEY;
 import static org.apache.pulsar.protocols.grpc.Constants.ERROR_CODE_METADATA_KEY;
+import static org.apache.pulsar.protocols.grpc.Constants.PRODUCER_PARAMS_METADATA_KEY;
 
 public class Commands {
 
@@ -245,5 +277,96 @@ public class Commands {
         commandLookupTopicResponseBuilder.setProxyThroughServiceUrl(proxyThroughServiceUrl);
 
         return commandLookupTopicResponseBuilder.build();
+    }
+
+    public static CommandSubscribe newSubscribe(String topic, String subscription, 
+            SubType subType, int priorityLevel, String consumerName, long resetStartMessageBackInSeconds) {
+        return newSubscribe(topic, subscription, subType, priorityLevel, consumerName,
+                true /* isDurable */, null /* startMessageId */, Collections.emptyMap(), false,
+                false /* isReplicated */, InitialPosition.Earliest, resetStartMessageBackInSeconds, null,
+                true /* createTopicIfDoesNotExist */);
+    }
+
+    public static CommandSubscribe newSubscribe(String topic, String subscription, 
+            SubType subType, int priorityLevel, String consumerName, boolean isDurable, MessageIdData startMessageId,
+            Map<String, String> metadata, boolean readCompacted, boolean isReplicated,
+            InitialPosition subscriptionInitialPosition, long startMessageRollbackDurationInSec, SchemaInfo schemaInfo,
+            boolean createTopicIfDoesNotExist) {
+        return newSubscribe(topic, subscription, subType, priorityLevel, consumerName,
+                isDurable, startMessageId, metadata, readCompacted, isReplicated, subscriptionInitialPosition,
+                startMessageRollbackDurationInSec, schemaInfo, createTopicIfDoesNotExist, null);
+    }
+
+    public static CommandSubscribe newSubscribe(String topic, String subscription, 
+            SubType subType, int priorityLevel, String consumerName, boolean isDurable, MessageIdData startMessageId,
+            Map<String, String> metadata, boolean readCompacted, boolean isReplicated,
+            InitialPosition subscriptionInitialPosition, long startMessageRollbackDurationInSec,
+            SchemaInfo schemaInfo, boolean createTopicIfDoesNotExist, KeySharedPolicy keySharedPolicy) {
+        CommandSubscribe.Builder subscribeBuilder = CommandSubscribe.newBuilder();
+        subscribeBuilder.setTopic(topic);
+        subscribeBuilder.setSubscription(subscription);
+        subscribeBuilder.setSubType(subType);
+        subscribeBuilder.setConsumerName(consumerName);
+        subscribeBuilder.setPriorityLevel(priorityLevel);
+        subscribeBuilder.setDurable(isDurable);
+        subscribeBuilder.setReadCompacted(readCompacted);
+        subscribeBuilder.setInitialPosition(subscriptionInitialPosition);
+        subscribeBuilder.setReplicateSubscriptionState(isReplicated);
+        subscribeBuilder.setForceTopicCreation(createTopicIfDoesNotExist);
+
+        if (keySharedPolicy != null) {
+            switch (keySharedPolicy.getKeySharedMode()) {
+                case AUTO_SPLIT:
+                    subscribeBuilder.setKeySharedMeta(KeySharedMeta.newBuilder()
+                            .setKeySharedMode(KeySharedMode.AUTO_SPLIT));
+                    break;
+                case STICKY:
+                    KeySharedMeta.Builder builder = KeySharedMeta.newBuilder()
+                            .setKeySharedMode(KeySharedMode.STICKY);
+                    List<Range> ranges = ((KeySharedPolicy.KeySharedPolicySticky) keySharedPolicy)
+                            .getRanges();
+                    for (Range range : ranges) {
+                        builder.addHashRanges(IntRange.newBuilder()
+                                .setStart(range.getStart())
+                                .setEnd(range.getEnd()));
+                    }
+                    subscribeBuilder.setKeySharedMeta(builder);
+                    break;
+            }
+        }
+
+        if (startMessageId != null) {
+            subscribeBuilder.setStartMessageId(startMessageId);
+        }
+        if (startMessageRollbackDurationInSec > 0) {
+            subscribeBuilder.setStartMessageRollbackDurationSec(startMessageRollbackDurationInSec);
+        }
+        subscribeBuilder.putAllMetadata(metadata);
+
+        Schema schema = null;
+        if (schemaInfo != null) {
+            schema = getSchema(schemaInfo);
+            subscribeBuilder.setSchema(schema);
+        }
+
+        return subscribeBuilder.build();
+    }
+
+    public static ConsumeOutput newSubscriptionSuccess() {
+        return ConsumeOutput.newBuilder()
+                .setSubscribeSuccess(CommandSubscribeSuccess.newBuilder())
+                .build();
+    }
+
+    public static PulsarGrpc.PulsarStub attachProducerParams(PulsarGrpc.PulsarStub stub, CommandProducer producerParams) {
+        Metadata headers = new Metadata();
+        headers.put(PRODUCER_PARAMS_METADATA_KEY, producerParams.toByteArray());
+        return MetadataUtils.attachHeaders(stub, headers);
+    }
+
+    public static PulsarGrpc.PulsarStub attachConsumerParams(PulsarGrpc.PulsarStub stub, CommandSubscribe consumerParams) {
+        Metadata headers = new Metadata();
+        headers.put(CONSUMER_PARAMS_METADATA_KEY, consumerParams.toByteArray());
+        return MetadataUtils.attachHeaders(stub, headers);
     }
 }
