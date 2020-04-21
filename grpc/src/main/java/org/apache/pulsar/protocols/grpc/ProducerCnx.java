@@ -23,22 +23,16 @@ import io.grpc.stub.StreamObserver;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.EventLoop;
-import org.apache.bookkeeper.mledger.Entry;
 import org.apache.bookkeeper.mledger.util.SafeRun;
 import org.apache.pulsar.broker.authentication.AuthenticationDataSource;
 import org.apache.pulsar.broker.service.*;
-import org.apache.pulsar.common.api.proto.PulsarApi;
 import org.apache.pulsar.protocols.grpc.api.CommandSend;
 import org.apache.pulsar.protocols.grpc.api.SendResult;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.net.SocketAddress;
 import java.nio.ByteBuffer;
-import java.util.List;
-import java.util.concurrent.CompletableFuture;
 
-public class GrpcCnx implements ServerCnx {
+public class ProducerCnx implements ServerCnx {
     private final BrokerService service;
     private final SocketAddress remoteAddress;
     private final String authRole;
@@ -56,7 +50,7 @@ public class GrpcCnx implements ServerCnx {
     private volatile boolean autoReadDisabledRateLimiting = false;
     private final AutoReadAwareOnReadyHandler onReadyHandler = new AutoReadAwareOnReadyHandler();
 
-    public GrpcCnx(BrokerService service, SocketAddress remoteAddress, String authRole,
+    public ProducerCnx(BrokerService service, SocketAddress remoteAddress, String authRole,
             AuthenticationDataSource authenticationData, StreamObserver<SendResult> responseObserver,
             EventLoop eventLoop) {
         this.service = service;
@@ -222,7 +216,7 @@ public class GrpcCnx implements ServerCnx {
 
     @Override
     public void sendProducerError(long producerId, long sequenceId, org.apache.pulsar.common.api.proto.PulsarApi.ServerError serverError, String message) {
-        responseObserver.onNext(Commands.newSendError(sequenceId, ServerErrors.convertServerError(serverError), message));
+        responseObserver.onNext(Commands.newSendError(sequenceId, Commands.convertServerError(serverError), message));
     }
 
     @Override

@@ -29,7 +29,6 @@ import org.apache.pulsar.broker.service.schema.SchemaRegistryService;
 import org.apache.pulsar.broker.service.schema.exceptions.IncompatibleSchemaException;
 import org.apache.pulsar.client.impl.BatchMessageIdImpl;
 import org.apache.pulsar.client.impl.MessageIdImpl;
-import org.apache.pulsar.common.api.proto.PulsarApi;
 import org.apache.pulsar.common.naming.Metadata;
 import org.apache.pulsar.common.naming.TopicName;
 import org.apache.pulsar.common.policies.data.BacklogQuota;
@@ -51,7 +50,6 @@ import java.util.concurrent.Semaphore;
 import static com.google.common.base.Preconditions.checkArgument;
 import static org.apache.pulsar.protocols.grpc.Commands.newStatusException;
 import static org.apache.pulsar.protocols.grpc.Constants.*;
-import static org.apache.pulsar.protocols.grpc.ServerErrors.*;
 import static org.apache.pulsar.protocols.grpc.TopicLookup.lookupTopicAsync;
 
 public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
@@ -163,7 +161,6 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
         final AuthenticationDataSource authenticationData = AUTH_DATA_CTX_KEY.get();
         final SocketAddress remoteAddress = REMOTE_ADDRESS_CTX_KEY.get();
 
-        final String topic = cmdProducer.getTopic();
         // Use producer name provided by client if present
         final String producerName = cmdProducer.hasProducerName() ? cmdProducer.getProducerName()
                 : service.generateUniqueProducerName();
@@ -173,15 +170,15 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
         final Map<String, String> metadata = cmdProducer.getMetadataMap();
         final SchemaData schema = cmdProducer.hasSchema() ? getSchema(cmdProducer.getSchema()) : null;
 
-        GrpcCnx cnx = new GrpcCnx(service, remoteAddress, authRole, authenticationData,
+        ProducerCnx cnx = new ProducerCnx(service, remoteAddress, authRole, authenticationData,
                 responseObserver, eventLoopGroup.next());
 
         TopicName topicName;
         try {
-            topicName = TopicName.get(topic);
+            topicName = TopicName.get(cmdProducer.getTopic());
         } catch (Exception e) {
             if (log.isDebugEnabled()) {
-                log.debug("[{}] Failed to parse topic name '{}'", remoteAddress, topic, e);
+                log.debug("[{}] Failed to parse topic name '{}'", remoteAddress, cmdProducer.getTopic(), e);
             }
             responseObserver.onError(newStatusException(Status.INVALID_ARGUMENT,
                     "Invalid topic name: " + e.getMessage(), e, ServerError.InvalidTopicName));
@@ -202,12 +199,12 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
                 if (log.isDebugEnabled()) {
                     log.debug("[{}] Client is authorized to Produce with role {}", remoteAddress, authRole);
                 }
-                service.getOrCreateTopic(topicName.toString()).thenAccept((Topic topik) -> {
+                service.getOrCreateTopic(topicName.toString()).thenAccept((Topic topic) -> {
                     // Before creating producer, check if backlog quota exceeded on topic
-                    if (topik.isBacklogQuotaExceeded(producerName)) {
+                    if (topic.isBacklogQuotaExceeded(producerName)) {
                         IllegalStateException illegalStateException = new IllegalStateException(
                                 "Cannot create producer on topic with backlog quota exceeded");
-                        BacklogQuota.RetentionPolicy retentionPolicy = topik.getBacklogQuota().getPolicy();
+                        BacklogQuota.RetentionPolicy retentionPolicy = topic.getBacklogQuota().getPolicy();
                         if (retentionPolicy == BacklogQuota.RetentionPolicy.producer_request_hold) {
                             responseObserver.onError(newStatusException(Status.FAILED_PRECONDITION,
                                     illegalStateException, ServerError.ProducerBlockedQuotaExceededError));
@@ -220,7 +217,7 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
                     }
 
                     // Check whether the producer will publish encrypted messages or not
-                    if (topik.isEncryptionRequired() && !isEncrypted) {
+                    if (topic.isEncryptionRequired() && !isEncrypted) {
                         String msg = String.format("Encryption is required in %s", topicName);
                         log.warn("[{}] {}", remoteAddress, msg);
                         responseObserver.onError(newStatusException(Status.INVALID_ARGUMENT, msg, null,
@@ -228,21 +225,20 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
                         return;
                     }
 
-                    CompletableFuture<SchemaVersion> schemaVersionFuture = tryAddSchema(topik, schema, remoteAddress);
+                    CompletableFuture<SchemaVersion> schemaVersionFuture = tryAddSchema(topic, schema, remoteAddress);
 
                     schemaVersionFuture.exceptionally(exception -> {
                         responseObserver.onError(newStatusException(Status.FAILED_PRECONDITION, exception,
-                                convertServerError(BrokerServiceException.getClientErrorCode(exception))));
+                                Commands.convertServerError(BrokerServiceException.getClientErrorCode(exception))));
                         return null;
                     });
 
                     schemaVersionFuture.thenAccept(schemaVersion -> {
-                        Producer producer = new Producer(topik, cnx, 0L, producerName, authRole,
+                        Producer producer = new Producer(topic, cnx, 0L, producerName, authRole,
                                 isEncrypted, metadata, schemaVersion, epoch, userProvidedProducerName);
 
                         try {
-                            // TODO : check that removeProducer is called even with early client disconnect
-                            topik.addProducer(producer);
+                            topic.addProducer(producer);
                             if (producerFuture.complete(producer)) {
                                 log.info("[{}] Created new producer: {}", remoteAddress, producer);
                                 responseObserver.onNext(Commands.newProducerSuccess(producerName,
@@ -258,7 +254,7 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
                             log.error("[{}] Failed to add producer to topic {}: {}", remoteAddress, topicName,
                                     ise.getMessage());
                             responseObserver.onError(newStatusException(Status.FAILED_PRECONDITION, ise,
-                                    convertServerError(BrokerServiceException.getClientErrorCode(ise))));
+                                    Commands.convertServerError(BrokerServiceException.getClientErrorCode(ise))));
                             producerFuture.completeExceptionally(ise);
                         }
                     });
@@ -271,7 +267,7 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
 
                     if (producerFuture.completeExceptionally(exception)) {
                         responseObserver.onError(newStatusException(Status.FAILED_PRECONDITION, cause,
-                                convertServerError(BrokerServiceException.getClientErrorCode(cause))));
+                                Commands.convertServerError(BrokerServiceException.getClientErrorCode(cause))));
                     }
                     return null;
                 });
@@ -356,7 +352,7 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
         final boolean forceTopicCreation = subscribe.getForceTopicCreation();
         final KeySharedMeta keySharedMeta = subscribe.hasKeySharedMeta() ? subscribe.getKeySharedMeta() : null;
 
-        GrpcConsumerCnx cnx = new GrpcConsumerCnx(service, remoteAddress, authRole, authenticationData, responseObserver);
+        ConsumerCnx cnx = new ConsumerCnx(service, remoteAddress, authRole, authenticationData, responseObserver);
 
         CompletableFuture<Boolean> authorizationFuture;
         if (service.isAuthorizationEnabled()) {
@@ -406,18 +402,18 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
                             if (schema != null) {
                                 return topic.addSchemaIfIdleOrCheckCompatible(schema)
                                         .thenCompose(v -> topic.subscribe(cnx, subscriptionName, 0L,
-                                                convertSubscribeSubType(subType), priorityLevel,
+                                                Commands.convertSubscribeSubType(subType), priorityLevel,
                                                 consumerName, isDurable, startMessageId, metadata, readCompacted,
-                                                convertSubscribeInitialPosition(initialPosition),
+                                                Commands.convertSubscribeInitialPosition(initialPosition),
                                                 startMessageRollbackDurationSec, isReplicated,
-                                                convertKeySharedMeta(keySharedMeta)));
+                                                Commands.convertKeySharedMeta(keySharedMeta)));
                             } else {
                                 return topic.subscribe(cnx, subscriptionName, 0L,
-                                        convertSubscribeSubType(subType), priorityLevel, consumerName, isDurable,
+                                        Commands.convertSubscribeSubType(subType), priorityLevel, consumerName, isDurable,
                                         startMessageId, metadata, readCompacted,
-                                        convertSubscribeInitialPosition(initialPosition),
+                                        Commands.convertSubscribeInitialPosition(initialPosition),
                                         startMessageRollbackDurationSec, isReplicated,
-                                        convertKeySharedMeta(keySharedMeta));
+                                        Commands.convertKeySharedMeta(keySharedMeta));
                             }
                         })
                         .thenAccept(consumer -> {
@@ -455,16 +451,10 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
                                         subscriptionName, exception.getCause().getMessage(), exception);
                             }
 
-                            // If client timed out, the future would have been completed by subsequent close.
-                            // Send error
-                            // back to client, only if not completed already.
-                            if (consumerFuture.completeExceptionally(exception)) {
-                                responseObserver.onError(newStatusException(Status.FAILED_PRECONDITION, exception.getCause(),
-                                        convertServerError(BrokerServiceException.getClientErrorCode(exception))));
-                            }
-
+                            responseObserver.onError(newStatusException(Status.FAILED_PRECONDITION, exception.getCause(),
+                                        Commands.convertServerError(BrokerServiceException.getClientErrorCode(exception))));
+                            consumerFuture.completeExceptionally(exception);
                             return null;
-
                         });
             } else {
                 String msg = "Client is not authorized to subscribe";
@@ -570,7 +560,7 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
         } catch (BrokerServiceException e) {
             log.warn("[{]] Error closing consumer {} : {}", remoteAddress, consumer, e);
             responseObserver.onError(newStatusException(Status.INTERNAL, e,
-                    ServerErrors.convertServerError(BrokerServiceException.getClientErrorCode(e))));
+                    Commands.convertServerError(BrokerServiceException.getClientErrorCode(e))));
         }
     }
 

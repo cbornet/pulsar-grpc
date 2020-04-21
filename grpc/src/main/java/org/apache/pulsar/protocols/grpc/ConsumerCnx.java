@@ -39,14 +39,14 @@ import java.nio.ByteBuffer;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 
-public class GrpcConsumerCnx implements ServerCnx {
+public class ConsumerCnx implements ServerCnx {
     private final BrokerService service;
     private final SocketAddress remoteAddress;
     private final String authRole;
     private final AuthenticationDataSource authenticationData;
     private final StreamObserver<ConsumeOutput> responseObserver;
 
-    public GrpcConsumerCnx(BrokerService service, SocketAddress remoteAddress, String authRole,
+    public ConsumerCnx(BrokerService service, SocketAddress remoteAddress, String authRole,
             AuthenticationDataSource authenticationData, StreamObserver<ConsumeOutput> responseObserver) {
         this.service = service;
         this.remoteAddress = remoteAddress;

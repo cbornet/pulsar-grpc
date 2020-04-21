@@ -369,4 +369,117 @@ public class Commands {
         headers.put(CONSUMER_PARAMS_METADATA_KEY, consumerParams.toByteArray());
         return MetadataUtils.attachHeaders(stub, headers);
     }
+
+    public static ServerError convertServerError(PulsarApi.ServerError serverError) {
+        if(serverError == null) {
+            return null;
+        }
+        switch(serverError) {
+            case MetadataError:
+                return ServerError.MetadataError;
+            case PersistenceError:
+                return ServerError.PersistenceError;
+            case AuthenticationError:
+                return ServerError.AuthenticationError;
+            case AuthorizationError:
+                return ServerError.AuthorizationError;
+            case ConsumerBusy:
+                return ServerError.ConsumerBusy;
+            case ServiceNotReady:
+                return ServerError.ServiceNotReady;
+            case ProducerBlockedQuotaExceededError:
+                return ServerError.ProducerBlockedQuotaExceededError;
+            case ProducerBlockedQuotaExceededException:
+                return ServerError.ProducerBlockedQuotaExceededException;
+            case ChecksumError:
+                return ServerError.ChecksumError;
+            case UnsupportedVersionError:
+                return ServerError.UnsupportedVersionError;
+            case TopicNotFound:
+                return ServerError.TopicNotFound;
+            case SubscriptionNotFound:
+                return ServerError.SubscriptionNotFound;
+            case ConsumerNotFound:
+                return ServerError.ConsumerNotFound;
+            case TooManyRequests:
+                return ServerError.TooManyRequests;
+            case TopicTerminatedError:
+                return ServerError.TopicTerminatedError;
+            case ProducerBusy:
+                return ServerError.ProducerBusy;
+            case InvalidTopicName:
+                return ServerError.InvalidTopicName;
+            case IncompatibleSchema:
+                return ServerError.IncompatibleSchema;
+            case ConsumerAssignError:
+                return ServerError.ConsumerAssignError;
+            case TransactionCoordinatorNotFound:
+                return ServerError.TransactionCoordinatorNotFound;
+            case InvalidTxnStatus:
+                return ServerError.InvalidTxnStatus;
+            case UnknownError:
+            default:
+                return ServerError.UnknownError;
+        }
+    }
+
+    public static PulsarApi.CommandSubscribe.SubType convertSubscribeSubType(SubType subType) {
+        if(subType == null) {
+            return null;
+        }
+        switch (subType) {
+            case Shared:
+                return PulsarApi.CommandSubscribe.SubType.Shared;
+            case Failover:
+                return PulsarApi.CommandSubscribe.SubType.Failover;
+            case Exclusive:
+                return PulsarApi.CommandSubscribe.SubType.Exclusive;
+            case Key_Shared:
+                return PulsarApi.CommandSubscribe.SubType.Key_Shared;
+            default:
+                throw new IllegalStateException("Unexpected subscribe subtype: " + subType);
+        }
+    }
+
+    public static PulsarApi.CommandSubscribe.InitialPosition convertSubscribeInitialPosition(InitialPosition initialPosition) {
+        if(initialPosition == null) {
+            return null;
+        }
+        switch (initialPosition) {
+            case Latest:
+                return PulsarApi.CommandSubscribe.InitialPosition.Latest;
+            case Earliest:
+                return PulsarApi.CommandSubscribe.InitialPosition.Earliest;
+            default:
+                throw new IllegalStateException("Unexpected subscribe initial position : " + initialPosition);
+        }
+    }
+
+    public static PulsarApi.KeySharedMode convertKeySharedMode(KeySharedMode mode) {
+        if(mode == null) {
+            return null;
+        }
+        switch (mode) {
+            case STICKY:
+                return PulsarApi.KeySharedMode.STICKY;
+            case AUTO_SPLIT:
+                return PulsarApi.KeySharedMode.AUTO_SPLIT;
+            default:
+                throw new IllegalStateException("Unexpected key shared mode: " + mode);
+        }
+    }
+
+    public static PulsarApi.KeySharedMeta convertKeySharedMeta(KeySharedMeta meta) {
+        if (meta == null) {
+            return null;
+        }
+        PulsarApi.KeySharedMeta.Builder builder = PulsarApi.KeySharedMeta.newBuilder()
+                .setKeySharedMode(convertKeySharedMode(meta.getKeySharedMode()));
+        meta.getHashRangesList().stream()
+                .map(intRange -> PulsarApi.IntRange.newBuilder()
+                        .setStart(intRange.getStart())
+                        .setEnd(intRange.getEnd()))
+                .forEach(builder::addHashRanges);
+        return builder.build();
+    }
 }

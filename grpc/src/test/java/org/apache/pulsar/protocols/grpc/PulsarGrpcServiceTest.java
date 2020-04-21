@@ -497,7 +497,7 @@ public class PulsarGrpcServiceTest {
         observer.waitForCompletion();
     }
 
-    //@Test(timeOut = 30000)
+    @Test(timeOut = 30000)
     public void testCreateProducerTimeout() throws Exception {
         // Delay the topic creation in a deterministic way
         CompletableFuture<Runnable> openTopicFuture = new CompletableFuture<>();
@@ -606,6 +606,119 @@ public class PulsarGrpcServiceTest {
         commandSend2.onCompleted();
         observer2.waitForCompletion();
     }
+
+    //@Test(timeOut = 30000)
+    public void testSubscribeTimeout() throws Exception {
+        // Delay the topic creation in a deterministic way
+        CompletableFuture<Runnable> openTopicTask = new CompletableFuture<>();
+        doAnswer(invocationOnMock -> {
+            openTopicTask.complete(() -> {
+                ((AsyncCallbacks.OpenLedgerCallback) invocationOnMock.getArguments()[2]).openLedgerComplete(ledgerMock, null);
+            });
+
+            return null;
+        }).when(mlFactoryMock).asyncOpen(matches(".*success.*"), any(ManagedLedgerConfig.class),
+                any(AsyncCallbacks.OpenLedgerCallback.class), any(Supplier.class), any());
+
+        // In a subscribe timeout from client side we expect to see this sequence of commands :
+        // 1. Subscribe
+        // 2. close consumer (when the timeout is triggered, which may be before the consumer was created on the broker)
+        // 3. Subscribe (triggered by reconnection logic)
+
+        // These operations need to be serialized, to allow the last subscribe operation to finally succeed
+        // (There can be more subscribe/close pairs in the sequence, depending on the client timeout
+
+        CommandSubscribe subscribe = Commands.newSubscribe(successTopicName, successSubName, SubType.Exclusive, 0,
+                "test" /* consumer name */, 0 /* avoid reseting cursor */);
+        PulsarGrpc.PulsarStub consumerStub = Commands.attachConsumerParams(stub, subscribe);
+
+        TestStreamObserver<ConsumeOutput> observer = TestStreamObserver.create();
+        StreamObserver<ConsumeInput> consumeInput = consumerStub.consume(observer);
+
+        consumeInput.onCompleted();
+
+        TestStreamObserver<ConsumeOutput> observer2 = TestStreamObserver.create();
+        StreamObserver<ConsumeInput> consumeInput2 = consumerStub.consume(observer2);
+
+        openTopicTask.get().run();
+
+        // Close succeeds
+        observer.waitForErrorOrComplete();
+
+        // 2nd producer success as topic is opened
+        assertTrue(observer2.takeOneMessage().hasSubscribeSuccess());
+
+        // We should not receive response for 1st consumer, since it was cancelled by the close
+        assertNull(observer.pollOneMessage());
+
+        consumeInput2.onCompleted();
+        observer2.waitForCompletion();
+    }
+
+    @Test(timeOut = 30000)
+    public void testSubscribeBookieTimeout() throws Exception {
+        // Delay the topic creation in a deterministic way
+        CompletableFuture<Runnable> openTopicSuccess = new CompletableFuture<>();
+        doAnswer(invocationOnMock -> {
+            openTopicSuccess.complete(() -> {
+                ((AsyncCallbacks.OpenLedgerCallback) invocationOnMock.getArguments()[2]).openLedgerComplete(ledgerMock, null);
+            });
+            return null;
+        }).when(mlFactoryMock).asyncOpen(matches(".*success.*"), any(ManagedLedgerConfig.class),
+                any(AsyncCallbacks.OpenLedgerCallback.class), any(Supplier.class), any());
+
+        CompletableFuture<Runnable> openTopicFail = new CompletableFuture<>();
+        doAnswer(invocationOnMock -> {
+            openTopicFail.complete(() -> {
+                ((AsyncCallbacks.OpenLedgerCallback) invocationOnMock.getArguments()[2])
+                        .openLedgerFailed(new ManagedLedgerException("Managed ledger failure"), null);
+            });
+            return null;
+        }).when(mlFactoryMock).asyncOpen(matches(".*fail.*"), any(ManagedLedgerConfig.class),
+                any(AsyncCallbacks.OpenLedgerCallback.class), any(Supplier.class), any());
+
+        // In a subscribe timeout from client side we expect to see this sequence of commands :
+        // 1. Subscribe against failtopic which will fail after 100msec
+        // 2. close consumer
+        // 3. Resubscribe (triggered by reconnection logic)
+        // 4. Wait till the timeout of 1, and subscribe again.
+
+        // These operations need to be serialized, to allow the last subscribe operation to finally succeed
+        // (There can be more subscribe/close pairs in the sequence, depending on the client timeout
+        CommandSubscribe subscribe = Commands.newSubscribe(failTopicName, successSubName, SubType.Exclusive, 0,
+                "test" /* consumer name */, 0 /* avoid reseting cursor */);
+        PulsarGrpc.PulsarStub consumerStub = Commands.attachConsumerParams(stub, subscribe);
+        TestStreamObserver<ConsumeOutput> observer = TestStreamObserver.create();
+        StreamObserver<ConsumeInput> consumeInput = consumerStub.consume(observer);
+
+        consumeInput.onCompleted();
+
+        subscribe = Commands.newSubscribe(successTopicName, successSubName, SubType.Exclusive, 0,
+                "test" /* consumer name */, 0 /* avoid reseting cursor */);
+        consumerStub = Commands.attachConsumerParams(stub, subscribe);
+        TestStreamObserver<ConsumeOutput> observer2 = TestStreamObserver.create();
+        StreamObserver<ConsumeInput> consumeInput2 = consumerStub.consume(observer2);
+
+        openTopicFail.get().run();
+
+        // Subscribe fails
+        assertErrorIsStatusExceptionWithServerError(observer.waitForError(), Status.FAILED_PRECONDITION,
+                ServerError.PersistenceError);
+
+        openTopicSuccess.get().run();
+
+        // Subscribe succeeds
+        assertTrue(observer2.takeOneMessage().hasSubscribeSuccess());
+
+        Thread.sleep(100);
+
+        // We should not receive response for 1st consumer, since it was cancelled by the close
+        assertNull(observer.pollOneMessage());
+
+        consumeInput2.onCompleted();
+        observer2.waitForCompletion();
+    }
+
 
     @Test(timeOut = 30000)
     public void testProducerValidationEnforced() throws Exception {
