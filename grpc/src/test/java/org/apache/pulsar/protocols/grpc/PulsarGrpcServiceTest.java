@@ -66,8 +66,9 @@ import org.apache.pulsar.common.protocol.Commands.ChecksumType;
 import org.apache.pulsar.common.protocol.schema.SchemaData;
 import org.apache.pulsar.common.schema.SchemaInfo;
 import org.apache.pulsar.common.schema.SchemaType;
-import org.apache.pulsar.protocols.grpc.api.CommandAck;
 import org.apache.pulsar.protocols.grpc.api.CommandAck.AckType;
+import org.apache.pulsar.protocols.grpc.api.CommandLookupTopic;
+import org.apache.pulsar.protocols.grpc.api.CommandLookupTopicResponse;
 import org.apache.pulsar.protocols.grpc.api.CommandProducer;
 import org.apache.pulsar.protocols.grpc.api.CommandSend;
 import org.apache.pulsar.protocols.grpc.api.CommandSubscribe;
@@ -272,14 +273,6 @@ public class PulsarGrpcServiceTest {
 
         Status actualStatus = Status.fromThrowable(observer.waitForError());
         assertEquals(actualStatus.getCode(), Status.Code.INVALID_ARGUMENT);
-    }
-
-    @Test(timeOut = 30000)
-    public void testInvalidTopicOnProducer() throws Exception {
-        String invalidTopicName = "xx/ass/aa/aaa";
-
-        CommandProducer producerParams = Commands.newProducer(invalidTopicName, "prod-name", Collections.emptyMap());
-        verifyProduceFails(producerParams, Status.INVALID_ARGUMENT, ServerError.InvalidTopicName);
     }
 
     @Test(timeOut = 30000)
@@ -536,7 +529,7 @@ public class PulsarGrpcServiceTest {
         openTopicFuture.get().run();
 
         // Close succeeds (due to race, it will either end with a complete or an error)
-        observer.waitForErrorOrComplete();
+        observer.waitForErrorOrCompletion();
 
         // 2nd producer will be successfully created as topic is open by then
         assertTrue(observer2.takeOneMessage().hasProducerSuccess());
@@ -645,7 +638,7 @@ public class PulsarGrpcServiceTest {
         openTopicTask.get().run();
 
         // Close succeeds
-        observer.waitForErrorOrComplete();
+        observer.waitForErrorOrCompletion();
 
         // 2nd producer success as topic is opened
         assertTrue(observer2.takeOneMessage().hasSubscribeSuccess());
@@ -835,17 +828,6 @@ public class PulsarGrpcServiceTest {
     }
 
     @Test(timeOut = 30000)
-    public void testProducerValidationEnforced() throws Exception {
-        Topic spyTopic = spy(new NonPersistentTopic(successTopicName, brokerService));
-        doReturn(CompletableFuture.completedFuture(true)).when(spyTopic).hasSchema();
-        doReturn(true).when(spyTopic).getSchemaValidationEnforced();
-        doReturn(CompletableFuture.completedFuture(spyTopic)).when(brokerService).getOrCreateTopic(successTopicName);
-
-        CommandProducer producerParams = Commands.newProducer(successTopicName,"prod-name", Collections.emptyMap());
-        verifyProduceFails(producerParams, Status.FAILED_PRECONDITION, ServerError.IncompatibleSchema);
-    }
-
-    @Test(timeOut = 30000)
     public void testProducerSuccessOnEncryptionRequiredTopic() throws Exception {
         // Set encryption_required to true
         ZooKeeperDataCache<Policies> zkDataCache = mock(ZooKeeperDataCache.class);
@@ -988,6 +970,81 @@ public class PulsarGrpcServiceTest {
     }
 
     @Test(timeOut = 30000)
+    public void testInvalidTopicOnLookup() throws Exception {
+        String invalidTopicName = "xx/ass/aa/aaa";
+        CommandLookupTopic lookup = Commands.newLookup(invalidTopicName, true);
+        TestStreamObserver<CommandLookupTopicResponse> lookupResponse = TestStreamObserver.create();
+
+        stub.lookupTopic(lookup, lookupResponse);
+
+        assertErrorIsStatusExceptionWithServerError(lookupResponse.waitForError(), Status.INVALID_ARGUMENT,
+                ServerError.InvalidTopicName);
+    }
+
+    @Test(timeOut = 30000)
+    public void testInvalidTopicOnProducer() throws Exception {
+        String invalidTopicName = "xx/ass/aa/aaa";
+
+        CommandProducer producerParams = Commands.newProducer(invalidTopicName, "prod-name", Collections.emptyMap());
+        verifyProduceFails(producerParams, Status.INVALID_ARGUMENT, ServerError.InvalidTopicName);
+    }
+
+    @Test(timeOut = 30000)
+    public void testInvalidTopicOnSubscribe() throws Exception {
+        String invalidTopicName = "xx/ass/aa/aaa";
+
+        CommandSubscribe subscribe = Commands.newSubscribe(invalidTopicName, "test-subscription", SubType.Exclusive, 0,
+                "consumerName", 0 /*avoid reseting cursor*/);
+        verifyConsumeFails(subscribe, Status.INVALID_ARGUMENT, ServerError.InvalidTopicName);
+    }
+
+    @Test(timeOut = 30000)
+    public void testDelayedClosedProducer() throws Exception {
+        CompletableFuture<Topic> delayFuture = new CompletableFuture<>();
+        Topic topic = spy(new NonPersistentTopic(successTopicName, brokerService));
+        doReturn(delayFuture, CompletableFuture.completedFuture(topic)).when(brokerService).getOrCreateTopic(any(String.class));
+        // Create producer first time
+        CommandProducer createProducer1 = Commands.newProducer(successTopicName, "prod-name", Collections.emptyMap());
+        PulsarGrpc.PulsarStub produceStub = Commands.attachProducerParams(stub, createProducer1);
+
+        TestStreamObserver<SendResult> observer = TestStreamObserver.create();
+        StreamObserver<CommandSend> commandSend1 = produceStub.produce(observer);
+
+        Thread.sleep(1000);
+
+        commandSend1.onCompleted();
+
+        TestStreamObserver<SendResult> observer2 = TestStreamObserver.create();
+        StreamObserver<CommandSend> commandSend2 = produceStub.produce(observer2);
+
+
+        //delayFuture.complete(topic);
+
+        //observer.waitForCompletion();
+
+        assertTrue(observer2.takeOneMessage().hasProducerSuccess());
+
+        commandSend2.onCompleted();
+        observer2.waitForCompletion();
+
+        delayFuture.complete(topic);
+        observer.waitForCompletion();
+
+
+    }
+
+    @Test(timeOut = 30000)
+    public void testProducerValidationEnforced() throws Exception {
+        Topic spyTopic = spy(new NonPersistentTopic(successTopicName, brokerService));
+        doReturn(CompletableFuture.completedFuture(true)).when(spyTopic).hasSchema();
+        doReturn(true).when(spyTopic).getSchemaValidationEnforced();
+        doReturn(CompletableFuture.completedFuture(spyTopic)).when(brokerService).getOrCreateTopic(successTopicName);
+
+        CommandProducer producerParams = Commands.newProducer(successTopicName,"prod-name", Collections.emptyMap());
+        verifyProduceFails(producerParams, Status.FAILED_PRECONDITION, ServerError.IncompatibleSchema);
+    }
+
+    @Test(timeOut = 30000)
     public void testProducerProducerBlockedQuotaExceededErrorOnBacklogQuotaExceeded() throws Exception {
         Topic spyTopic = spy(new PersistentTopic(successTopicName, ledgerMock, brokerService));
         doReturn(true).when(spyTopic).isBacklogQuotaExceeded("exceeded-producer");
@@ -1115,7 +1172,7 @@ public class PulsarGrpcServiceTest {
             complete.await();
         }
 
-        public void waitForErrorOrComplete() throws InterruptedException {
+        public void waitForErrorOrCompletion() throws InterruptedException {
             errorOrComplete.await();
         }
     }

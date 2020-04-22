@@ -41,6 +41,7 @@ import org.apache.pulsar.protocols.grpc.api.CommandAuthChallenge;
 import org.apache.pulsar.protocols.grpc.api.CommandFlow;
 import org.apache.pulsar.protocols.grpc.api.CommandGetSchema;
 import org.apache.pulsar.protocols.grpc.api.CommandGetSchemaResponse;
+import org.apache.pulsar.protocols.grpc.api.CommandLookupTopic;
 import org.apache.pulsar.protocols.grpc.api.CommandLookupTopicResponse;
 import org.apache.pulsar.protocols.grpc.api.CommandProducer;
 import org.apache.pulsar.protocols.grpc.api.CommandProducerSuccess;
@@ -264,6 +265,14 @@ public class Commands {
                 .setSchema(getSchema(schema));
 
         return schemaResponse.build();
+    }
+
+    public static CommandLookupTopic newLookup(String topic, boolean authoritative) {
+        CommandLookupTopic.Builder lookupTopicBuilder = CommandLookupTopic.newBuilder();
+        lookupTopicBuilder.setTopic(topic);
+        lookupTopicBuilder.setAuthoritative(authoritative);
+        return lookupTopicBuilder.build();
+
     }
 
     public static CommandLookupTopicResponse newLookupResponse(String grpcServiceHost, Integer grpcServicePort,
