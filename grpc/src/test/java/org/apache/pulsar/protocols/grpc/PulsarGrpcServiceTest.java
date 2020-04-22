@@ -67,6 +67,7 @@ import org.apache.pulsar.common.protocol.schema.SchemaData;
 import org.apache.pulsar.common.schema.SchemaInfo;
 import org.apache.pulsar.common.schema.SchemaType;
 import org.apache.pulsar.protocols.grpc.api.CommandAck.AckType;
+import org.apache.pulsar.protocols.grpc.api.CommandActiveConsumerChange;
 import org.apache.pulsar.protocols.grpc.api.CommandLookupTopic;
 import org.apache.pulsar.protocols.grpc.api.CommandLookupTopicResponse;
 import org.apache.pulsar.protocols.grpc.api.CommandProducer;
@@ -1010,17 +1011,12 @@ public class PulsarGrpcServiceTest {
         TestStreamObserver<SendResult> observer = TestStreamObserver.create();
         StreamObserver<CommandSend> commandSend1 = produceStub.produce(observer);
 
-        Thread.sleep(1000);
+        Thread.sleep(100);
 
         commandSend1.onCompleted();
 
         TestStreamObserver<SendResult> observer2 = TestStreamObserver.create();
         StreamObserver<CommandSend> commandSend2 = produceStub.produce(observer2);
-
-
-        //delayFuture.complete(topic);
-
-        //observer.waitForCompletion();
 
         assertTrue(observer2.takeOneMessage().hasProducerSuccess());
 
@@ -1029,8 +1025,6 @@ public class PulsarGrpcServiceTest {
 
         delayFuture.complete(topic);
         observer.waitForCompletion();
-
-
     }
 
     @Test(timeOut = 30000)
@@ -1107,6 +1101,37 @@ public class PulsarGrpcServiceTest {
 
         produce.onCompleted();
         observer.waitForCompletion();
+    }
+
+    @Test(timeOut = 30000)
+    public void testActiveConsumerChange() throws Exception {
+        // test SUBSCRIBE on topic and cursor creation success
+        CommandSubscribe subscribe = Commands.newSubscribe(successTopicName, successSubName, SubType.Failover, 0,
+                "test" /* consumer name */, 0 /* avoid reseting cursor */);
+        PulsarGrpc.PulsarStub consumerStub = Commands.attachConsumerParams(stub, subscribe);
+
+        TestStreamObserver<ConsumeOutput> observer = TestStreamObserver.create();
+        StreamObserver<ConsumeInput> consumeInput = consumerStub.consume(observer);
+        assertTrue(observer.takeOneMessage().hasSubscribeSuccess());
+
+        TestStreamObserver<ConsumeOutput> observer2 = TestStreamObserver.create();
+        StreamObserver<ConsumeInput> consumeInput2 = consumerStub.consume(observer2);
+
+        CommandActiveConsumerChange change = observer.takeOneMessage().getActiveConsumerChange();
+        assertNotNull(change);
+        assertTrue(change.getIsActive());
+
+        change = observer2.takeOneMessage().getActiveConsumerChange();
+        assertNotNull(change);
+        assertFalse(change.getIsActive());
+
+        assertTrue(observer2.takeOneMessage().hasSubscribeSuccess());
+
+        consumeInput.onCompleted();
+        observer.waitForCompletion();
+
+        consumeInput2.onCompleted();
+        observer2.waitForCompletion();
     }
 
     private void verifyProduceFails(CommandProducer producerParams, Status expectedStatus, ServerError expectedCode)

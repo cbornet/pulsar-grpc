@@ -28,7 +28,6 @@ import org.apache.pulsar.client.api.KeySharedPolicy;
 import org.apache.pulsar.client.api.Range;
 import org.apache.pulsar.common.api.proto.PulsarApi;
 import org.apache.pulsar.common.api.proto.PulsarApi.MessageMetadata;
-import org.apache.pulsar.common.protocol.CommandUtils;
 import org.apache.pulsar.common.protocol.Commands.ChecksumType;
 import org.apache.pulsar.common.protocol.schema.SchemaVersion;
 import org.apache.pulsar.common.schema.SchemaInfo;
@@ -37,6 +36,7 @@ import org.apache.pulsar.protocols.grpc.api.AuthData;
 import org.apache.pulsar.protocols.grpc.api.CommandAck;
 import org.apache.pulsar.protocols.grpc.api.CommandAck.AckType;
 import org.apache.pulsar.protocols.grpc.api.CommandAck.ValidationError;
+import org.apache.pulsar.protocols.grpc.api.CommandActiveConsumerChange;
 import org.apache.pulsar.protocols.grpc.api.CommandAuthChallenge;
 import org.apache.pulsar.protocols.grpc.api.CommandFlow;
 import org.apache.pulsar.protocols.grpc.api.CommandGetSchema;
@@ -45,14 +45,14 @@ import org.apache.pulsar.protocols.grpc.api.CommandLookupTopic;
 import org.apache.pulsar.protocols.grpc.api.CommandLookupTopicResponse;
 import org.apache.pulsar.protocols.grpc.api.CommandProducer;
 import org.apache.pulsar.protocols.grpc.api.CommandProducerSuccess;
+import org.apache.pulsar.protocols.grpc.api.CommandReachedEndOfTopic;
 import org.apache.pulsar.protocols.grpc.api.CommandSend;
 import org.apache.pulsar.protocols.grpc.api.CommandSendError;
 import org.apache.pulsar.protocols.grpc.api.CommandSendReceipt;
 import org.apache.pulsar.protocols.grpc.api.CommandSubscribe;
-import org.apache.pulsar.protocols.grpc.api.CommandSubscribe.SubType;
 import org.apache.pulsar.protocols.grpc.api.CommandSubscribe.InitialPosition;
+import org.apache.pulsar.protocols.grpc.api.CommandSubscribe.SubType;
 import org.apache.pulsar.protocols.grpc.api.CommandSubscribeSuccess;
-import org.apache.pulsar.protocols.grpc.api.CommandSuccess;
 import org.apache.pulsar.protocols.grpc.api.ConsumeInput;
 import org.apache.pulsar.protocols.grpc.api.ConsumeOutput;
 import org.apache.pulsar.protocols.grpc.api.IntRange;
@@ -407,6 +407,21 @@ public class Commands {
         flowBuilder.setMessagePermits(messagePermits);
         return ConsumeInput.newBuilder()
                 .setFlow(flowBuilder)
+                .build();
+    }
+
+    public static ConsumeOutput newActiveConsumerChange(boolean isActive) {
+        CommandActiveConsumerChange.Builder changeBuilder = CommandActiveConsumerChange.newBuilder()
+                .setIsActive(isActive);
+
+        return ConsumeOutput.newBuilder()
+                .setActiveConsumerChange(changeBuilder)
+                .build();
+    }
+
+    public static ConsumeOutput newReachEndOfTopic() {
+        return ConsumeOutput.newBuilder()
+                .setReachedEndOfTopic(CommandReachedEndOfTopic.newBuilder())
                 .build();
     }
 

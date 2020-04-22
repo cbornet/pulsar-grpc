@@ -440,7 +440,7 @@ message CommandAck {
 
 // changes on active consumer
 message CommandActiveConsumerChange {
-        optional bool is_active     = 2 [default = false];
+    optional bool is_active     = 1 [default = false];
 }
 
 message CommandFlow {
@@ -487,6 +487,7 @@ message ConsumeOutput {
         CommandSubscribeSuccess subscribeSuccess         = 1;
         CommandMessage message                           = 2;
         CommandActiveConsumerChange activeConsumerChange = 3;
+        CommandReachedEndOfTopic reachedEndOfTopic       = 4;
     }
 }
 

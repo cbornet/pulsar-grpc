@@ -87,6 +87,7 @@ public class ConsumerCnx implements ServerCnx {
 
     @Override
     public void sendActiveConsumerChange(long consumerId, boolean isActive) {
+        responseObserver.onNext(Commands.newActiveConsumerChange(isActive));
     }
 
     @Override
@@ -99,10 +100,12 @@ public class ConsumerCnx implements ServerCnx {
 
     @Override
     public void sendReachedEndOfTopic(long consumerId) {
+        responseObserver.onNext(Commands.newReachEndOfTopic());
     }
 
     @Override
-    public CompletableFuture<Void> sendMessagesToConsumer(long consumerId, String topicName, Subscription subscription, int partitionIdx, List<Entry> entries, EntryBatchSizes batchSizes, RedeliveryTracker redeliveryTracker) {
+    public CompletableFuture<Void> sendMessagesToConsumer(long consumerId, String topicName, Subscription subscription,
+            int partitionIdx, List<Entry> entries, EntryBatchSizes batchSizes, RedeliveryTracker redeliveryTracker) {
         return null;
     }
 }
