@@ -92,15 +92,17 @@ public class ConsumerCnx implements ServerCnx {
 
     @Override
     public void sendSuccess(long requestId) {
+        responseObserver.onNext(Commands.newSuccess(requestId));
     }
 
     @Override
     public void sendError(long requestId, PulsarApi.ServerError error, String message) {
+        responseObserver.onNext(Commands.newError(requestId, Commands.convertServerError(error), message));
     }
 
     @Override
     public void sendReachedEndOfTopic(long consumerId) {
-        responseObserver.onNext(Commands.newReachEndOfTopic());
+        responseObserver.onNext(Commands.newReachedEndOfTopic());
     }
 
     @Override

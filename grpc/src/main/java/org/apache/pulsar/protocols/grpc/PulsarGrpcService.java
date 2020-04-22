@@ -50,6 +50,7 @@ import java.util.concurrent.Semaphore;
 
 import static com.google.common.base.Preconditions.checkArgument;
 import static org.apache.pulsar.protocols.grpc.Commands.convertCommandAck;
+import static org.apache.pulsar.protocols.grpc.Commands.newError;
 import static org.apache.pulsar.protocols.grpc.Commands.newStatusException;
 import static org.apache.pulsar.protocols.grpc.Constants.*;
 import static org.apache.pulsar.protocols.grpc.TopicLookup.lookupTopicAsync;
@@ -474,16 +475,13 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
         return new StreamObserver<ConsumeInput>() {
             @Override
             public void onNext(ConsumeInput consumeInput) {
-                if (consumeInput.hasAck()) {
-                    try {
+                switch (consumeInput.getConsumerInputOneofCase()) {
+                    case ACK:
                         if (consumerFuture.isDone() && !consumerFuture.isCompletedExceptionally()) {
                             consumerFuture.getNow(null).messageAcked(convertCommandAck(consumeInput.getAck()));
                         }
-                    } catch (Exception e) {
-                        log.warn("[{}] Ack Message processing failed", remoteAddress, e);
-                    }
-                } else if(consumeInput.hasFlow()) {
-                    try {
+                        break;
+                    case FLOW:
                         CommandFlow flow = consumeInput.getFlow();
                         if (log.isDebugEnabled()) {
                             log.debug("[{}] Received flow permits: {}", remoteAddress, flow.getMessagePermits());
@@ -492,10 +490,20 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
                         if (consumerFuture.isDone() && !consumerFuture.isCompletedExceptionally()) {
                             consumerFuture.getNow(null).flowPermits(flow.getMessagePermits());
                         }
-                    } catch (Exception e) {
-                        log.warn("[{}] Flow message processing failed", remoteAddress, e);
-                    }
+                        break;
+                    case UNSUBSCRIBE:
+                        CommandUnsubscribe unsubscribe = consumeInput.getUnsubscribe();
+                        if (consumerFuture.isDone() && !consumerFuture.isCompletedExceptionally()) {
+                            consumerFuture.getNow(null).doUnsubscribe(unsubscribe.getRequestId());
+                        } else {
+                            responseObserver.onNext(Commands.newError(unsubscribe.getRequestId(),
+                                    ServerError.MetadataError, "Consumer not found"));
+                        }
+                        break;
+                    default:
+                        break;
                 }
+
             }
 
             @Override

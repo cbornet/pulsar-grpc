@@ -68,12 +68,14 @@ import org.apache.pulsar.common.schema.SchemaInfo;
 import org.apache.pulsar.common.schema.SchemaType;
 import org.apache.pulsar.protocols.grpc.api.CommandAck.AckType;
 import org.apache.pulsar.protocols.grpc.api.CommandActiveConsumerChange;
+import org.apache.pulsar.protocols.grpc.api.CommandError;
 import org.apache.pulsar.protocols.grpc.api.CommandLookupTopic;
 import org.apache.pulsar.protocols.grpc.api.CommandLookupTopicResponse;
 import org.apache.pulsar.protocols.grpc.api.CommandProducer;
 import org.apache.pulsar.protocols.grpc.api.CommandSend;
 import org.apache.pulsar.protocols.grpc.api.CommandSubscribe;
 import org.apache.pulsar.protocols.grpc.api.CommandSubscribe.SubType;
+import org.apache.pulsar.protocols.grpc.api.CommandSuccess;
 import org.apache.pulsar.protocols.grpc.api.ConsumeInput;
 import org.apache.pulsar.protocols.grpc.api.ConsumeOutput;
 import org.apache.pulsar.protocols.grpc.api.PulsarGrpc;
@@ -1130,6 +1132,75 @@ public class PulsarGrpcServiceTest {
         consumeInput.onCompleted();
         observer.waitForCompletion();
 
+        consumeInput2.onCompleted();
+        observer2.waitForCompletion();
+    }
+
+    @Test(timeOut = 30000)
+    public void testReachEndOfTopic() throws Exception {
+        PositionImpl pos = new PositionImpl(0, 0);
+        doReturn(pos).when(cursorMock).getMarkDeletedPosition();
+        CommandSubscribe subscribe = Commands.newSubscribe(successTopicName, successSubName, SubType.Exclusive, 0,
+                "test" /* consumer name */, 0 /* avoid reseting cursor */);
+        PulsarGrpc.PulsarStub consumerStub = Commands.attachConsumerParams(stub, subscribe);
+
+        TestStreamObserver<ConsumeOutput> observer = TestStreamObserver.create();
+        StreamObserver<ConsumeInput> consumeInput = consumerStub.consume(observer);
+        assertTrue(observer.takeOneMessage().hasSubscribeSuccess());
+
+        doReturn(true).when(ledgerMock).isTerminated();
+        doReturn(0L).when(cursorMock).getNumberOfEntriesInBacklog(false);
+
+        consumeInput.onNext(Commands.newAck(pos.getLedgerId(), pos.getEntryId(), AckType.Individual,
+                null, Collections.emptyMap()));
+
+        assertTrue(observer.takeOneMessage().hasReachedEndOfTopic());
+        consumeInput.onCompleted();
+        observer.waitForCompletion();
+    }
+
+    @Test(timeOut = 30000)
+    public void testUnsubscribeSuccess() throws Exception {
+        CommandSubscribe subscribe = Commands.newSubscribe(successTopicName, successSubName, SubType.Exclusive, 0,
+                "test" /* consumer name */, 0 /* avoid reseting cursor */);
+        PulsarGrpc.PulsarStub consumerStub = Commands.attachConsumerParams(stub, subscribe);
+
+        TestStreamObserver<ConsumeOutput> observer = TestStreamObserver.create();
+        StreamObserver<ConsumeInput> consumeInput = consumerStub.consume(observer);
+        assertTrue(observer.takeOneMessage().hasSubscribeSuccess());
+
+        consumeInput.onNext(Commands.newUnsubscribe(1));
+        // TODO: invert calls to removedConsumer() and sendSuccess() in doUnsubscribe
+        //       so that we get the success message before the complete
+        //CommandSuccess success = observer.takeOneMessage().getSuccess();
+        //assertNotNull(success);
+        //assertEquals(success.getRequestId(), 1L);
+
+        observer.waitForCompletion();
+    }
+
+    @Test(timeOut = 30000)
+    public void testUnsubscribeError() throws Exception {
+        CommandSubscribe subscribe = Commands.newSubscribe(successTopicName, successSubName, SubType.Shared, 0,
+                "test" /* consumer name */, 0 /* avoid reseting cursor */);
+        PulsarGrpc.PulsarStub consumerStub = Commands.attachConsumerParams(stub, subscribe);
+
+        TestStreamObserver<ConsumeOutput> observer = TestStreamObserver.create();
+        StreamObserver<ConsumeInput> consumeInput = consumerStub.consume(observer);
+        assertTrue(observer.takeOneMessage().hasSubscribeSuccess());
+
+        TestStreamObserver<ConsumeOutput> observer2 = TestStreamObserver.create();
+        StreamObserver<ConsumeInput> consumeInput2 = consumerStub.consume(observer2);
+        assertTrue(observer2.takeOneMessage().hasSubscribeSuccess());
+
+        consumeInput.onNext(Commands.newUnsubscribe(1));
+        CommandError error = observer.takeOneMessage().getError();
+        assertNotNull(error);
+        assertEquals(error.getRequestId(), 1L);
+        assertEquals(error.getError(), ServerError.MetadataError);
+
+        consumeInput.onCompleted();
+        observer.waitForCompletion();
         consumeInput2.onCompleted();
         observer2.waitForCompletion();
     }

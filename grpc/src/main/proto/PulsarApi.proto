@@ -450,8 +450,7 @@ message CommandFlow {
 }
 
 message CommandUnsubscribe {
-    required uint64 consumer_id = 1;
-    required uint64 request_id  = 2;
+    required uint64 request_id  = 1;
 }
 
 // Reset an existing consumer to a particular message id
@@ -488,6 +487,8 @@ message ConsumeOutput {
         CommandMessage message                           = 2;
         CommandActiveConsumerChange activeConsumerChange = 3;
         CommandReachedEndOfTopic reachedEndOfTopic       = 4;
+        CommandSuccess success                           = 5;
+        CommandError error                               = 6;
     }
 }
 
@@ -509,8 +510,9 @@ message CommandSubscribeSuccess {
 }
 
 message CommandError {
-    required ServerError error = 1;
-    required string message    = 2;
+    required uint64 request_id  = 1;
+    required ServerError error = 2;
+    required string message    = 3;
 }
 
 message CommandConsumerStats {

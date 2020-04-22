@@ -38,6 +38,7 @@ import org.apache.pulsar.protocols.grpc.api.CommandAck.AckType;
 import org.apache.pulsar.protocols.grpc.api.CommandAck.ValidationError;
 import org.apache.pulsar.protocols.grpc.api.CommandActiveConsumerChange;
 import org.apache.pulsar.protocols.grpc.api.CommandAuthChallenge;
+import org.apache.pulsar.protocols.grpc.api.CommandError;
 import org.apache.pulsar.protocols.grpc.api.CommandFlow;
 import org.apache.pulsar.protocols.grpc.api.CommandGetSchema;
 import org.apache.pulsar.protocols.grpc.api.CommandGetSchemaResponse;
@@ -53,6 +54,8 @@ import org.apache.pulsar.protocols.grpc.api.CommandSubscribe;
 import org.apache.pulsar.protocols.grpc.api.CommandSubscribe.InitialPosition;
 import org.apache.pulsar.protocols.grpc.api.CommandSubscribe.SubType;
 import org.apache.pulsar.protocols.grpc.api.CommandSubscribeSuccess;
+import org.apache.pulsar.protocols.grpc.api.CommandSuccess;
+import org.apache.pulsar.protocols.grpc.api.CommandUnsubscribe;
 import org.apache.pulsar.protocols.grpc.api.ConsumeInput;
 import org.apache.pulsar.protocols.grpc.api.ConsumeOutput;
 import org.apache.pulsar.protocols.grpc.api.IntRange;
@@ -372,6 +375,32 @@ public class Commands {
                 .build();
     }
 
+    public static ConsumeInput newUnsubscribe(long requestId) {
+        CommandUnsubscribe.Builder unsubscribeBuilder = CommandUnsubscribe.newBuilder();
+        unsubscribeBuilder.setRequestId(requestId);
+        return ConsumeInput.newBuilder()
+                .setUnsubscribe(unsubscribeBuilder)
+                .build();
+    }
+
+    public static ConsumeOutput newSuccess(long requestId) {
+        CommandSuccess.Builder successBuilder = CommandSuccess.newBuilder();
+        successBuilder.setRequestId(requestId);
+        return ConsumeOutput.newBuilder()
+                .setSuccess(successBuilder)
+                .build();
+    }
+
+    public static ConsumeOutput newError(long requestId, ServerError error, String message) {
+        CommandError.Builder cmdErrorBuilder = CommandError.newBuilder();
+        cmdErrorBuilder.setRequestId(requestId);
+        cmdErrorBuilder.setError(error);
+        cmdErrorBuilder.setMessage(message);
+        return ConsumeOutput.newBuilder()
+                .setError(cmdErrorBuilder)
+                .build();
+    }
+
     public static ConsumeInput newAck(long ledgerId, long entryId, CommandAck.AckType ackType,
             CommandAck.ValidationError validationError, Map<String, Long> properties) {
         return newAck(ledgerId, entryId, ackType, validationError, properties, 0, 0);
@@ -419,7 +448,7 @@ public class Commands {
                 .build();
     }
 
-    public static ConsumeOutput newReachEndOfTopic() {
+    public static ConsumeOutput newReachedEndOfTopic() {
         return ConsumeOutput.newBuilder()
                 .setReachedEndOfTopic(CommandReachedEndOfTopic.newBuilder())
                 .build();
