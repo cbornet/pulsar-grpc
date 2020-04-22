@@ -52,7 +52,6 @@ import org.apache.pulsar.broker.cache.ConfigurationCacheService;
 import org.apache.pulsar.broker.cache.LocalZooKeeperCacheService;
 import org.apache.pulsar.broker.namespace.NamespaceService;
 import org.apache.pulsar.broker.service.BrokerService;
-import org.apache.pulsar.broker.service.BrokerServiceException;
 import org.apache.pulsar.broker.service.Topic;
 import org.apache.pulsar.broker.service.nonpersistent.NonPersistentTopic;
 import org.apache.pulsar.broker.service.persistent.PersistentTopic;
@@ -67,6 +66,8 @@ import org.apache.pulsar.common.protocol.Commands.ChecksumType;
 import org.apache.pulsar.common.protocol.schema.SchemaData;
 import org.apache.pulsar.common.schema.SchemaInfo;
 import org.apache.pulsar.common.schema.SchemaType;
+import org.apache.pulsar.protocols.grpc.api.CommandAck;
+import org.apache.pulsar.protocols.grpc.api.CommandAck.AckType;
 import org.apache.pulsar.protocols.grpc.api.CommandProducer;
 import org.apache.pulsar.protocols.grpc.api.CommandSend;
 import org.apache.pulsar.protocols.grpc.api.CommandSubscribe;
@@ -432,6 +433,7 @@ public class PulsarGrpcServiceTest {
         observer2.waitForCompletion();
     }
 
+    @Test(timeOut = 30000)
     public void testProducerCommandWithAuthorizationNegative() throws Exception {
         AuthorizationService authorizationService = mock(AuthorizationService.class);
         doReturn(CompletableFuture.completedFuture(false)).when(authorizationService).canProduceAsync(Mockito.any(),
@@ -607,7 +609,7 @@ public class PulsarGrpcServiceTest {
         observer2.waitForCompletion();
     }
 
-    //@Test(timeOut = 30000)
+    @Test(timeOut = 30000)
     public void testSubscribeTimeout() throws Exception {
         // Delay the topic creation in a deterministic way
         CompletableFuture<Runnable> openTopicTask = new CompletableFuture<>();
@@ -719,6 +721,118 @@ public class PulsarGrpcServiceTest {
         observer2.waitForCompletion();
     }
 
+    @Test(timeOut = 30000)
+    public void testSubscribeCommand() throws Exception {
+        final String failSubName = "failSub";
+
+        doReturn(false).when(brokerService).isAuthenticationEnabled();
+        doReturn(false).when(brokerService).isAuthorizationEnabled();
+        // test SUBSCRIBE on topic and cursor creation success
+        CommandSubscribe subscribe = Commands.newSubscribe(successTopicName, successSubName, SubType.Exclusive, 0,
+                "test" /* consumer name */, 0 /* avoid reseting cursor */);
+        PulsarGrpc.PulsarStub consumerStub = Commands.attachConsumerParams(stub, subscribe);
+
+        TestStreamObserver<ConsumeOutput> observer = TestStreamObserver.create();
+        StreamObserver<ConsumeInput> consumeInput = consumerStub.consume(observer);
+        assertTrue(observer.takeOneMessage().hasSubscribeSuccess());
+
+        PersistentTopic topicRef = (PersistentTopic) brokerService.getTopicReference(successTopicName).get();
+
+        assertNotNull(topicRef);
+        assertTrue(topicRef.getSubscriptions().containsKey(successSubName));
+        assertTrue(topicRef.getSubscription(successSubName).getDispatcher().isConsumerConnected());
+
+        consumeInput.onCompleted();
+        observer.waitForCompletion();
+
+        // test SUBSCRIBE on topic creation success and cursor failure
+        subscribe = Commands.newSubscribe(successTopicName, failSubName, SubType.Exclusive, 0,
+                "test" /* consumer name */, 0 /* avoid reseting cursor */);
+        verifyConsumeFails(subscribe, Status.FAILED_PRECONDITION, ServerError.PersistenceError);
+
+        // test SUBSCRIBE on topic creation failure
+        subscribe = Commands.newSubscribe(failTopicName, successSubName, SubType.Exclusive, 0,
+                "test" /* consumer name */, 0 /* avoid reseting cursor */);
+        verifyConsumeFails(subscribe, Status.FAILED_PRECONDITION, ServerError.PersistenceError);
+    }
+
+    @Test(timeOut = 30000)
+    public void testSubscribeCommandWithAuthorizationPositive() throws Exception {
+        AuthorizationService authorizationService = mock(AuthorizationService.class);
+        doReturn(CompletableFuture.completedFuture(true)).when(authorizationService).canConsumeAsync(Mockito.any(),
+                Mockito.any(), Mockito.any(), Mockito.any());
+        doReturn(authorizationService).when(brokerService).getAuthorizationService();
+        doReturn(true).when(brokerService).isAuthenticationEnabled();
+        doReturn(true).when(brokerService).isAuthorizationEnabled();
+
+        // test SUBSCRIBE on topic and cursor creation success
+        CommandSubscribe subscribe = Commands.newSubscribe(successTopicName, successSubName, SubType.Exclusive, 0,
+                "test" /* consumer name */, 0 /* avoid reseting cursor */);
+        PulsarGrpc.PulsarStub consumerStub = Commands.attachConsumerParams(stub, subscribe);
+
+        TestStreamObserver<ConsumeOutput> observer = TestStreamObserver.create();
+        StreamObserver<ConsumeInput> consumeInput = consumerStub.consume(observer);
+        assertTrue(observer.takeOneMessage().hasSubscribeSuccess());
+
+        consumeInput.onCompleted();
+        observer.waitForCompletion();
+    }
+
+    @Test(timeOut = 30000)
+    public void testSubscribeCommandWithAuthorizationNegative() throws Exception {
+        AuthorizationService authorizationService = mock(AuthorizationService.class);
+        doReturn(CompletableFuture.completedFuture(false)).when(authorizationService).canConsumeAsync(Mockito.any(),
+                Mockito.any(), Mockito.any(), Mockito.any());
+        doReturn(authorizationService).when(brokerService).getAuthorizationService();
+        doReturn(true).when(brokerService).isAuthenticationEnabled();
+        doReturn(true).when(brokerService).isAuthorizationEnabled();
+
+        // test SUBSCRIBE on topic and cursor creation success
+        CommandSubscribe subscribe = Commands.newSubscribe(successTopicName, successSubName, SubType.Exclusive, 0,
+                "test" /* consumer name */, 0 /* avoid reseting cursor */);
+        verifyConsumeFails(subscribe, Status.PERMISSION_DENIED, ServerError.AuthorizationError);
+    }
+
+    @Test(timeOut = 30000)
+    public void testAckCommand() throws Exception {
+        PositionImpl pos = new PositionImpl(0, 0);
+        doReturn(pos).when(cursorMock).getMarkDeletedPosition();
+        CommandSubscribe subscribe = Commands.newSubscribe(successTopicName, successSubName, SubType.Exclusive, 0,
+                "test" /* consumer name */, 0 /* avoid reseting cursor */);
+        PulsarGrpc.PulsarStub consumerStub = Commands.attachConsumerParams(stub, subscribe);
+
+        TestStreamObserver<ConsumeOutput> observer = TestStreamObserver.create();
+        StreamObserver<ConsumeInput> consumeInput = consumerStub.consume(observer);
+        assertTrue(observer.takeOneMessage().hasSubscribeSuccess());
+
+        consumeInput.onNext(Commands.newAck(pos.getLedgerId(), pos.getEntryId(), AckType.Individual,
+                null, Collections.emptyMap()));
+
+        // verify nothing is sent out on the wire after ack
+        Thread.sleep(100);
+        assertNull(observer.pollOneMessage());
+        consumeInput.onCompleted();
+        observer.waitForCompletion();
+    }
+
+    @Test(timeOut = 30000)
+    public void testFlowCommand() throws Exception {
+        CommandSubscribe subscribe = Commands.newSubscribe(successTopicName, successSubName, SubType.Exclusive, 0,
+                "test" /* consumer name */, 0 /* avoid reseting cursor */);
+        PulsarGrpc.PulsarStub consumerStub = Commands.attachConsumerParams(stub, subscribe);
+
+        TestStreamObserver<ConsumeOutput> observer = TestStreamObserver.create();
+        StreamObserver<ConsumeInput> consumeInput = consumerStub.consume(observer);
+        assertTrue(observer.takeOneMessage().hasSubscribeSuccess());
+
+        consumeInput.onNext(Commands.newFlow(1));
+
+        // verify nothing is sent out on the wire after ack
+        Thread.sleep(100);
+        assertNull(observer.pollOneMessage());
+        consumeInput.onCompleted();
+        observer.waitForCompletion();
+    }
 
     @Test(timeOut = 30000)
     public void testProducerValidationEnforced() throws Exception {
@@ -1055,44 +1169,14 @@ public class PulsarGrpcServiceTest {
     }
     
     @SuppressWarnings("unchecked")
-    void setupMLAsyncCallbackMocks() {
-        ledgerMock = mock(ManagedLedger.class);
-        cursorMock = mock(ManagedCursor.class);
-        final CompletableFuture<Void> closeFuture = new CompletableFuture<>();
-
+    private void setupMLAsyncCallbackMocks() {
         doReturn(new ArrayList<Object>()).when(ledgerMock).getCursors();
-        doReturn("mockCursor").when(cursorMock).getName();
-        doReturn(true).when(cursorMock).isDurable();
-        // doNothing().when(cursorMock).asyncClose(new CloseCallback() {
-        doAnswer(new Answer<Object>() {
-            @Override
-            public Object answer(InvocationOnMock invocationOnMock) throws Throwable {
-                // return closeFuture.get();
-                return closeFuture.complete(null);
-            }
-        })
-
-                .when(cursorMock).asyncClose(new AsyncCallbacks.CloseCallback() {
-
-            @Override
-            public void closeComplete(Object ctx) {
-                log.info("[{}] Successfully closed cursor ledger", "mockCursor");
-                closeFuture.complete(null);
-            }
-
-            @Override
-            public void closeFailed(ManagedLedgerException exception, Object ctx) {
-                // isFenced.set(false);
-
-                log.error("Error closing cursor for subscription", exception);
-                closeFuture.completeExceptionally(new BrokerServiceException.PersistenceException(exception));
-            }
-        }, null);
 
         // call openLedgerComplete with ledgerMock on ML factory asyncOpen
         doAnswer(new Answer<Object>() {
             @Override
             public Object answer(InvocationOnMock invocationOnMock) throws Throwable {
+                Thread.sleep(300);
                 ((AsyncCallbacks.OpenLedgerCallback) invocationOnMock.getArguments()[2]).openLedgerComplete(ledgerMock, null);
                 return null;
             }
@@ -1103,8 +1187,12 @@ public class PulsarGrpcServiceTest {
         doAnswer(new Answer<Object>() {
             @Override
             public Object answer(InvocationOnMock invocationOnMock) throws Throwable {
-                ((AsyncCallbacks.OpenLedgerCallback) invocationOnMock.getArguments()[2])
-                        .openLedgerFailed(new ManagedLedgerException("Managed ledger failure"), null);
+                Thread.sleep(300);
+                new Thread(() -> {
+                    ((AsyncCallbacks.OpenLedgerCallback) invocationOnMock.getArguments()[2])
+                            .openLedgerFailed(new ManagedLedgerException("Managed ledger failure"), null);
+                }).start();
+
                 return null;
             }
         }).when(mlFactoryMock).asyncOpen(matches(".*fail.*"), any(ManagedLedgerConfig.class),
@@ -1114,16 +1202,16 @@ public class PulsarGrpcServiceTest {
         doAnswer(new Answer<Object>() {
             @Override
             public Object answer(InvocationOnMock invocationOnMock) throws Throwable {
-                ((AsyncCallbacks.AddEntryCallback) invocationOnMock.getArguments()[1]).addComplete(new PositionImpl(1, 1),
+                ((AsyncCallbacks.AddEntryCallback) invocationOnMock.getArguments()[1]).addComplete(new PositionImpl(-1, -1),
                         invocationOnMock.getArguments()[2]);
                 return null;
             }
         }).when(ledgerMock).asyncAddEntry(any(ByteBuf.class), any(AsyncCallbacks.AddEntryCallback.class), any());
 
-        // call openCursorComplete on cursor asyncOpen
         doAnswer(new Answer<Object>() {
             @Override
             public Object answer(InvocationOnMock invocationOnMock) throws Throwable {
+                Thread.sleep(300);
                 ((AsyncCallbacks.OpenCursorCallback) invocationOnMock.getArguments()[2]).openCursorComplete(cursorMock, null);
                 return null;
             }
@@ -1132,20 +1220,33 @@ public class PulsarGrpcServiceTest {
         doAnswer(new Answer<Object>() {
             @Override
             public Object answer(InvocationOnMock invocationOnMock) throws Throwable {
+                Thread.sleep(300);
                 ((AsyncCallbacks.OpenCursorCallback) invocationOnMock.getArguments()[3]).openCursorComplete(cursorMock, null);
                 return null;
             }
         }).when(ledgerMock).asyncOpenCursor(matches(".*success.*"), any(PulsarApi.CommandSubscribe.InitialPosition.class), any(Map.class),
                 any(AsyncCallbacks.OpenCursorCallback.class), any());
 
-        // call deleteLedgerComplete on ledger asyncDelete
         doAnswer(new Answer<Object>() {
             @Override
             public Object answer(InvocationOnMock invocationOnMock) throws Throwable {
-                ((AsyncCallbacks.DeleteLedgerCallback) invocationOnMock.getArguments()[0]).deleteLedgerComplete(null);
+                Thread.sleep(300);
+                ((AsyncCallbacks.OpenCursorCallback) invocationOnMock.getArguments()[2])
+                        .openCursorFailed(new ManagedLedgerException("Managed ledger failure"), null);
                 return null;
             }
-        }).when(ledgerMock).asyncDelete(any(AsyncCallbacks.DeleteLedgerCallback.class), any());
+        }).when(ledgerMock).asyncOpenCursor(matches(".*fail.*"), any(PulsarApi.CommandSubscribe.InitialPosition.class), any(AsyncCallbacks.OpenCursorCallback.class), any());
+
+        doAnswer(new Answer<Object>() {
+            @Override
+            public Object answer(InvocationOnMock invocationOnMock) throws Throwable {
+                Thread.sleep(300);
+                ((AsyncCallbacks.OpenCursorCallback) invocationOnMock.getArguments()[3])
+                        .openCursorFailed(new ManagedLedgerException("Managed ledger failure"), null);
+                return null;
+            }
+        }).when(ledgerMock).asyncOpenCursor(matches(".*fail.*"), any(PulsarApi.CommandSubscribe.InitialPosition.class), any(Map.class),
+                any(AsyncCallbacks.OpenCursorCallback.class), any());
 
         doAnswer(new Answer<Object>() {
             @Override
@@ -1155,10 +1256,23 @@ public class PulsarGrpcServiceTest {
             }
         }).when(ledgerMock).asyncDeleteCursor(matches(".*success.*"), any(AsyncCallbacks.DeleteCursorCallback.class), any());
 
-        doAnswer((invokactionOnMock) -> {
-            ((AsyncCallbacks.MarkDeleteCallback) invokactionOnMock.getArguments()[2])
-                    .markDeleteComplete(invokactionOnMock.getArguments()[3]);
-            return null;
-        }).when(cursorMock).asyncMarkDelete(any(), any(), any(AsyncCallbacks.MarkDeleteCallback.class), any());
+        doAnswer(new Answer<Object>() {
+            @Override
+            public Object answer(InvocationOnMock invocationOnMock) throws Throwable {
+                ((AsyncCallbacks.DeleteCursorCallback) invocationOnMock.getArguments()[1])
+                        .deleteCursorFailed(new ManagedLedgerException("Managed ledger failure"), null);
+                return null;
+            }
+        }).when(ledgerMock).asyncDeleteCursor(matches(".*fail.*"), any(AsyncCallbacks.DeleteCursorCallback.class), any());
+
+        doAnswer(new Answer<Object>() {
+            @Override
+            public Object answer(InvocationOnMock invocationOnMock) throws Throwable {
+                ((AsyncCallbacks.CloseCallback) invocationOnMock.getArguments()[0]).closeComplete(null);
+                return null;
+            }
+        }).when(cursorMock).asyncClose(any(AsyncCallbacks.CloseCallback.class), any());
+
+        doReturn(successSubName).when(cursorMock).getName();
     }
 }

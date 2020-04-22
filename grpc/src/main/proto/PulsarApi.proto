@@ -415,8 +415,6 @@ message CommandAck {
         Individual = 0;
         Cumulative = 1;
     }
-
-    required uint64 consumer_id       = 1;
     required AckType ack_type         = 2;
 
     // In case of individual acks, the client can pass a list of message ids
@@ -434,7 +432,7 @@ message CommandAck {
     }
 
     optional ValidationError validation_error = 4;
-    repeated KeyLongValue properties = 5;
+    map<string, uint64> properties = 5;
 
     optional uint64 txnid_least_bits = 6 [default = 0];
     optional uint64 txnid_most_bits = 7 [default = 0];
@@ -442,16 +440,13 @@ message CommandAck {
 
 // changes on active consumer
 message CommandActiveConsumerChange {
-        required uint64 consumer_id    = 1;
         optional bool is_active     = 2 [default = false];
 }
 
 message CommandFlow {
-    required uint64 consumer_id       = 1;
-
     // Max number of messages to prefetch, in addition
     // of any number previously specified
-    required uint32 messagePermits     = 2;
+    required uint32 messagePermits     = 1;
 }
 
 message CommandUnsubscribe {

@@ -34,7 +34,11 @@ import org.apache.pulsar.common.protocol.schema.SchemaVersion;
 import org.apache.pulsar.common.schema.SchemaInfo;
 import org.apache.pulsar.common.schema.SchemaType;
 import org.apache.pulsar.protocols.grpc.api.AuthData;
+import org.apache.pulsar.protocols.grpc.api.CommandAck;
+import org.apache.pulsar.protocols.grpc.api.CommandAck.AckType;
+import org.apache.pulsar.protocols.grpc.api.CommandAck.ValidationError;
 import org.apache.pulsar.protocols.grpc.api.CommandAuthChallenge;
+import org.apache.pulsar.protocols.grpc.api.CommandFlow;
 import org.apache.pulsar.protocols.grpc.api.CommandGetSchema;
 import org.apache.pulsar.protocols.grpc.api.CommandGetSchemaResponse;
 import org.apache.pulsar.protocols.grpc.api.CommandLookupTopicResponse;
@@ -48,6 +52,7 @@ import org.apache.pulsar.protocols.grpc.api.CommandSubscribe.SubType;
 import org.apache.pulsar.protocols.grpc.api.CommandSubscribe.InitialPosition;
 import org.apache.pulsar.protocols.grpc.api.CommandSubscribeSuccess;
 import org.apache.pulsar.protocols.grpc.api.CommandSuccess;
+import org.apache.pulsar.protocols.grpc.api.ConsumeInput;
 import org.apache.pulsar.protocols.grpc.api.ConsumeOutput;
 import org.apache.pulsar.protocols.grpc.api.IntRange;
 import org.apache.pulsar.protocols.grpc.api.KeySharedMeta;
@@ -358,6 +363,44 @@ public class Commands {
                 .build();
     }
 
+    public static ConsumeInput newAck(long ledgerId, long entryId, CommandAck.AckType ackType,
+            CommandAck.ValidationError validationError, Map<String, Long> properties) {
+        return newAck(ledgerId, entryId, ackType, validationError, properties, 0, 0);
+    }
+
+    public static ConsumeInput newAck(long ledgerId, long entryId, CommandAck.AckType ackType,
+            CommandAck.ValidationError validationError, Map<String, Long> properties, long txnIdLeastBits,
+            long txnIdMostBits) {
+        CommandAck.Builder ackBuilder = CommandAck.newBuilder();
+        ackBuilder.setAckType(ackType);
+        MessageIdData.Builder messageIdDataBuilder = MessageIdData.newBuilder();
+        messageIdDataBuilder.setLedgerId(ledgerId);
+        messageIdDataBuilder.setEntryId(entryId);
+        MessageIdData messageIdData = messageIdDataBuilder.build();
+        ackBuilder.addMessageId(messageIdData);
+        if (validationError != null) {
+            ackBuilder.setValidationError(validationError);
+        }
+        if (txnIdMostBits > 0) {
+            ackBuilder.setTxnidMostBits(txnIdMostBits);
+        }
+        if (txnIdLeastBits > 0) {
+            ackBuilder.setTxnidLeastBits(txnIdLeastBits);
+        }
+        ackBuilder.putAllProperties(properties);
+        return ConsumeInput.newBuilder()
+                .setAck(ackBuilder)
+                .build();
+    }
+
+    public static ConsumeInput newFlow(int messagePermits) {
+        CommandFlow.Builder flowBuilder = CommandFlow.newBuilder();
+        flowBuilder.setMessagePermits(messagePermits);
+        return ConsumeInput.newBuilder()
+                .setFlow(flowBuilder)
+                .build();
+    }
+
     public static PulsarGrpc.PulsarStub attachProducerParams(PulsarGrpc.PulsarStub stub, CommandProducer producerParams) {
         Metadata headers = new Metadata();
         headers.put(PRODUCER_PARAMS_METADATA_KEY, producerParams.toByteArray());
@@ -480,6 +523,72 @@ public class Commands {
                         .setStart(intRange.getStart())
                         .setEnd(intRange.getEnd()))
                 .forEach(builder::addHashRanges);
+        return builder.build();
+    }
+
+    public static PulsarApi.CommandAck.AckType convertAckType(AckType type) {
+        if (type == null) {
+            return null;
+        }
+        switch (type) {
+            case Individual:
+                return PulsarApi.CommandAck.AckType.Individual;
+            case Cumulative:
+                return PulsarApi.CommandAck.AckType.Cumulative;
+            default:
+                throw new IllegalStateException("Unexpected ack type: " + type);
+        }
+    }
+
+    public static PulsarApi.CommandAck.ValidationError convertValidationError(ValidationError error) {
+        if (error == null) {
+            return null;
+        }
+        switch (error) {
+            case DecryptionError:
+                return PulsarApi.CommandAck.ValidationError.DecryptionError;
+            case ChecksumMismatch:
+                return PulsarApi.CommandAck.ValidationError.ChecksumMismatch;
+            case DecompressionError:
+                return PulsarApi.CommandAck.ValidationError.DecompressionError;
+            case BatchDeSerializeError:
+                return PulsarApi.CommandAck.ValidationError.BatchDeSerializeError;
+            case UncompressedSizeCorruption:
+                return PulsarApi.CommandAck.ValidationError.UncompressedSizeCorruption;
+            default:
+                throw new IllegalStateException("Unexpected ack validation error: " + error);
+        }
+    }
+
+    public static PulsarApi.MessageIdData convertMessageIdData(MessageIdData messageIdData) {
+        if (messageIdData == null) {
+            return null;
+        }
+        return PulsarApi.MessageIdData.newBuilder()
+                .setBatchIndex(messageIdData.getBatchIndex())
+                .setEntryId(messageIdData.getEntryId())
+                .setLedgerId(messageIdData.getLedgerId())
+                .setPartition(messageIdData.getPartition())
+                .build();
+    }
+
+    public static PulsarApi.CommandAck convertCommandAck(CommandAck ack) {
+        if (ack == null) {
+            return null;
+        }
+        PulsarApi.CommandAck.Builder builder = PulsarApi.CommandAck.newBuilder()
+                .setAckType(convertAckType(ack.getAckType()))
+                .setValidationError(convertValidationError(ack.getValidationError()))
+                .setConsumerId(0L)
+                .setTxnidLeastBits(ack.getTxnidLeastBits())
+                .setTxnidMostBits(ack.getTxnidMostBits());
+        ack.getPropertiesMap().forEach((k,v) ->
+                builder.addProperties(PulsarApi.KeyLongValue.newBuilder()
+                        .setKey(k)
+                        .setValue(v)
+                        .build())
+        );
+        ack.getMessageIdList().forEach(messageIdData -> builder.addMessageId(convertMessageIdData(messageIdData)));
         return builder.build();
     }
 }

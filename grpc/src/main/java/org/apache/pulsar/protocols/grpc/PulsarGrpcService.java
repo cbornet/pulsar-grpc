@@ -29,6 +29,7 @@ import org.apache.pulsar.broker.service.schema.SchemaRegistryService;
 import org.apache.pulsar.broker.service.schema.exceptions.IncompatibleSchemaException;
 import org.apache.pulsar.client.impl.BatchMessageIdImpl;
 import org.apache.pulsar.client.impl.MessageIdImpl;
+import org.apache.pulsar.common.api.proto.PulsarApi;
 import org.apache.pulsar.common.naming.Metadata;
 import org.apache.pulsar.common.naming.TopicName;
 import org.apache.pulsar.common.policies.data.BacklogQuota;
@@ -48,6 +49,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Semaphore;
 
 import static com.google.common.base.Preconditions.checkArgument;
+import static org.apache.pulsar.protocols.grpc.Commands.convertCommandAck;
 import static org.apache.pulsar.protocols.grpc.Commands.newStatusException;
 import static org.apache.pulsar.protocols.grpc.Constants.*;
 import static org.apache.pulsar.protocols.grpc.TopicLookup.lookupTopicAsync;
@@ -472,7 +474,28 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
         return new StreamObserver<ConsumeInput>() {
             @Override
             public void onNext(ConsumeInput consumeInput) {
+                if (consumeInput.hasAck()) {
+                    try {
+                        if (consumerFuture.isDone() && !consumerFuture.isCompletedExceptionally()) {
+                            consumerFuture.getNow(null).messageAcked(convertCommandAck(consumeInput.getAck()));
+                        }
+                    } catch (Exception e) {
+                        log.warn("[{}] Ack Message processing failed", remoteAddress, e);
+                    }
+                } else if(consumeInput.hasFlow()) {
+                    try {
+                        CommandFlow flow = consumeInput.getFlow();
+                        if (log.isDebugEnabled()) {
+                            log.debug("[{}] Received flow permits: {}", remoteAddress, flow.getMessagePermits());
+                        }
 
+                        if (consumerFuture.isDone() && !consumerFuture.isCompletedExceptionally()) {
+                            consumerFuture.getNow(null).flowPermits(flow.getMessagePermits());
+                        }
+                    } catch (Exception e) {
+                        log.warn("[{}] Flow message processing failed", remoteAddress, e);
+                    }
+                }
             }
 
             @Override
