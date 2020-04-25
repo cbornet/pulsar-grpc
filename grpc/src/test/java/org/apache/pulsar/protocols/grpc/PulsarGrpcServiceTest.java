@@ -152,7 +152,7 @@ public class PulsarGrpcServiceTest {
     private final String nonExistentTopicName = "persistent://nonexistent-prop/nonexistent-cluster/nonexistent-namespace/successNonExistentTopic";
     private final String topicWithNonLocalCluster = "persistent://prop/usw/ns-abc/successTopic";
 
-    private ManagedLedger ledgerMock = mock(ManagedLedger.class);
+    private ManagedLedger ledgerMock;
     private ManagedCursor cursorMock = mock(ManagedCursor.class);
 
     private OrderedExecutor executor;
@@ -167,6 +167,9 @@ public class PulsarGrpcServiceTest {
         pulsar = spy(new PulsarService(svcConfig));
         pulsar.setShutdownService(new NoOpShutdownService());
         doReturn(new DefaultSchemaRegistryService()).when(pulsar).getSchemaRegistryService();
+
+        ledgerMock = mock(ManagedLedger.class);
+
 
         svcConfig.setKeepAliveIntervalSeconds(inSec(1, TimeUnit.SECONDS));
         svcConfig.setBacklogQuotaCheckEnabled(false);
@@ -975,7 +978,7 @@ public class PulsarGrpcServiceTest {
     @Test(timeOut = 30000)
     public void testInvalidTopicOnLookup() throws Exception {
         String invalidTopicName = "xx/ass/aa/aaa";
-        CommandLookupTopic lookup = Commands.newLookup(invalidTopicName, true);
+        CommandLookupTopic lookup = Commands.newLookup(invalidTopicName, false);
         TestStreamObserver<CommandLookupTopicResponse> lookupResponse = TestStreamObserver.create();
 
         stub.lookupTopic(lookup, lookupResponse);

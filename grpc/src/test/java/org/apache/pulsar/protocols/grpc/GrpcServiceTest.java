@@ -175,7 +175,7 @@ public class GrpcServiceTest {
         } else {
             channelBuilder = NettyChannelBuilder
                     .forAddress("localhost", grpcService.getListenPort().orElse(-1))
-                    .negotiationType(NegotiationType.PLAINTEXT);
+                    .usePlaintext();
         }
         ManagedChannel channel = channelBuilder.build();
         PulsarGrpc.PulsarBlockingStub stub = PulsarGrpc.newBlockingStub(channel);
@@ -224,8 +224,6 @@ public class GrpcServiceTest {
         pulsar.setShutdownService(new NoOpShutdownService());
         doReturn(zkFactory).when(pulsar).getZooKeeperClientFactory();
         doReturn(new MockedBookKeeperClientFactory()).when(pulsar).newBookKeeperClientFactory();
-        Map<String, String> protocolDataToAdvertise = new HashMap<>();
-        doReturn(protocolDataToAdvertise).when(pulsar).getProtocolDataToAdvertise();
         pulsar.start();
 
         String BROKER_URL_BASE = "http://localhost:" + pulsar.getListenPortHTTP().get();
@@ -257,8 +255,9 @@ public class GrpcServiceTest {
         grpcService = new GrpcService();
         grpcService.initialize(config);
         grpcService.start(pulsar.getBrokerService());
+        Map<String, String> protocolDataToAdvertise = new HashMap<>();
         protocolDataToAdvertise.put(grpcService.protocolName(), grpcService.getProtocolDataToAdvertise());
-        pulsar.getLoadManager().get().writeLoadReportOnZookeeper();
+        doReturn(protocolDataToAdvertise).when(pulsar).getProtocolDataToAdvertise();
         pulsar.getLoadManager().get().stop();
         pulsar.getLoadManager().get().start();
     }

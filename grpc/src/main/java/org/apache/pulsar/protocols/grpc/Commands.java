@@ -28,6 +28,7 @@ import org.apache.pulsar.client.api.KeySharedPolicy;
 import org.apache.pulsar.client.api.Range;
 import org.apache.pulsar.common.api.proto.PulsarApi;
 import org.apache.pulsar.common.api.proto.PulsarApi.MessageMetadata;
+import org.apache.pulsar.common.protocol.ByteBufPair;
 import org.apache.pulsar.common.protocol.Commands.ChecksumType;
 import org.apache.pulsar.common.protocol.schema.SchemaVersion;
 import org.apache.pulsar.common.schema.SchemaInfo;
@@ -44,6 +45,7 @@ import org.apache.pulsar.protocols.grpc.api.CommandGetSchema;
 import org.apache.pulsar.protocols.grpc.api.CommandGetSchemaResponse;
 import org.apache.pulsar.protocols.grpc.api.CommandLookupTopic;
 import org.apache.pulsar.protocols.grpc.api.CommandLookupTopicResponse;
+import org.apache.pulsar.protocols.grpc.api.CommandMessage;
 import org.apache.pulsar.protocols.grpc.api.CommandProducer;
 import org.apache.pulsar.protocols.grpc.api.CommandProducerSuccess;
 import org.apache.pulsar.protocols.grpc.api.CommandReachedEndOfTopic;
@@ -451,6 +453,21 @@ public class Commands {
     public static ConsumeOutput newReachedEndOfTopic() {
         return ConsumeOutput.newBuilder()
                 .setReachedEndOfTopic(CommandReachedEndOfTopic.newBuilder())
+                .build();
+    }
+
+    public static ConsumeOutput newMessage(MessageIdData messageId, int redeliveryCount,
+            ByteBuf metadataAndPayload) {
+        CommandMessage.Builder msgBuilder = CommandMessage.newBuilder();
+        msgBuilder.setMessageId(messageId);
+        if (redeliveryCount > 0) {
+            msgBuilder.setRedeliveryCount(redeliveryCount);
+        }
+        ByteString headersAndPayload = copyFrom(metadataAndPayload.nioBuffer());
+        msgBuilder.setHeadersAndPayload(headersAndPayload);
+
+        return ConsumeOutput.newBuilder()
+                .setMessage(msgBuilder)
                 .build();
     }
 
