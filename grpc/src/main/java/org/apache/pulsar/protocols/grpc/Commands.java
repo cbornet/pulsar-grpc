@@ -24,10 +24,12 @@ import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import io.grpc.stub.MetadataUtils;
 import io.netty.buffer.ByteBuf;
+import org.apache.pulsar.broker.service.Subscription;
 import org.apache.pulsar.client.api.KeySharedPolicy;
 import org.apache.pulsar.client.api.Range;
 import org.apache.pulsar.common.api.proto.PulsarApi;
 import org.apache.pulsar.common.api.proto.PulsarApi.MessageMetadata;
+import org.apache.pulsar.common.policies.data.ConsumerStats;
 import org.apache.pulsar.common.protocol.ByteBufPair;
 import org.apache.pulsar.common.protocol.Commands.ChecksumType;
 import org.apache.pulsar.common.protocol.schema.SchemaVersion;
@@ -39,6 +41,7 @@ import org.apache.pulsar.protocols.grpc.api.CommandAck.AckType;
 import org.apache.pulsar.protocols.grpc.api.CommandAck.ValidationError;
 import org.apache.pulsar.protocols.grpc.api.CommandActiveConsumerChange;
 import org.apache.pulsar.protocols.grpc.api.CommandAuthChallenge;
+import org.apache.pulsar.protocols.grpc.api.CommandConsumerStatsResponse;
 import org.apache.pulsar.protocols.grpc.api.CommandError;
 import org.apache.pulsar.protocols.grpc.api.CommandFlow;
 import org.apache.pulsar.protocols.grpc.api.CommandGetSchema;
@@ -468,6 +471,29 @@ public class Commands {
 
         return ConsumeOutput.newBuilder()
                 .setMessage(msgBuilder)
+                .build();
+    }
+
+    public static ConsumeOutput newConsumerStatsResponse(long requestId, ConsumerStats consumerStats,
+            Subscription subscription) {
+        CommandConsumerStatsResponse.Builder commandConsumerStatsResponseBuilder = CommandConsumerStatsResponse
+                .newBuilder();
+        commandConsumerStatsResponseBuilder.setRequestId(requestId);
+        commandConsumerStatsResponseBuilder.setMsgRateOut(consumerStats.msgRateOut);
+        commandConsumerStatsResponseBuilder.setMsgThroughputOut(consumerStats.msgThroughputOut);
+        commandConsumerStatsResponseBuilder.setMsgRateRedeliver(consumerStats.msgRateRedeliver);
+        commandConsumerStatsResponseBuilder.setConsumerName(consumerStats.consumerName);
+        commandConsumerStatsResponseBuilder.setAvailablePermits(consumerStats.availablePermits);
+        commandConsumerStatsResponseBuilder.setUnackedMessages(consumerStats.unackedMessages);
+        commandConsumerStatsResponseBuilder.setBlockedConsumerOnUnackedMsgs(consumerStats.blockedConsumerOnUnackedMsgs);
+        commandConsumerStatsResponseBuilder.setAddress(consumerStats.getAddress());
+        commandConsumerStatsResponseBuilder.setConnectedSince(consumerStats.getConnectedSince());
+
+        commandConsumerStatsResponseBuilder.setMsgBacklog(subscription.getNumberOfEntriesInBacklog(false));
+        commandConsumerStatsResponseBuilder.setMsgRateExpired(subscription.getExpiredMessageRate());
+        commandConsumerStatsResponseBuilder.setType(subscription.getTypeString());
+        return ConsumeOutput.newBuilder()
+                .setConsumerStatsResponse(commandConsumerStatsResponseBuilder)
                 .build();
     }
 

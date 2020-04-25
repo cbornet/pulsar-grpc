@@ -40,6 +40,7 @@ import org.apache.pulsar.common.protocol.schema.SchemaData;
 import org.apache.pulsar.common.protocol.schema.SchemaInfoUtil;
 import org.apache.pulsar.common.protocol.schema.SchemaVersion;
 import org.apache.pulsar.common.util.FutureUtil;
+import org.apache.pulsar.protocols.grpc.api.CommandConsumerStats;
 import org.apache.pulsar.protocols.grpc.api.CommandFlow;
 import org.apache.pulsar.protocols.grpc.api.CommandGetSchema;
 import org.apache.pulsar.protocols.grpc.api.CommandGetSchemaResponse;
@@ -495,10 +496,14 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
         return new StreamObserver<ConsumeInput>() {
             @Override
             public void onNext(ConsumeInput consumeInput) {
+                Consumer consumer = null;
+                if (consumerFuture.isDone() && !consumerFuture.isCompletedExceptionally()) {
+                    consumer = consumerFuture.getNow(null);
+                }
                 switch (consumeInput.getConsumerInputOneofCase()) {
                     case ACK:
-                        if (consumerFuture.isDone() && !consumerFuture.isCompletedExceptionally()) {
-                            consumerFuture.getNow(null).messageAcked(convertCommandAck(consumeInput.getAck()));
+                        if (consumer != null) {
+                            consumer.messageAcked(convertCommandAck(consumeInput.getAck()));
                         }
                         break;
                     case FLOW:
@@ -507,19 +512,41 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
                             log.debug("[{}] Received flow permits: {}", remoteAddress, flow.getMessagePermits());
                         }
 
-                        if (consumerFuture.isDone() && !consumerFuture.isCompletedExceptionally()) {
-                            consumerFuture.getNow(null).flowPermits(flow.getMessagePermits());
+                        if (consumer != null) {
+                            consumer.flowPermits(flow.getMessagePermits());
                         }
                         break;
                     case UNSUBSCRIBE:
                         CommandUnsubscribe unsubscribe = consumeInput.getUnsubscribe();
-                        if (consumerFuture.isDone() && !consumerFuture.isCompletedExceptionally()) {
+                        if (consumer != null) {
                             consumerFuture.getNow(null).doUnsubscribe(unsubscribe.getRequestId());
                         } else {
                             responseObserver.onNext(Commands.newError(unsubscribe.getRequestId(),
                                     ServerError.MetadataError, "Consumer not found"));
                         }
                         break;
+                    case CONSUMERSTATS:
+                        if (log.isDebugEnabled()) {
+                            log.debug("Received CommandConsumerStats call from {}", remoteAddress);
+                        }
+                        CommandConsumerStats commandConsumerStats = consumeInput.getConsumerStats();
+                        final long requestId = commandConsumerStats.getRequestId();
+
+                        if (consumer == null) {
+                            log.error(
+                                    "Failed to get consumer-stats response - Consumer not found for CommandConsumerStats[remoteAddress = {}, requestId = {}]",
+                                    remoteAddress, requestId);
+                            responseObserver.onNext(Commands.newError(requestId, ServerError.ConsumerNotFound,
+                                    "Consumer not found"));
+                        } else {
+                            if (log.isDebugEnabled()) {
+                                log.debug("CommandConsumerStats[requestId = {}, consumer = {}]", requestId, consumer);
+                            }
+                            responseObserver.onNext(Commands.newConsumerStatsResponse(requestId, consumer.getStats(),
+                                    consumer.getSubscription()));
+                        }
+                        break;
+
                     default:
                         break;
                 }

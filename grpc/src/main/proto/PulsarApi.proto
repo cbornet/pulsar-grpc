@@ -258,7 +258,7 @@ message CommandSubscribe {
     // Signal wether the subscription should be backed by a
     // durable cursor or not
     optional bool durable         = 7 [default = true];
-    
+
     // If specified, the subscription will position the cursor
     // markd-delete position  on the particular message id and
     // will send messages from that point
@@ -282,15 +282,15 @@ message CommandSubscribe {
     // to periodically sync the state of replicated subscriptions
     // across different clusters (when using geo-replication).
     optional bool replicate_subscription_state = 13;
-    
-    // If true, the subscribe operation will cause a topic to be 
+
+    // If true, the subscribe operation will cause a topic to be
     // created if it does not exist already (and if topic auto-creation
     // is allowed by broker.
-    // If false, the subscribe operation will fail if the topic 
+    // If false, the subscribe operation will fail if the topic
     // does not exist.
     optional bool force_topic_creation = 14 [default = true];
 
-    // If specified, the subscription will reset cursor's position back 
+    // If specified, the subscription will reset cursor's position back
     // to specified seconds and  will send messages from that point
     optional uint64 start_message_rollback_duration_sec = 15 [default = 0];
 
@@ -479,17 +479,19 @@ message ConsumeInput {
         CommandFlow flow                                                       = 2;
         CommandUnsubscribe unsubscribe                                         = 3;
         CommandRedeliverUnacknowledgedMessages redeliverUnacknowledgedMessages = 4;
+        CommandConsumerStats consumerStats                                     = 5;
     }
 }
 
 message ConsumeOutput {
     oneof consumer_output_oneof {
-        CommandSubscribeSuccess subscribeSuccess         = 1;
-        CommandMessage message                           = 2;
-        CommandActiveConsumerChange activeConsumerChange = 3;
-        CommandReachedEndOfTopic reachedEndOfTopic       = 4;
-        CommandSuccess success                           = 5;
-        CommandError error                               = 6;
+        CommandSubscribeSuccess subscribeSuccess           = 1;
+        CommandMessage message                             = 2;
+        CommandActiveConsumerChange activeConsumerChange   = 3;
+        CommandReachedEndOfTopic reachedEndOfTopic         = 4;
+        CommandConsumerStatsResponse consumerStatsResponse = 5;
+        CommandSuccess success                             = 6;
+        CommandError error                                 = 7;
     }
 }
 
@@ -517,52 +519,52 @@ message CommandError {
 }
 
 message CommandConsumerStats {
-        required uint64 request_id         = 1;
-        // required string topic_name         = 2;
-        // required string subscription_name  = 3;
-        required uint64 consumer_id        = 4;
+    required uint64 request_id         = 1;
+    // required string topic_name         = 2;
+    // required string subscription_name  = 3;
+    required uint64 consumer_id        = 4;
 }
 
 message CommandConsumerStatsResponse {
-        required uint64 request_id              = 1;
-        optional ServerError error_code         = 2;
-        optional string error_message           = 3;
+    required uint64 request_id              = 1;
+    optional ServerError error_code         = 2;
+    optional string error_message           = 3;
 
-        /// Total rate of messages delivered to the consumer. msg/s
-        optional double msgRateOut                  = 4;
+    /// Total rate of messages delivered to the consumer. msg/s
+    optional double msgRateOut                  = 4;
 
-        /// Total throughput delivered to the consumer. bytes/s
-        optional double msgThroughputOut            = 5;
+    /// Total throughput delivered to the consumer. bytes/s
+    optional double msgThroughputOut            = 5;
 
-        /// Total rate of messages redelivered by this consumer. msg/s
-        optional double msgRateRedeliver            = 6;
+    /// Total rate of messages redelivered by this consumer. msg/s
+    optional double msgRateRedeliver            = 6;
 
-        /// Name of the consumer
-        optional string consumerName                = 7;
+    /// Name of the consumer
+    optional string consumerName                = 7;
 
-        /// Number of available message permits for the consumer
-        optional uint64 availablePermits            = 8;
+    /// Number of available message permits for the consumer
+    optional uint64 availablePermits            = 8;
 
-        /// Number of unacknowledged messages for the consumer
-        optional uint64 unackedMessages             = 9;
+    /// Number of unacknowledged messages for the consumer
+    optional uint64 unackedMessages             = 9;
 
-        /// Flag to verify if consumer is blocked due to reaching threshold of unacked messages
-        optional bool blockedConsumerOnUnackedMsgs  = 10;
+    /// Flag to verify if consumer is blocked due to reaching threshold of unacked messages
+    optional bool blockedConsumerOnUnackedMsgs  = 10;
 
-        /// Address of this consumer
-        optional string address                     = 11;
+    /// Address of this consumer
+    optional string address                     = 11;
 
-        /// Timestamp of connection
-        optional string connectedSince              = 12;
+    /// Timestamp of connection
+    optional string connectedSince              = 12;
 
-        /// Whether this subscription is Exclusive or Shared or Failover
-        optional string type                        = 13;
+    /// Whether this subscription is Exclusive or Shared or Failover
+    optional string type                        = 13;
 
-        /// Total rate of messages expired on this subscription. msg/s
-        optional double msgRateExpired              = 14;
+    /// Total rate of messages expired on this subscription. msg/s
+    optional double msgRateExpired              = 14;
 
-        /// Number of messages in the subscription backlog
-        optional uint64 msgBacklog                  = 15;
+    /// Number of messages in the subscription backlog
+    optional uint64 msgBacklog                  = 15;
 }
 
 message CommandGetLastMessageId {
