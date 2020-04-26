@@ -28,11 +28,13 @@ import org.apache.pulsar.broker.service.BrokerService;
 import org.apache.pulsar.broker.service.BrokerServiceException;
 import org.apache.pulsar.broker.service.Consumer;
 import org.apache.pulsar.broker.service.Producer;
+import org.apache.pulsar.broker.service.Subscription;
 import org.apache.pulsar.broker.service.Topic;
 import org.apache.pulsar.broker.service.schema.SchemaRegistryService;
 import org.apache.pulsar.broker.service.schema.exceptions.IncompatibleSchemaException;
 import org.apache.pulsar.client.impl.BatchMessageIdImpl;
 import org.apache.pulsar.client.impl.MessageIdImpl;
+import org.apache.pulsar.common.api.proto.PulsarApi;
 import org.apache.pulsar.common.naming.Metadata;
 import org.apache.pulsar.common.naming.TopicName;
 import org.apache.pulsar.common.policies.data.BacklogQuota;
@@ -47,6 +49,7 @@ import org.apache.pulsar.protocols.grpc.api.CommandGetSchemaResponse;
 import org.apache.pulsar.protocols.grpc.api.CommandLookupTopic;
 import org.apache.pulsar.protocols.grpc.api.CommandLookupTopicResponse;
 import org.apache.pulsar.protocols.grpc.api.CommandProducer;
+import org.apache.pulsar.protocols.grpc.api.CommandRedeliverUnacknowledgedMessages;
 import org.apache.pulsar.protocols.grpc.api.CommandSend;
 import org.apache.pulsar.protocols.grpc.api.CommandSubscribe;
 import org.apache.pulsar.protocols.grpc.api.CommandSubscribe.InitialPosition;
@@ -63,9 +66,11 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.net.SocketAddress;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Semaphore;
+import java.util.stream.Collectors;
 
 import static org.apache.pulsar.protocols.grpc.Commands.convertCommandAck;
 import static org.apache.pulsar.protocols.grpc.Commands.newStatusException;
@@ -546,6 +551,21 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
                                     consumer.getSubscription()));
                         }
                         break;
+                    case REDELIVERUNACKNOWLEDGEDMESSAGES:
+                        CommandRedeliverUnacknowledgedMessages redeliver = consumeInput.getRedeliverUnacknowledgedMessages();
+                        if (log.isDebugEnabled()) {
+                            log.debug("[{}] Received Resend Command from consumer", remoteAddress);
+                        }
+                        if (consumer != null) {
+                            if (redeliver.getMessageIdsCount() > 0 && Subscription.isIndividualAckMode(consumer.subType())) {
+                                List<PulsarApi.MessageIdData> messageIdDataList = redeliver.getMessageIdsList().stream()
+                                        .map(Commands::convertMessageIdData)
+                                        .collect(Collectors.toList());
+                                consumer.redeliverUnacknowledgedMessages(messageIdDataList);
+                            } else {
+                                consumer.redeliverUnacknowledgedMessages();
+                            }
+                        }
 
                     default:
                         break;
