@@ -53,6 +53,7 @@ import org.apache.pulsar.protocols.grpc.api.CommandMessage;
 import org.apache.pulsar.protocols.grpc.api.CommandProducer;
 import org.apache.pulsar.protocols.grpc.api.CommandProducerSuccess;
 import org.apache.pulsar.protocols.grpc.api.CommandReachedEndOfTopic;
+import org.apache.pulsar.protocols.grpc.api.CommandRedeliverUnacknowledgedMessages;
 import org.apache.pulsar.protocols.grpc.api.CommandSend;
 import org.apache.pulsar.protocols.grpc.api.CommandSendError;
 import org.apache.pulsar.protocols.grpc.api.CommandSendReceipt;
@@ -504,6 +505,22 @@ public class Commands {
         commandConsumerStatsResponseBuilder.setType(subscription.getTypeString());
         return ConsumeOutput.newBuilder()
                 .setConsumerStatsResponse(commandConsumerStatsResponseBuilder)
+                .build();
+    }
+
+    public static ConsumeInput newRedeliverUnacknowledgedMessages() {
+        return ConsumeInput.newBuilder()
+                .setRedeliverUnacknowledgedMessages(CommandRedeliverUnacknowledgedMessages.newBuilder())
+                .build();
+    }
+
+    public static ConsumeInput newRedeliverUnacknowledgedMessages(List<MessageIdData> messageIds) {
+        CommandRedeliverUnacknowledgedMessages.Builder redeliverBuilder = CommandRedeliverUnacknowledgedMessages
+                .newBuilder();
+        redeliverBuilder.addAllMessageIds(messageIds);
+        CommandRedeliverUnacknowledgedMessages redeliver = redeliverBuilder.build();
+        return ConsumeInput.newBuilder()
+                .setRedeliverUnacknowledgedMessages(redeliverBuilder)
                 .build();
     }
 
