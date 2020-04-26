@@ -41,6 +41,7 @@ import org.apache.pulsar.protocols.grpc.api.CommandAck.AckType;
 import org.apache.pulsar.protocols.grpc.api.CommandAck.ValidationError;
 import org.apache.pulsar.protocols.grpc.api.CommandActiveConsumerChange;
 import org.apache.pulsar.protocols.grpc.api.CommandAuthChallenge;
+import org.apache.pulsar.protocols.grpc.api.CommandConsumerStats;
 import org.apache.pulsar.protocols.grpc.api.CommandConsumerStatsResponse;
 import org.apache.pulsar.protocols.grpc.api.CommandError;
 import org.apache.pulsar.protocols.grpc.api.CommandFlow;
@@ -471,6 +472,15 @@ public class Commands {
 
         return ConsumeOutput.newBuilder()
                 .setMessage(msgBuilder)
+                .build();
+    }
+
+    public static ConsumeInput newConsumerStats(long requestId) {
+        CommandConsumerStats.Builder commandConsumerStatsBuilder = CommandConsumerStats.newBuilder();
+        commandConsumerStatsBuilder.setRequestId(requestId);
+
+        return ConsumeInput.newBuilder()
+                .setConsumerStats(commandConsumerStatsBuilder)
                 .build();
     }
 

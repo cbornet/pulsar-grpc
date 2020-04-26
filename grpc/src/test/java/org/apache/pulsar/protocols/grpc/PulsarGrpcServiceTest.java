@@ -68,6 +68,7 @@ import org.apache.pulsar.common.schema.SchemaInfo;
 import org.apache.pulsar.common.schema.SchemaType;
 import org.apache.pulsar.protocols.grpc.api.CommandAck.AckType;
 import org.apache.pulsar.protocols.grpc.api.CommandActiveConsumerChange;
+import org.apache.pulsar.protocols.grpc.api.CommandConsumerStatsResponse;
 import org.apache.pulsar.protocols.grpc.api.CommandError;
 import org.apache.pulsar.protocols.grpc.api.CommandLookupTopic;
 import org.apache.pulsar.protocols.grpc.api.CommandLookupTopicResponse;
@@ -1158,6 +1159,61 @@ public class PulsarGrpcServiceTest {
                 null, Collections.emptyMap()));
 
         assertTrue(observer.takeOneMessage().hasReachedEndOfTopic());
+        consumeInput.onCompleted();
+        observer.waitForCompletion();
+    }
+
+    @Test(timeOut = 30000)
+    public void testConsumerStats() throws Exception {
+        CommandSubscribe subscribe = Commands.newSubscribe(successTopicName, successSubName, SubType.Exclusive, 0,
+                "test" /* consumer name */, 0 /* avoid reseting cursor */);
+        PulsarGrpc.PulsarStub consumerStub = Commands.attachConsumerParams(stub, subscribe);
+
+        TestStreamObserver<ConsumeOutput> observer = TestStreamObserver.create();
+        StreamObserver<ConsumeInput> consumeInput = consumerStub.consume(observer);
+        assertTrue(observer.takeOneMessage().hasSubscribeSuccess());
+
+        consumeInput.onNext(Commands.newConsumerStats(1L));
+        CommandConsumerStatsResponse consumerStatsResponse = observer.takeOneMessage().getConsumerStatsResponse();
+
+        assertNotNull(consumerStatsResponse);
+        assertEquals(consumerStatsResponse.getRequestId(), 1L);
+        assertEquals(consumerStatsResponse.getConsumerName(), "test");
+
+        consumeInput.onCompleted();
+        observer.waitForCompletion();
+    }
+
+    @Test(timeOut = 30000)
+    public void testConsumerStatsError() throws Exception {
+        // Delay the topic creation in a deterministic way
+        CompletableFuture<Runnable> openTopicTask = new CompletableFuture<>();
+        doAnswer(invocationOnMock -> {
+            openTopicTask.complete(() -> {
+                ((AsyncCallbacks.OpenLedgerCallback) invocationOnMock.getArguments()[2]).openLedgerComplete(ledgerMock, null);
+            });
+
+            return null;
+        }).when(mlFactoryMock).asyncOpen(matches(".*success.*"), any(ManagedLedgerConfig.class),
+                any(AsyncCallbacks.OpenLedgerCallback.class), any(Supplier.class), any());
+
+        CommandSubscribe subscribe = Commands.newSubscribe(successTopicName, successSubName, SubType.Exclusive, 0,
+                "test" /* consumer name */, 0 /* avoid reseting cursor */);
+        PulsarGrpc.PulsarStub consumerStub = Commands.attachConsumerParams(stub, subscribe);
+
+        TestStreamObserver<ConsumeOutput> observer = TestStreamObserver.create();
+        StreamObserver<ConsumeInput> consumeInput = consumerStub.consume(observer);
+
+        consumeInput.onNext(Commands.newConsumerStats(1L));
+        CommandError error = observer.takeOneMessage().getError();
+
+        assertNotNull(error);
+        assertEquals(error.getRequestId(), 1L);
+
+        openTopicTask.get().run();
+
+        assertTrue(observer.takeOneMessage().hasSubscribeSuccess());
+
         consumeInput.onCompleted();
         observer.waitForCompletion();
     }
