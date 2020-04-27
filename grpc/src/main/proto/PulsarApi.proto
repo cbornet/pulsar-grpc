@@ -480,18 +480,20 @@ message ConsumeInput {
         CommandUnsubscribe unsubscribe                                         = 3;
         CommandRedeliverUnacknowledgedMessages redeliverUnacknowledgedMessages = 4;
         CommandConsumerStats consumerStats                                     = 5;
+        CommandGetLastMessageId getLastMessageId                               = 6;
     }
 }
 
 message ConsumeOutput {
     oneof consumer_output_oneof {
-        CommandSubscribeSuccess subscribeSuccess           = 1;
-        CommandMessage message                             = 2;
-        CommandActiveConsumerChange activeConsumerChange   = 3;
-        CommandReachedEndOfTopic reachedEndOfTopic         = 4;
-        CommandConsumerStatsResponse consumerStatsResponse = 5;
-        CommandSuccess success                             = 6;
-        CommandError error                                 = 7;
+        CommandSubscribeSuccess subscribeSuccess                 = 1;
+        CommandMessage message                                   = 2;
+        CommandActiveConsumerChange activeConsumerChange         = 3;
+        CommandReachedEndOfTopic reachedEndOfTopic               = 4;
+        CommandConsumerStatsResponse consumerStatsResponse       = 5;
+        CommandGetLastMessageIdResponse getLastMessageIdResponse = 6;
+        CommandSuccess success                                   = 7;
+        CommandError error                                       = 8;
     }
 }
 
@@ -565,13 +567,12 @@ message CommandConsumerStatsResponse {
 }
 
 message CommandGetLastMessageId {
-    required uint64 consumer_id = 1;
-    required uint64 request_id  = 2;
+    required uint64 request_id  = 1;
 }
 
 message CommandGetLastMessageIdResponse {
     required MessageIdData last_message_id = 1;
-    required uint64 request_id  = 2;
+    required uint64 request_id             = 2;
 }
 
 message CommandGetTopicsOfNamespace {

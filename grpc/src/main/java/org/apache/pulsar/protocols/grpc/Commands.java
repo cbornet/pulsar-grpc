@@ -45,6 +45,8 @@ import org.apache.pulsar.protocols.grpc.api.CommandConsumerStats;
 import org.apache.pulsar.protocols.grpc.api.CommandConsumerStatsResponse;
 import org.apache.pulsar.protocols.grpc.api.CommandError;
 import org.apache.pulsar.protocols.grpc.api.CommandFlow;
+import org.apache.pulsar.protocols.grpc.api.CommandGetLastMessageId;
+import org.apache.pulsar.protocols.grpc.api.CommandGetLastMessageIdResponse;
 import org.apache.pulsar.protocols.grpc.api.CommandGetSchema;
 import org.apache.pulsar.protocols.grpc.api.CommandGetSchemaResponse;
 import org.apache.pulsar.protocols.grpc.api.CommandLookupTopic;
@@ -115,9 +117,7 @@ public class Commands {
         producerSuccessBuilder.setLastSequenceId(lastSequenceId);
         producerSuccessBuilder.setSchemaVersion(copyFrom(schemaVersion.bytes()));
         CommandProducerSuccess producerSuccess = producerSuccessBuilder.build();
-        return SendResult.newBuilder()
-                .setProducerSuccess(producerSuccess)
-                .build();
+        return SendResult.newBuilder().setProducerSuccess(producerSuccess).build();
     }
 
     public static CommandSend newSend(long sequenceId, int numMessages, ChecksumType checksumType,
@@ -180,9 +180,7 @@ public class Commands {
         sendErrorBuilder.setError(error);
         sendErrorBuilder.setMessage(errorMsg);
         CommandSendError sendError = sendErrorBuilder.build();
-        return SendResult.newBuilder()
-                .setSendError(sendError)
-                .build();
+        return SendResult.newBuilder().setSendError(sendError).build();
     }
 
     public static SendResult newSendReceipt(long sequenceId, long highestId, long ledgerId, long entryId) {
@@ -195,9 +193,7 @@ public class Commands {
         MessageIdData messageId = messageIdBuilder.build();
         sendReceiptBuilder.setMessageId(messageId);
         CommandSendReceipt sendReceipt = sendReceiptBuilder.build();
-        return SendResult.newBuilder()
-                .setSendReceipt(sendReceipt)
-                .build();
+        return SendResult.newBuilder().setSendReceipt(sendReceipt).build();
     }
 
     public static CommandProducer newProducer(String topic, String producerName,
@@ -282,7 +278,6 @@ public class Commands {
         lookupTopicBuilder.setTopic(topic);
         lookupTopicBuilder.setAuthoritative(authoritative);
         return lookupTopicBuilder.build();
-
     }
 
     public static CommandLookupTopicResponse newLookupResponse(String grpcServiceHost, Integer grpcServicePort,
@@ -377,25 +372,19 @@ public class Commands {
     }
 
     public static ConsumeOutput newSubscriptionSuccess() {
-        return ConsumeOutput.newBuilder()
-                .setSubscribeSuccess(CommandSubscribeSuccess.newBuilder())
-                .build();
+        return ConsumeOutput.newBuilder().setSubscribeSuccess(CommandSubscribeSuccess.newBuilder()).build();
     }
 
     public static ConsumeInput newUnsubscribe(long requestId) {
         CommandUnsubscribe.Builder unsubscribeBuilder = CommandUnsubscribe.newBuilder();
         unsubscribeBuilder.setRequestId(requestId);
-        return ConsumeInput.newBuilder()
-                .setUnsubscribe(unsubscribeBuilder)
-                .build();
+        return ConsumeInput.newBuilder().setUnsubscribe(unsubscribeBuilder).build();
     }
 
     public static ConsumeOutput newSuccess(long requestId) {
         CommandSuccess.Builder successBuilder = CommandSuccess.newBuilder();
         successBuilder.setRequestId(requestId);
-        return ConsumeOutput.newBuilder()
-                .setSuccess(successBuilder)
-                .build();
+        return ConsumeOutput.newBuilder().setSuccess(successBuilder).build();
     }
 
     public static ConsumeOutput newError(long requestId, ServerError error, String message) {
@@ -403,9 +392,12 @@ public class Commands {
         cmdErrorBuilder.setRequestId(requestId);
         cmdErrorBuilder.setError(error);
         cmdErrorBuilder.setMessage(message);
-        return ConsumeOutput.newBuilder()
-                .setError(cmdErrorBuilder)
-                .build();
+        return ConsumeOutput.newBuilder().setError(cmdErrorBuilder).build();
+    }
+
+    public static ConsumeInput newAck(MessageIdData messageIdData, CommandAck.AckType ackType) {
+        return newAck(messageIdData.getLedgerId(), messageIdData.getEntryId(), ackType, null,
+                Collections.emptyMap(), 0, 0);
     }
 
     public static ConsumeInput newAck(long ledgerId, long entryId, CommandAck.AckType ackType,
@@ -433,32 +425,24 @@ public class Commands {
             ackBuilder.setTxnidLeastBits(txnIdLeastBits);
         }
         ackBuilder.putAllProperties(properties);
-        return ConsumeInput.newBuilder()
-                .setAck(ackBuilder)
-                .build();
+        return ConsumeInput.newBuilder().setAck(ackBuilder).build();
     }
 
     public static ConsumeInput newFlow(int messagePermits) {
         CommandFlow.Builder flowBuilder = CommandFlow.newBuilder();
         flowBuilder.setMessagePermits(messagePermits);
-        return ConsumeInput.newBuilder()
-                .setFlow(flowBuilder)
-                .build();
+        return ConsumeInput.newBuilder().setFlow(flowBuilder).build();
     }
 
     public static ConsumeOutput newActiveConsumerChange(boolean isActive) {
         CommandActiveConsumerChange.Builder changeBuilder = CommandActiveConsumerChange.newBuilder()
                 .setIsActive(isActive);
 
-        return ConsumeOutput.newBuilder()
-                .setActiveConsumerChange(changeBuilder)
-                .build();
+        return ConsumeOutput.newBuilder().setActiveConsumerChange(changeBuilder).build();
     }
 
     public static ConsumeOutput newReachedEndOfTopic() {
-        return ConsumeOutput.newBuilder()
-                .setReachedEndOfTopic(CommandReachedEndOfTopic.newBuilder())
-                .build();
+        return ConsumeOutput.newBuilder().setReachedEndOfTopic(CommandReachedEndOfTopic.newBuilder()).build();
     }
 
     public static ConsumeOutput newMessage(MessageIdData messageId, int redeliveryCount,
@@ -471,18 +455,14 @@ public class Commands {
         ByteString headersAndPayload = copyFrom(metadataAndPayload.nioBuffer());
         msgBuilder.setHeadersAndPayload(headersAndPayload);
 
-        return ConsumeOutput.newBuilder()
-                .setMessage(msgBuilder)
-                .build();
+        return ConsumeOutput.newBuilder().setMessage(msgBuilder).build();
     }
 
     public static ConsumeInput newConsumerStats(long requestId) {
         CommandConsumerStats.Builder commandConsumerStatsBuilder = CommandConsumerStats.newBuilder();
         commandConsumerStatsBuilder.setRequestId(requestId);
 
-        return ConsumeInput.newBuilder()
-                .setConsumerStats(commandConsumerStatsBuilder)
-                .build();
+        return ConsumeInput.newBuilder().setConsumerStats(commandConsumerStatsBuilder).build();
     }
 
     public static ConsumeOutput newConsumerStatsResponse(long requestId, ConsumerStats consumerStats,
@@ -503,9 +483,7 @@ public class Commands {
         commandConsumerStatsResponseBuilder.setMsgBacklog(subscription.getNumberOfEntriesInBacklog(false));
         commandConsumerStatsResponseBuilder.setMsgRateExpired(subscription.getExpiredMessageRate());
         commandConsumerStatsResponseBuilder.setType(subscription.getTypeString());
-        return ConsumeOutput.newBuilder()
-                .setConsumerStatsResponse(commandConsumerStatsResponseBuilder)
-                .build();
+        return ConsumeOutput.newBuilder().setConsumerStatsResponse(commandConsumerStatsResponseBuilder).build();
     }
 
     public static ConsumeInput newRedeliverUnacknowledgedMessages() {
@@ -519,9 +497,23 @@ public class Commands {
                 .newBuilder();
         redeliverBuilder.addAllMessageIds(messageIds);
         CommandRedeliverUnacknowledgedMessages redeliver = redeliverBuilder.build();
-        return ConsumeInput.newBuilder()
-                .setRedeliverUnacknowledgedMessages(redeliverBuilder)
-                .build();
+        return ConsumeInput.newBuilder().setRedeliverUnacknowledgedMessages(redeliverBuilder).build();
+    }
+
+    public static ConsumeInput newGetLastMessageId(long requestId) {
+        CommandGetLastMessageId.Builder cmdBuilder = CommandGetLastMessageId.newBuilder();
+        cmdBuilder.setRequestId(requestId);
+
+        return ConsumeInput.newBuilder().setGetLastMessageId(cmdBuilder).build();
+    }
+
+    public static ConsumeOutput newGetLastMessageIdResponse(long requestId, MessageIdData messageIdData) {
+        CommandGetLastMessageIdResponse.Builder response =
+                CommandGetLastMessageIdResponse.newBuilder()
+                        .setLastMessageId(messageIdData)
+                        .setRequestId(requestId);
+
+        return ConsumeOutput.newBuilder().setGetLastMessageIdResponse(response).build();
     }
 
     public static PulsarGrpc.PulsarStub attachProducerParams(PulsarGrpc.PulsarStub stub, CommandProducer producerParams) {

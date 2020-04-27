@@ -1123,13 +1123,13 @@ public class PulsarGrpcServiceTest {
         TestStreamObserver<ConsumeOutput> observer2 = TestStreamObserver.create();
         StreamObserver<ConsumeInput> consumeInput2 = consumerStub.consume(observer2);
 
-        CommandActiveConsumerChange change = observer.takeOneMessage().getActiveConsumerChange();
-        assertNotNull(change);
-        assertTrue(change.getIsActive());
+        ConsumeOutput consumeOutput = observer.takeOneMessage();
+        assertTrue(consumeOutput.hasActiveConsumerChange());
+        assertTrue(consumeOutput.getActiveConsumerChange().getIsActive());
 
-        change = observer2.takeOneMessage().getActiveConsumerChange();
-        assertNotNull(change);
-        assertFalse(change.getIsActive());
+        consumeOutput = observer2.takeOneMessage();
+        assertTrue(consumeOutput.hasActiveConsumerChange());
+        assertFalse(consumeOutput.getActiveConsumerChange().getIsActive());
 
         assertTrue(observer2.takeOneMessage().hasSubscribeSuccess());
 
@@ -1174,9 +1174,10 @@ public class PulsarGrpcServiceTest {
         assertTrue(observer.takeOneMessage().hasSubscribeSuccess());
 
         consumeInput.onNext(Commands.newConsumerStats(1L));
-        CommandConsumerStatsResponse consumerStatsResponse = observer.takeOneMessage().getConsumerStatsResponse();
+        ConsumeOutput consumeOutput = observer.takeOneMessage();
 
-        assertNotNull(consumerStatsResponse);
+        assertTrue(consumeOutput.hasConsumerStatsResponse());
+        CommandConsumerStatsResponse consumerStatsResponse = consumeOutput.getConsumerStatsResponse();
         assertEquals(consumerStatsResponse.getRequestId(), 1L);
         assertEquals(consumerStatsResponse.getConsumerName(), "test");
 
@@ -1205,10 +1206,10 @@ public class PulsarGrpcServiceTest {
         StreamObserver<ConsumeInput> consumeInput = consumerStub.consume(observer);
 
         consumeInput.onNext(Commands.newConsumerStats(1L));
-        CommandError error = observer.takeOneMessage().getError();
+        ConsumeOutput consumeOutput = observer.takeOneMessage();
 
-        assertNotNull(error);
-        assertEquals(error.getRequestId(), 1L);
+        assertTrue(consumeOutput.hasError());
+        assertEquals(consumeOutput.getError().getRequestId(), 1L);
 
         openTopicTask.get().run();
 
@@ -1231,9 +1232,9 @@ public class PulsarGrpcServiceTest {
         consumeInput.onNext(Commands.newUnsubscribe(1));
         // TODO: invert calls to removedConsumer() and sendSuccess() in doUnsubscribe
         //       so that we get the success message before the complete
-        //CommandSuccess success = observer.takeOneMessage().getSuccess();
-        //assertNotNull(success);
-        //assertEquals(success.getRequestId(), 1L);
+        //ConsumeOutput consumeOutput = observer.takeOneMessage();
+        //assertTrue(consumeOutput.hasSuccess());
+        //assertEquals(consumeOutput.getSuccess().getRequestId(), 1L);
 
         observer.waitForCompletion();
     }
@@ -1253,8 +1254,9 @@ public class PulsarGrpcServiceTest {
         assertTrue(observer2.takeOneMessage().hasSubscribeSuccess());
 
         consumeInput.onNext(Commands.newUnsubscribe(1));
-        CommandError error = observer.takeOneMessage().getError();
-        assertNotNull(error);
+        ConsumeOutput consumeOutput = observer.takeOneMessage();
+        assertTrue(consumeOutput.hasError());
+        CommandError error = consumeOutput.getError();
         assertEquals(error.getRequestId(), 1L);
         assertEquals(error.getError(), ServerError.MetadataError);
 

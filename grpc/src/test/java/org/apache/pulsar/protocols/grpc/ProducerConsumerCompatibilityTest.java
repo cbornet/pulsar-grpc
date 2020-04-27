@@ -15,13 +15,13 @@ import org.apache.pulsar.client.api.ProducerConsumerBase;
 import org.apache.pulsar.common.api.proto.PulsarApi;
 import org.apache.pulsar.common.protocol.Commands.ChecksumType;
 import org.apache.pulsar.protocols.grpc.api.CommandAck.AckType;
+import org.apache.pulsar.protocols.grpc.api.CommandGetLastMessageIdResponse;
 import org.apache.pulsar.protocols.grpc.api.CommandMessage;
 import org.apache.pulsar.protocols.grpc.api.CommandProducer;
 import org.apache.pulsar.protocols.grpc.api.CommandSend;
 import org.apache.pulsar.protocols.grpc.api.CommandSubscribe;
 import org.apache.pulsar.protocols.grpc.api.ConsumeInput;
 import org.apache.pulsar.protocols.grpc.api.ConsumeOutput;
-import org.apache.pulsar.protocols.grpc.api.MessageIdData;
 import org.apache.pulsar.protocols.grpc.api.PulsarGrpc;
 import org.apache.pulsar.protocols.grpc.api.SendResult;
 import org.slf4j.Logger;
@@ -40,7 +40,6 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 
-import static org.apache.pulsar.common.protocol.Commands.newRedeliverUnacknowledgedMessages;
 import static org.apache.pulsar.common.protocol.Commands.parseMessageMetadata;
 import static org.mockito.Mockito.doReturn;
 import static org.testng.Assert.assertEquals;
@@ -125,10 +124,8 @@ public class ProducerConsumerCompatibilityTest extends ProducerConsumerBase {
             String expectedMessage = "my-message-" + i;
             testMessageOrderAndDuplicates(messageSet, receivedMessage, expectedMessage);
         }
-        MessageIdData messageId = message.getMessageId();
         // Acknowledge the consumption of all messages at once
-        consumeInput.onNext(Commands.newAck(messageId.getLedgerId(), messageId.getEntryId(),
-                AckType.Cumulative, null, Collections.emptyMap()));
+        consumeInput.onNext(Commands.newAck(message.getMessageId(), AckType.Cumulative));
         Thread.sleep(100);
         consumeInput.onCompleted();
         consumeOutput.waitForCompletion();
@@ -211,32 +208,254 @@ public class ProducerConsumerCompatibilityTest extends ProducerConsumerBase {
                 .topic("persistent://my-property/my-ns/my-topic1");
 
         Producer<byte[]> producer = producerBuilder.create();
-        producer.send("my-message".getBytes());
+        for (int i = 0; i < 10; i++) {
+            String message = "my-message-" + i;
+            producer.send(message.getBytes());
+        }
 
-        CommandMessage message = consumeOutput.takeOneMessage().getMessage();
-        assertEquals(getPayload(message), "my-message");
+        Set<String> messageSet = Sets.newHashSet();
+        for (int i = 0; i < 10; i++) {
+            CommandMessage message = consumeOutput.takeOneMessage().getMessage();
+            String receivedMessage = getPayload(message);
+            String expectedMessage = "my-message-" + i;
+            testMessageOrderAndDuplicates(messageSet, receivedMessage, expectedMessage);
+        }
 
+        // Redeliver all messages
         consumeInput.onNext(Commands.newRedeliverUnacknowledgedMessages());
 
-        message = consumeOutput.takeOneMessage().getMessage();
-        assertEquals(getPayload(message), "my-message");
-
-        MessageIdData messageId = message.getMessageId();
+        CommandMessage message = null;
+        messageSet = Sets.newHashSet();
+        for (int i = 0; i < 10; i++) {
+            message = consumeOutput.takeOneMessage().getMessage();
+            String receivedMessage = getPayload(message);
+            String expectedMessage = "my-message-" + i;
+            testMessageOrderAndDuplicates(messageSet, receivedMessage, expectedMessage);
+        }
         // Acknowledge the consumption of all messages at once
-        consumeInput.onNext(Commands.newAck(messageId.getLedgerId(), messageId.getEntryId(),
-                AckType.Cumulative, null, Collections.emptyMap()));
+        consumeInput.onNext(Commands.newAck(message.getMessageId(), AckType.Cumulative));
         Thread.sleep(100);
         consumeInput.onCompleted();
         consumeOutput.waitForCompletion();
         log.info("-- Exiting {} test --", methodName);
     }
 
-    private String getPayload(CommandMessage message) throws InterruptedException {
+    @Test(timeOut = 30000)
+    public void testRedeliverSingleUnacknowledgedMessage() throws Exception {
+        log.info("-- Starting {} test --", methodName);
+
+        // Lookup
+        PulsarGrpc.PulsarBlockingStub blockingStub = PulsarGrpc.newBlockingStub(channel);
+        blockingStub.lookupTopic(Commands.newLookup("persistent://my-property/my-ns/my-topic1", false));
+
+        // Subscribe
+        CommandSubscribe subscribe = Commands.newSubscribe("persistent://my-property/my-ns/my-topic1",
+                "my-subscriber-name", CommandSubscribe.SubType.Shared, 0,
+                "test" , 0);
+        PulsarGrpc.PulsarStub consumerStub = Commands.attachConsumerParams(stub, subscribe);
+
+        TestStreamObserver<ConsumeOutput> consumeOutput = TestStreamObserver.create();
+        StreamObserver<ConsumeInput> consumeInput = consumerStub.consume(consumeOutput);
+
+        assertTrue(consumeOutput.takeOneMessage().hasSubscribeSuccess());
+
+        // Send flow permits
+        consumeInput.onNext(Commands.newFlow(100));
+
+        ProducerBuilder<byte[]> producerBuilder = pulsarClient.newProducer()
+                .enableBatching(false)
+                .topic("persistent://my-property/my-ns/my-topic1");
+
+        Producer<byte[]> producer = producerBuilder.create();
+        for (int i = 0; i < 10; i++) {
+            String message = "my-message-" + i;
+            producer.send(message.getBytes());
+        }
+
+        CommandMessage message = null;
+        Set<String> messageSet = Sets.newHashSet();
+        for (int i = 0; i < 10; i++) {
+            message = consumeOutput.takeOneMessage().getMessage();
+            String receivedMessage = getPayload(message);
+            String expectedMessage = "my-message-" + i;
+            testMessageOrderAndDuplicates(messageSet, receivedMessage, expectedMessage);
+        }
+
+        // Redeliver last message
+        consumeInput.onNext(Commands.newRedeliverUnacknowledgedMessages(Collections.singletonList(message.getMessageId())));
+
+        message = consumeOutput.takeOneMessage().getMessage();
+        String receivedMessage = getPayload(message);
+        assertEquals(receivedMessage, "my-message-9");
+
+        // Acknowledge the consumption of all messages at once
+        consumeInput.onNext(Commands.newAck(message.getMessageId(), AckType.Cumulative));
+        Thread.sleep(100);
+        consumeInput.onCompleted();
+        consumeOutput.waitForCompletion();
+        log.info("-- Exiting {} test --", methodName);
+    }
+
+    @Test(timeOut = 30000)
+    public void testAckedMessagesAreNotRedelivered() throws Exception {
+        log.info("-- Starting {} test --", methodName);
+
+        // Lookup
+        PulsarGrpc.PulsarBlockingStub blockingStub = PulsarGrpc.newBlockingStub(channel);
+        blockingStub.lookupTopic(Commands.newLookup("persistent://my-property/my-ns/my-topic1", false));
+
+        // Subscribe
+        CommandSubscribe subscribe = Commands.newSubscribe("persistent://my-property/my-ns/my-topic1",
+                "my-subscriber-name", CommandSubscribe.SubType.Exclusive, 0,
+                "test" , 0);
+        PulsarGrpc.PulsarStub consumerStub = Commands.attachConsumerParams(stub, subscribe);
+
+        TestStreamObserver<ConsumeOutput> consumeOutput = TestStreamObserver.create();
+        StreamObserver<ConsumeInput> consumeInput = consumerStub.consume(consumeOutput);
+
+        assertTrue(consumeOutput.takeOneMessage().hasSubscribeSuccess());
+
+        // Send flow permits
+        consumeInput.onNext(Commands.newFlow(100));
+
+        ProducerBuilder<byte[]> producerBuilder = pulsarClient.newProducer()
+                .enableBatching(false)
+                .topic("persistent://my-property/my-ns/my-topic1");
+
+        Producer<byte[]> producer = producerBuilder.create();
+        for (int i = 0; i < 10; i++) {
+            String message = "my-message-" + i;
+            producer.send(message.getBytes());
+        }
+
+        Set<String> messageSet = Sets.newHashSet();
+        for (int i = 0; i < 10; i++) {
+            CommandMessage message = consumeOutput.takeOneMessage().getMessage();
+            String receivedMessage = getPayload(message);
+            String expectedMessage = "my-message-" + i;
+            testMessageOrderAndDuplicates(messageSet, receivedMessage, expectedMessage);
+            if (i == 4) {
+                // Acknowledge the consumption up to this message
+                consumeInput.onNext(Commands.newAck(message.getMessageId(), AckType.Cumulative));
+            }
+        }
+
+        // Redeliver all unacknowledged messages
+        consumeInput.onNext(Commands.newRedeliverUnacknowledgedMessages());
+
+        CommandMessage message = null;
+        messageSet = Sets.newHashSet();
+        // Verify that only the last 5 messages are redelivered
+        for (int i = 5; i < 10; i++) {
+            message = consumeOutput.takeOneMessage().getMessage();
+            String receivedMessage = getPayload(message);
+            String expectedMessage = "my-message-" + i;
+            testMessageOrderAndDuplicates(messageSet, receivedMessage, expectedMessage);
+        }
+
+        // Acknowledge the consumption of all messages at once
+        consumeInput.onNext(Commands.newAck(message.getMessageId(), AckType.Cumulative));
+        Thread.sleep(100);
+        consumeInput.onCompleted();
+        consumeOutput.waitForCompletion();
+        log.info("-- Exiting {} test --", methodName);
+    }
+
+    @Test(timeOut = 30000)
+    public void testGetLastMessageId() throws Exception {
+        log.info("-- Starting {} test --", methodName);
+
+        // Lookup
+        PulsarGrpc.PulsarBlockingStub blockingStub = PulsarGrpc.newBlockingStub(channel);
+        blockingStub.lookupTopic(Commands.newLookup("persistent://my-property/my-ns/my-topic1", false));
+
+        // Subscribe
+        CommandSubscribe subscribe = Commands.newSubscribe("persistent://my-property/my-ns/my-topic1",
+                "my-subscriber-name", CommandSubscribe.SubType.Exclusive, 0,
+                "test" , 0);
+        PulsarGrpc.PulsarStub consumerStub = Commands.attachConsumerParams(stub, subscribe);
+
+        TestStreamObserver<ConsumeOutput> consumeOutput = TestStreamObserver.create();
+        StreamObserver<ConsumeInput> consumeInput = consumerStub.consume(consumeOutput);
+
+        assertTrue(consumeOutput.takeOneMessage().hasSubscribeSuccess());
+
+        // Send flow permits
+        consumeInput.onNext(Commands.newFlow(100));
+
+        ProducerBuilder<byte[]> producerBuilder = pulsarClient.newProducer()
+                .enableBatching(true)
+                .topic("persistent://my-property/my-ns/my-topic1");
+
+        Producer<byte[]> producer = producerBuilder.create();
+        for (int i = 0; i < 10; i++) {
+            String message = "my-message-" + i;
+            producer.send(message.getBytes());
+        }
+
+        CommandMessage message = null;
+        for (int i = 0; i < 10; i++) {
+            message = consumeOutput.takeOneMessage().getMessage();
+        }
+        // Acknowledge the consumption of all messages at once
+        consumeInput.onNext(Commands.newAck(message.getMessageId(), AckType.Cumulative));
+
+        consumeInput.onNext(Commands.newGetLastMessageId(1));
+        ConsumeOutput output = consumeOutput.takeOneMessage();
+        assertTrue(output.hasGetLastMessageIdResponse());
+        CommandGetLastMessageIdResponse response = output.getGetLastMessageIdResponse();
+        assertEquals(response.getRequestId(), 1);
+        assertEquals(response.getLastMessageId().getLedgerId(), 3);
+        assertEquals(response.getLastMessageId().getEntryId(), 9);
+        assertEquals(response.getLastMessageId().getPartition(), -1);
+        assertEquals(response.getLastMessageId().getBatchIndex(), -1);
+
+        consumeInput.onCompleted();
+        consumeOutput.waitForCompletion();
+        log.info("-- Exiting {} test --", methodName);
+    }
+
+    @Test(timeOut = 30000)
+    public void testGetLastMessageIdNotProducedYet() throws Exception {
+        log.info("-- Starting {} test --", methodName);
+
+        // Lookup
+        PulsarGrpc.PulsarBlockingStub blockingStub = PulsarGrpc.newBlockingStub(channel);
+        blockingStub.lookupTopic(Commands.newLookup("persistent://my-property/my-ns/my-topic1", false));
+
+        // Subscribe
+        CommandSubscribe subscribe = Commands.newSubscribe("persistent://my-property/my-ns/my-topic1",
+                "my-subscriber-name", CommandSubscribe.SubType.Exclusive, 0,
+                "test" , 0);
+        PulsarGrpc.PulsarStub consumerStub = Commands.attachConsumerParams(stub, subscribe);
+
+        TestStreamObserver<ConsumeOutput> consumeOutput = TestStreamObserver.create();
+        StreamObserver<ConsumeInput> consumeInput = consumerStub.consume(consumeOutput);
+
+        assertTrue(consumeOutput.takeOneMessage().hasSubscribeSuccess());
+
+        consumeInput.onNext(Commands.newGetLastMessageId(1));
+        ConsumeOutput output = consumeOutput.takeOneMessage();
+        assertTrue(output.hasGetLastMessageIdResponse());
+        CommandGetLastMessageIdResponse response = output.getGetLastMessageIdResponse();
+        assertEquals(response.getRequestId(), 1);
+        assertEquals(response.getLastMessageId().getLedgerId(), 3);
+        assertEquals(response.getLastMessageId().getEntryId(), -1);
+        assertEquals(response.getLastMessageId().getPartition(), -1);
+        assertEquals(response.getLastMessageId().getBatchIndex(), -1);
+
+        consumeInput.onCompleted();
+        consumeOutput.waitForCompletion();
+        log.info("-- Exiting {} test --", methodName);
+    }
+
+
+    private String getPayload(CommandMessage message) {
         ByteBuf headersAndPayload = Unpooled.wrappedBuffer(message.getHeadersAndPayload().toByteArray());
         parseMessageMetadata(headersAndPayload);
         ByteBuf payload = Unpooled.copiedBuffer(headersAndPayload);
         String receivedMessage = new String(payload.array());
-        log.debug("Received message: [{}]", receivedMessage);
+        log.info("Received message: [{}]", receivedMessage);
         return receivedMessage;
     }
 

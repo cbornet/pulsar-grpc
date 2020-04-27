@@ -22,6 +22,12 @@ import com.google.common.base.Strings;
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import io.netty.channel.EventLoopGroup;
+import org.apache.bookkeeper.mledger.AsyncCallbacks;
+import org.apache.bookkeeper.mledger.Entry;
+import org.apache.bookkeeper.mledger.ManagedLedgerException;
+import org.apache.bookkeeper.mledger.Position;
+import org.apache.bookkeeper.mledger.impl.ManagedLedgerImpl;
+import org.apache.bookkeeper.mledger.impl.PositionImpl;
 import org.apache.pulsar.broker.ServiceConfiguration;
 import org.apache.pulsar.broker.authentication.AuthenticationDataSource;
 import org.apache.pulsar.broker.service.BrokerService;
@@ -30,6 +36,7 @@ import org.apache.pulsar.broker.service.Consumer;
 import org.apache.pulsar.broker.service.Producer;
 import org.apache.pulsar.broker.service.Subscription;
 import org.apache.pulsar.broker.service.Topic;
+import org.apache.pulsar.broker.service.persistent.PersistentTopic;
 import org.apache.pulsar.broker.service.schema.SchemaRegistryService;
 import org.apache.pulsar.broker.service.schema.exceptions.IncompatibleSchemaException;
 import org.apache.pulsar.client.impl.BatchMessageIdImpl;
@@ -44,6 +51,7 @@ import org.apache.pulsar.common.protocol.schema.SchemaVersion;
 import org.apache.pulsar.common.util.FutureUtil;
 import org.apache.pulsar.protocols.grpc.api.CommandConsumerStats;
 import org.apache.pulsar.protocols.grpc.api.CommandFlow;
+import org.apache.pulsar.protocols.grpc.api.CommandGetLastMessageId;
 import org.apache.pulsar.protocols.grpc.api.CommandGetSchema;
 import org.apache.pulsar.protocols.grpc.api.CommandGetSchemaResponse;
 import org.apache.pulsar.protocols.grpc.api.CommandLookupTopic;
@@ -58,6 +66,7 @@ import org.apache.pulsar.protocols.grpc.api.CommandUnsubscribe;
 import org.apache.pulsar.protocols.grpc.api.ConsumeInput;
 import org.apache.pulsar.protocols.grpc.api.ConsumeOutput;
 import org.apache.pulsar.protocols.grpc.api.KeySharedMeta;
+import org.apache.pulsar.protocols.grpc.api.MessageIdData;
 import org.apache.pulsar.protocols.grpc.api.PulsarGrpc;
 import org.apache.pulsar.protocols.grpc.api.Schema;
 import org.apache.pulsar.protocols.grpc.api.SendResult;
@@ -72,7 +81,12 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Semaphore;
 import java.util.stream.Collectors;
 
+import static org.apache.pulsar.common.protocol.Commands.parseMessageMetadata;
 import static org.apache.pulsar.protocols.grpc.Commands.convertCommandAck;
+import static org.apache.pulsar.protocols.grpc.Commands.convertKeySharedMeta;
+import static org.apache.pulsar.protocols.grpc.Commands.convertServerError;
+import static org.apache.pulsar.protocols.grpc.Commands.convertSubscribeInitialPosition;
+import static org.apache.pulsar.protocols.grpc.Commands.convertSubscribeSubType;
 import static org.apache.pulsar.protocols.grpc.Commands.newStatusException;
 import static org.apache.pulsar.protocols.grpc.Constants.AUTH_DATA_CTX_KEY;
 import static org.apache.pulsar.protocols.grpc.Constants.AUTH_ROLE_CTX_KEY;
@@ -258,7 +272,7 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
 
                     schemaVersionFuture.exceptionally(exception -> {
                         responseObserver.onError(newStatusException(Status.FAILED_PRECONDITION, exception,
-                                Commands.convertServerError(BrokerServiceException.getClientErrorCode(exception))));
+                                convertServerError(BrokerServiceException.getClientErrorCode(exception))));
                         return null;
                     });
 
@@ -283,7 +297,7 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
                             log.error("[{}] Failed to add producer to topic {}: {}", remoteAddress, topicName,
                                     ise.getMessage());
                             responseObserver.onError(newStatusException(Status.FAILED_PRECONDITION, ise,
-                                    Commands.convertServerError(BrokerServiceException.getClientErrorCode(ise))));
+                                    convertServerError(BrokerServiceException.getClientErrorCode(ise))));
                             producerFuture.completeExceptionally(ise);
                         }
                     });
@@ -296,7 +310,7 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
 
                     if (producerFuture.completeExceptionally(exception)) {
                         responseObserver.onError(newStatusException(Status.FAILED_PRECONDITION, cause,
-                                Commands.convertServerError(BrokerServiceException.getClientErrorCode(cause))));
+                                convertServerError(BrokerServiceException.getClientErrorCode(cause))));
                     }
                     return null;
                 });
@@ -431,18 +445,18 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
                             if (schema != null) {
                                 return topic.addSchemaIfIdleOrCheckCompatible(schema)
                                         .thenCompose(v -> topic.subscribe(cnx, subscriptionName, 0L,
-                                                Commands.convertSubscribeSubType(subType), priorityLevel,
+                                                convertSubscribeSubType(subType), priorityLevel,
                                                 consumerName, isDurable, startMessageId, metadata, readCompacted,
-                                                Commands.convertSubscribeInitialPosition(initialPosition),
+                                                convertSubscribeInitialPosition(initialPosition),
                                                 startMessageRollbackDurationSec, isReplicated,
-                                                Commands.convertKeySharedMeta(keySharedMeta)));
+                                                convertKeySharedMeta(keySharedMeta)));
                             } else {
                                 return topic.subscribe(cnx, subscriptionName, 0L,
-                                        Commands.convertSubscribeSubType(subType), priorityLevel, consumerName, isDurable,
+                                        convertSubscribeSubType(subType), priorityLevel, consumerName, isDurable,
                                         startMessageId, metadata, readCompacted,
-                                        Commands.convertSubscribeInitialPosition(initialPosition),
+                                        convertSubscribeInitialPosition(initialPosition),
                                         startMessageRollbackDurationSec, isReplicated,
-                                        Commands.convertKeySharedMeta(keySharedMeta));
+                                        convertKeySharedMeta(keySharedMeta));
                             }
                         })
                         .thenAccept(consumer -> {
@@ -481,7 +495,7 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
                             }
 
                             responseObserver.onError(newStatusException(Status.FAILED_PRECONDITION, exception.getCause(),
-                                        Commands.convertServerError(BrokerServiceException.getClientErrorCode(exception))));
+                                        convertServerError(BrokerServiceException.getClientErrorCode(exception))));
                             consumerFuture.completeExceptionally(exception);
                             return null;
                         });
@@ -566,6 +580,25 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
                                 consumer.redeliverUnacknowledgedMessages();
                             }
                         }
+                        break;
+                    case GETLASTMESSAGEID:
+                        if (consumer != null) {
+                            CommandGetLastMessageId getLastMessageId = consumeInput.getGetLastMessageId();
+
+                            Topic topic = consumer.getSubscription().getTopic();
+                            Position position = topic.getLastPosition();
+                            int partitionIndex = TopicName.getPartitionIndex(topic.getName());
+
+                            getLargestBatchIndexWhenPossible(
+                                    topic,
+                                    (PositionImpl) position,
+                                    partitionIndex,
+                                    getLastMessageId.getRequestId(),
+                                    consumer.getSubscription().getName(),
+                                    responseObserver,
+                                    remoteAddress);
+                        }
+                        break;
 
                     default:
                         break;
@@ -583,6 +616,72 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
                 closeConsume(consumerFuture, remoteAddress, responseObserver);
             }
         };
+    }
+
+    private void getLargestBatchIndexWhenPossible(
+            Topic topic,
+            PositionImpl position,
+            int partitionIndex,
+            long requestId,
+            String subscriptionName,
+            StreamObserver<ConsumeOutput> responseObserver,
+            SocketAddress remoteAddress) {
+
+        PersistentTopic persistentTopic = (PersistentTopic) topic;
+        ManagedLedgerImpl ml = (ManagedLedgerImpl) persistentTopic.getManagedLedger();
+
+        // If it's not pointing to a valid entry, respond messageId of the current position.
+        if (position.getEntryId() == -1) {
+            MessageIdData messageId = MessageIdData.newBuilder()
+                    .setLedgerId(position.getLedgerId())
+                    .setEntryId(position.getEntryId())
+                    .setPartition(partitionIndex).build();
+
+            responseObserver.onNext(Commands.newGetLastMessageIdResponse(requestId, messageId));
+        }
+
+        // For a valid position, we read the entry out and parse the batch size from its metadata.
+        CompletableFuture<Entry> entryFuture = new CompletableFuture<>();
+        ml.asyncReadEntry(position, new AsyncCallbacks.ReadEntryCallback() {
+            @Override
+            public void readEntryComplete(Entry entry, Object ctx) {
+                entryFuture.complete(entry);
+            }
+
+            @Override
+            public void readEntryFailed(ManagedLedgerException exception, Object ctx) {
+                entryFuture.completeExceptionally(exception);
+            }
+        }, null);
+
+        CompletableFuture<Integer> batchSizeFuture = entryFuture.thenApply(entry -> {
+            PulsarApi.MessageMetadata metadata = parseMessageMetadata(entry.getDataBuffer());
+            int batchSize = metadata.getNumMessagesInBatch();
+            entry.release();
+            return batchSize;
+        });
+
+        batchSizeFuture.whenComplete((batchSize, e) -> {
+            if (e != null) {
+                responseObserver.onNext(Commands.newError(
+                        requestId, ServerError.MetadataError, "Failed to get batch size for entry " + e.getMessage()));
+            } else {
+                int largestBatchIndex = batchSize > 1 ? batchSize - 1 : -1;
+
+                if (log.isDebugEnabled()) {
+                    log.debug("[{}] [{}][{}] Get LastMessageId {} partitionIndex {}", remoteAddress,
+                            topic.getName(), subscriptionName, position, partitionIndex);
+                }
+
+                MessageIdData messageId = MessageIdData.newBuilder()
+                        .setLedgerId(position.getLedgerId())
+                        .setEntryId(position.getEntryId())
+                        .setPartition(partitionIndex)
+                        .setBatchIndex(largestBatchIndex).build();
+
+                responseObserver.onNext(Commands.newGetLastMessageIdResponse(requestId, messageId));
+            }
+        });
     }
 
     private SchemaData getSchema(Schema protocolSchema) {
@@ -658,7 +757,7 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
         } catch (BrokerServiceException e) {
             log.warn("[{]] Error closing consumer {} : {}", remoteAddress, consumer, e);
             responseObserver.onError(newStatusException(Status.INTERNAL, e,
-                    Commands.convertServerError(BrokerServiceException.getClientErrorCode(e))));
+                    convertServerError(BrokerServiceException.getClientErrorCode(e))));
         }
     }
 
