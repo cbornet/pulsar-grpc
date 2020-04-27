@@ -72,6 +72,8 @@ import org.apache.pulsar.protocols.grpc.api.CommandConsumerStatsResponse;
 import org.apache.pulsar.protocols.grpc.api.CommandError;
 import org.apache.pulsar.protocols.grpc.api.CommandLookupTopic;
 import org.apache.pulsar.protocols.grpc.api.CommandLookupTopicResponse;
+import org.apache.pulsar.protocols.grpc.api.CommandPartitionedTopicMetadata;
+import org.apache.pulsar.protocols.grpc.api.CommandPartitionedTopicMetadataResponse;
 import org.apache.pulsar.protocols.grpc.api.CommandProducer;
 import org.apache.pulsar.protocols.grpc.api.CommandSend;
 import org.apache.pulsar.protocols.grpc.api.CommandSubscribe;
@@ -987,6 +989,18 @@ public class PulsarGrpcServiceTest {
         stub.lookupTopic(lookup, lookupResponse);
 
         assertErrorIsStatusExceptionWithServerError(lookupResponse.waitForError(), Status.INVALID_ARGUMENT,
+                ServerError.InvalidTopicName);
+    }
+
+    @Test(timeOut = 30000)
+    public void testInvalidTopicOnGetPartitionMetadata() throws Exception {
+        String invalidTopicName = "xx/ass/aa/aaa";
+        CommandPartitionedTopicMetadata request = Commands.newPartitionMetadataRequest(invalidTopicName);
+        TestStreamObserver<CommandPartitionedTopicMetadataResponse> response = TestStreamObserver.create();
+
+        stub.getPartitionMetadata(request, response);
+
+        assertErrorIsStatusExceptionWithServerError(response.waitForError(), Status.INVALID_ARGUMENT,
                 ServerError.InvalidTopicName);
     }
 

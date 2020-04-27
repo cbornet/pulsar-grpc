@@ -39,6 +39,8 @@ import org.apache.pulsar.broker.service.Topic;
 import org.apache.pulsar.broker.service.persistent.PersistentTopic;
 import org.apache.pulsar.broker.service.schema.SchemaRegistryService;
 import org.apache.pulsar.broker.service.schema.exceptions.IncompatibleSchemaException;
+import org.apache.pulsar.broker.web.RestException;
+import org.apache.pulsar.client.api.PulsarClientException;
 import org.apache.pulsar.client.impl.BatchMessageIdImpl;
 import org.apache.pulsar.client.impl.MessageIdImpl;
 import org.apache.pulsar.common.api.proto.PulsarApi;
@@ -56,6 +58,8 @@ import org.apache.pulsar.protocols.grpc.api.CommandGetSchema;
 import org.apache.pulsar.protocols.grpc.api.CommandGetSchemaResponse;
 import org.apache.pulsar.protocols.grpc.api.CommandLookupTopic;
 import org.apache.pulsar.protocols.grpc.api.CommandLookupTopicResponse;
+import org.apache.pulsar.protocols.grpc.api.CommandPartitionedTopicMetadata;
+import org.apache.pulsar.protocols.grpc.api.CommandPartitionedTopicMetadataResponse;
 import org.apache.pulsar.protocols.grpc.api.CommandProducer;
 import org.apache.pulsar.protocols.grpc.api.CommandRedeliverUnacknowledgedMessages;
 import org.apache.pulsar.protocols.grpc.api.CommandSeek;
@@ -82,6 +86,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Semaphore;
 import java.util.stream.Collectors;
 
+import static org.apache.pulsar.broker.admin.impl.PersistentTopicsBase.getPartitionedTopicMetadata;
 import static org.apache.pulsar.common.protocol.Commands.parseMessageMetadata;
 import static org.apache.pulsar.protocols.grpc.Commands.convertCommandAck;
 import static org.apache.pulsar.protocols.grpc.Commands.convertKeySharedMeta;
@@ -191,6 +196,66 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
             responseObserver.onError(newStatusException(Status.INTERNAL, ex, ServerError.UnknownError));
             return null;
         });
+    }
+
+    @Override
+    public void getPartitionMetadata(CommandPartitionedTopicMetadata partitionMetadata, StreamObserver<CommandPartitionedTopicMetadataResponse> responseObserver) {
+        final SocketAddress remoteAddress = REMOTE_ADDRESS_CTX_KEY.get();
+        final String authRole = AUTH_ROLE_CTX_KEY.get();
+        final AuthenticationDataSource authenticationData = AUTH_DATA_CTX_KEY.get();
+
+        if (log.isDebugEnabled()) {
+            log.debug("[{}] Received PartitionMetadataLookup from {}", partitionMetadata.getTopic(),
+                    remoteAddress);
+        }
+
+        TopicName topicName;
+        try {
+            topicName = TopicName.get(partitionMetadata.getTopic());
+        } catch (Throwable t) {
+            if (log.isDebugEnabled()) {
+                log.debug("[{}] Failed to parse topic name '{}'", remoteAddress, partitionMetadata.getTopic(), t);
+            }
+            responseObserver.onError(newStatusException(Status.INVALID_ARGUMENT,
+                    "Invalid topic name: " + t.getMessage(), null, ServerError.InvalidTopicName));
+            return;
+        }
+
+        final Semaphore lookupSemaphore = service.getLookupRequestSemaphore();
+        if (lookupSemaphore.tryAcquire()) {
+            getPartitionedTopicMetadata(service.pulsar(),
+                    authRole, null, authenticationData,
+                    topicName).handle((metadata, ex) -> {
+                if (ex == null) {
+                    int partitions = metadata.partitions;
+                    responseObserver.onNext(Commands.newPartitionMetadataResponse(partitions));
+                } else {
+                    if (ex instanceof PulsarClientException) {
+                        log.warn("Failed to authorize {} at [{}] on topic {} : {}", authRole,
+                                remoteAddress, topicName, ex.getMessage());
+                        responseObserver.onError(Commands.newStatusException(Status.PERMISSION_DENIED, ex,
+                                ServerError.AuthorizationError));
+                    } else {
+                        log.warn("Failed to get Partitioned Metadata [{}] {}: {}", remoteAddress,
+                                topicName, ex.getMessage(), ex);
+                        ServerError error = (ex instanceof RestException)
+                                && ((RestException) ex).getResponse().getStatus() < 500
+                                ? ServerError.MetadataError
+                                : ServerError.ServiceNotReady;
+                        responseObserver.onError(Commands.newStatusException(Status.FAILED_PRECONDITION, ex, error));
+                    }
+                }
+                lookupSemaphore.release();
+                return null;
+            });
+        } else {
+            if (log.isDebugEnabled()) {
+                log.debug("[{}] Failed Partition-Metadata lookup due to too many lookup-requests {}", remoteAddress,
+                        topicName);
+            }
+            responseObserver.onError(Commands.newStatusException(Status.RESOURCE_EXHAUSTED,
+                    "Failed due to too many pending lookup requests", null, ServerError.TooManyRequests));
+        }
     }
 
     @Override

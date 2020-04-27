@@ -52,6 +52,8 @@ import org.apache.pulsar.protocols.grpc.api.CommandGetSchemaResponse;
 import org.apache.pulsar.protocols.grpc.api.CommandLookupTopic;
 import org.apache.pulsar.protocols.grpc.api.CommandLookupTopicResponse;
 import org.apache.pulsar.protocols.grpc.api.CommandMessage;
+import org.apache.pulsar.protocols.grpc.api.CommandPartitionedTopicMetadata;
+import org.apache.pulsar.protocols.grpc.api.CommandPartitionedTopicMetadataResponse;
 import org.apache.pulsar.protocols.grpc.api.CommandProducer;
 import org.apache.pulsar.protocols.grpc.api.CommandProducerSuccess;
 import org.apache.pulsar.protocols.grpc.api.CommandReachedEndOfTopic;
@@ -297,6 +299,19 @@ public class Commands {
         commandLookupTopicResponseBuilder.setProxyThroughServiceUrl(proxyThroughServiceUrl);
 
         return commandLookupTopicResponseBuilder.build();
+    }
+
+    public static CommandPartitionedTopicMetadata newPartitionMetadataRequest(String topic) {
+        CommandPartitionedTopicMetadata.Builder partitionMetadataBuilder = CommandPartitionedTopicMetadata.newBuilder();
+        partitionMetadataBuilder.setTopic(topic);
+        return partitionMetadataBuilder.build();
+    }
+
+    public static CommandPartitionedTopicMetadataResponse newPartitionMetadataResponse(int partitions) {
+        CommandPartitionedTopicMetadataResponse.Builder partitionMetadataResponseBuilder =
+                CommandPartitionedTopicMetadataResponse.newBuilder();
+        partitionMetadataResponseBuilder.setPartitions(partitions);
+        return partitionMetadataResponseBuilder.build();
     }
 
     public static CommandSubscribe newSubscribe(String topic, String subscription, 
