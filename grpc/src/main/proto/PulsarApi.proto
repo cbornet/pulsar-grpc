@@ -28,6 +28,7 @@ service Pulsar {
     rpc consume(stream ConsumeInput) returns (stream ConsumeOutput) {}
     rpc get_schema(CommandGetSchema) returns (CommandGetSchemaResponse) {}
     rpc lookup_topic(CommandLookupTopic) returns (CommandLookupTopicResponse) {}
+    rpc get_partition_metadata(CommandPartitionedTopicMetadata) returns (CommandPartitionedTopicMetadataResponse) {}
 }
 
 message Schema {
@@ -64,49 +65,9 @@ message MessageIdData {
     optional int32 batch_index = 4 [default = -1];
 }
 
-message KeyValue {
-    required string key = 1;
-    required string value = 2;
-}
-
-message KeyLongValue {
-    required string key = 1;
-    required uint64 value = 2;
-}
-
 message IntRange {
     required int32 start = 1;
     required int32 end = 2;
-}
-
-message EncryptionKeys {
-    required string key = 1;
-    required bytes value = 2;
-    repeated KeyValue metadata = 3;
-}
-
-enum CompressionType {
-    NONE   = 0;
-    LZ4    = 1;
-    ZLIB   = 2;
-    ZSTD   = 3;
-    SNAPPY   = 4;
-}
-
-message SingleMessageMetadata {
-    repeated KeyValue properties    = 1;
-    optional string partition_key   = 2;
-    required int32 payload_size    = 3;
-    optional bool compacted_out     = 4 [default = false];
-
-    // the timestamp that this event occurs. it is typically set by applications.
-    // if this field is omitted, `publish_time` can be used for the purpose of `event_time`.
-    optional uint64 event_time = 5 [default = 0];
-    optional bool partition_key_b64_encoded = 6 [ default = false ];
-    // Specific a key to overwrite the message key which used for ordering dispatch in Key_Shared mode.
-    optional bytes ordering_key = 7;
-    // Allows consumer retrieve the sequence id that the producer set.
-    optional uint64 sequence_id = 8;
 }
 
 enum ServerError {
@@ -139,36 +100,6 @@ enum ServerError {
     InvalidTxnStatus = 21; // Invalid txn status error
 }
 
-enum AuthMethod {
-    AuthMethodNone   = 0;
-    AuthMethodYcaV1  = 1;
-    AuthMethodAthens = 2;
-}
-
-// Each protocol version identify new features that are
-// incrementally added to the protocol
-enum ProtocolVersion {
-    v0 = 0;  // Initial versioning
-    v1 = 1;  // Added application keep-alive
-    v2 = 2;  // Added RedeliverUnacknowledgedMessages Command
-    v3 = 3;  // Added compression with LZ4 and ZLib
-    v4 = 4;  // Added batch message support
-    v5 = 5;  // Added disconnect client w/o closing connection
-    v6 = 6;  // Added checksum computation for metadata + payload
-    v7 = 7;  // Added CommandLookupTopic - Binary Lookup
-    v8 = 8;  // Added CommandConsumerStats - Client fetches broker side consumer stats
-    v9 = 9;  // Added end of topic notification
-    v10 = 10;// Added proxy to broker
-    v11 = 11;// C++ consumers before this version are not correctly handling the checksum field
-    v12 = 12;// Added get topic's last messageId from broker
-             // Added CommandActiveConsumerChange
-             // Added CommandGetTopicsOfNamespace
-    v13 = 13; // Schema-registry : added avro schema format for json
-    v14 = 14; // Add CommandAuthChallenge and CommandAuthResponse for mutual auth
-              // Added Key_Shared subscription
-    v15 = 15; // Add CommandGetOrCreateSchema and CommandGetOrCreateSchemaResponse
-}
-
 message CommandConnect {
     optional string auth_method_name = 1;
     optional bytes auth_data = 2;
@@ -193,12 +124,6 @@ message CommandConnect {
 message CommandAuth {
     optional string auth_method = 1;
     optional bytes auth_data    = 2;
-}
-
-message CommandConnected {
-    required string server_version  = 1;
-    optional int32 protocol_version = 2 [default = 0];
-    optional int32 max_message_size = 3;
 }
 
 message CommandAuthResponse {
@@ -572,8 +497,8 @@ message CommandGetLastMessageId {
 }
 
 message CommandGetLastMessageIdResponse {
-    required MessageIdData last_message_id = 1;
-    required uint64 request_id             = 2;
+    required uint64 request_id             = 1;
+    required MessageIdData last_message_id = 2;
 }
 
 message CommandGetTopicsOfNamespace {
@@ -716,156 +641,4 @@ message CommandEndTxnOnSubscriptionResponse {
     optional uint64 txnid_most_bits = 3 [default = 0];
     optional ServerError error = 4;
     optional string message = 5;
-}
-
-message BaseCommand {
-    enum Type {
-        CONNECT     = 2;
-        CONNECTED   = 3;
-        SUBSCRIBE   = 4;
-
-        PRODUCER    = 5;
-
-        SEND        = 6;
-        SEND_RECEIPT= 7;
-        SEND_ERROR  = 8;
-
-        MESSAGE     = 9;
-        ACK         = 10;
-        FLOW        = 11;
-
-        UNSUBSCRIBE = 12;
-
-        SUCCESS     = 13;
-        ERROR       = 14;
-
-        CLOSE_PRODUCER = 15;
-        CLOSE_CONSUMER = 16;
-
-        PRODUCER_SUCCESS = 17;
-
-        PING = 18;
-        PONG = 19;
-
-        REDELIVER_UNACKNOWLEDGED_MESSAGES = 20;
-
-        PARTITIONED_METADATA           = 21;
-        PARTITIONED_METADATA_RESPONSE  = 22;
-
-        LOOKUP           = 23;
-        LOOKUP_RESPONSE  = 24;
-
-        CONSUMER_STATS        = 25;
-        CONSUMER_STATS_RESPONSE    = 26;
-
-        REACHED_END_OF_TOPIC = 27;
-
-        SEEK = 28;
-
-        GET_LAST_MESSAGE_ID = 29;
-        GET_LAST_MESSAGE_ID_RESPONSE = 30;
-
-        ACTIVE_CONSUMER_CHANGE = 31;
-
-
-        GET_TOPICS_OF_NAMESPACE             = 32;
-        GET_TOPICS_OF_NAMESPACE_RESPONSE     = 33;
-
-        GET_SCHEMA = 34;
-        GET_SCHEMA_RESPONSE = 35;
-
-        AUTH_CHALLENGE = 36;
-        AUTH_RESPONSE = 37;
-
-        ACK_RESPONSE = 38;
-
-        GET_OR_CREATE_SCHEMA = 39;
-        GET_OR_CREATE_SCHEMA_RESPONSE = 40;
-
-        // transaction related
-        NEW_TXN = 50;
-        NEW_TXN_RESPONSE = 51;
-
-        ADD_PARTITION_TO_TXN = 52;
-        ADD_PARTITION_TO_TXN_RESPONSE = 53;
-
-        ADD_SUBSCRIPTION_TO_TXN = 54;
-        ADD_SUBSCRIPTION_TO_TXN_RESPONSE = 55;
-
-        END_TXN = 56;
-        END_TXN_RESPONSE = 57;
-
-        END_TXN_ON_PARTITION = 58;
-        END_TXN_ON_PARTITION_RESPONSE = 59;
-
-        END_TXN_ON_SUBSCRIPTION = 60;
-        END_TXN_ON_SUBSCRIPTION_RESPONSE = 61;
-
-    }
-
-
-    required Type type = 1;
-
-    optional CommandConnect connect          = 2;
-    optional CommandConnected connected      = 3;
-
-    optional CommandSubscribe subscribe      = 4;
-    optional CommandProducer producer        = 5;
-    optional CommandSend send                = 6;
-    optional CommandSendReceipt send_receipt = 7;
-    optional CommandSendError send_error     = 8;
-    optional CommandMessage message          = 9;
-    optional CommandAck ack                  = 10;
-    optional CommandFlow flow                = 11;
-    optional CommandUnsubscribe unsubscribe  = 12;
-
-    optional CommandSuccess success          = 13;
-    optional CommandError error              = 14;
-
-    optional CommandProducerSuccess producer_success = 17;
-    optional CommandRedeliverUnacknowledgedMessages redeliverUnacknowledgedMessages = 20;
-
-    optional CommandPartitionedTopicMetadata  partitionMetadata                 = 21;
-    optional CommandPartitionedTopicMetadataResponse partitionMetadataResponse  = 22;
-
-    optional CommandLookupTopic lookupTopic                    = 23;
-    optional CommandLookupTopicResponse lookupTopicResponse    = 24;
-
-    optional CommandConsumerStats consumerStats                         = 25;
-    optional CommandConsumerStatsResponse consumerStatsResponse         = 26;
-
-    optional CommandReachedEndOfTopic reachedEndOfTopic  = 27;
-
-    optional CommandSeek seek = 28;
-
-    optional CommandGetLastMessageId getLastMessageId = 29;
-    optional CommandGetLastMessageIdResponse getLastMessageIdResponse = 30;
-
-    optional CommandActiveConsumerChange active_consumer_change = 31;
-
-    optional CommandGetTopicsOfNamespace getTopicsOfNamespace = 32;
-    optional CommandGetTopicsOfNamespaceResponse getTopicsOfNamespaceResponse = 33;
-
-    optional CommandGetSchema getSchema = 34;
-    optional CommandGetSchemaResponse getSchemaResponse = 35;
-
-    optional CommandAuthChallenge authChallenge = 36;
-    optional CommandAuthResponse authResponse = 37;
-
-    optional CommandGetOrCreateSchema getOrCreateSchema = 39;
-    optional CommandGetOrCreateSchemaResponse getOrCreateSchemaResponse = 40;
-
-    // transaction related
-    optional CommandNewTxn newTxn = 50;
-    optional CommandNewTxnResponse newTxnResponse = 51;
-    optional CommandAddPartitionToTxn addPartitionToTxn= 52;
-    optional CommandAddPartitionToTxnResponse addPartitionToTxnResponse = 53;
-    optional CommandAddSubscriptionToTxn addSubscriptionToTxn = 54;
-    optional CommandAddSubscriptionToTxnResponse addSubscriptionToTxnResponse = 55;
-    optional CommandEndTxn endTxn = 56;
-    optional CommandEndTxnResponse endTxnResponse = 57;
-    optional CommandEndTxnOnPartition endTxnOnPartition = 58;
-    optional CommandEndTxnOnPartitionResponse endTxnOnPartitionResponse = 59;
-    optional CommandEndTxnOnSubscription endTxnOnSubscription = 60;
-    optional CommandEndTxnOnSubscriptionResponse endTxnOnSubscriptionResponse = 61;
 }
