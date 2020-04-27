@@ -229,6 +229,7 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
                 if (ex == null) {
                     int partitions = metadata.partitions;
                     responseObserver.onNext(Commands.newPartitionMetadataResponse(partitions));
+                    responseObserver.onCompleted();
                 } else {
                     if (ex instanceof PulsarClientException) {
                         log.warn("Failed to authorize {} at [{}] on topic {} : {}", authRole,

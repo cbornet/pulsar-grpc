@@ -16,7 +16,12 @@ import org.apache.pulsar.common.api.proto.PulsarApi;
 import org.apache.pulsar.common.protocol.Commands.ChecksumType;
 import org.apache.pulsar.protocols.grpc.api.CommandAck.AckType;
 import org.apache.pulsar.protocols.grpc.api.CommandGetLastMessageIdResponse;
+import org.apache.pulsar.protocols.grpc.api.CommandLookupTopic;
+import org.apache.pulsar.protocols.grpc.api.CommandLookupTopicResponse;
+import org.apache.pulsar.protocols.grpc.api.CommandLookupTopicResponse.LookupType;
 import org.apache.pulsar.protocols.grpc.api.CommandMessage;
+import org.apache.pulsar.protocols.grpc.api.CommandPartitionedTopicMetadata;
+import org.apache.pulsar.protocols.grpc.api.CommandPartitionedTopicMetadataResponse;
 import org.apache.pulsar.protocols.grpc.api.CommandProducer;
 import org.apache.pulsar.protocols.grpc.api.CommandSend;
 import org.apache.pulsar.protocols.grpc.api.CommandSubscribe;
@@ -31,8 +36,10 @@ import org.testng.annotations.AfterMethod;
 import org.testng.annotations.BeforeMethod;
 import org.testng.annotations.Test;
 
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
@@ -609,8 +616,43 @@ public class ProducerConsumerCompatibilityTest extends ProducerConsumerBase {
         log.info("-- Exiting {} test --", methodName);
     }
 
+    @Test
+    public void testLookupTopic() throws Exception {
+        String topic = "persistent://my-property/my-ns/my-topic1";
+        admin.topics().createNonPartitionedTopic(topic);
 
-    private String getPayload(CommandMessage message) {
+        CommandLookupTopic lookupTopic = CommandLookupTopic.newBuilder().setTopic(topic).build();
+        TestStreamObserver<CommandLookupTopicResponse> response = TestStreamObserver.create();
+
+        stub.lookupTopic(lookupTopic, response);
+
+        CommandLookupTopicResponse topicResponse = response.takeOneMessage();
+        assertEquals(topicResponse.getGrpcServiceHost(), "localhost");
+        assertEquals(topicResponse.getGrpcServicePort(), (int)grpcService.getListenPort().orElse(null));
+        assertEquals(topicResponse.getResponse(), LookupType.Connect);
+
+        response.waitForCompletion();
+    }
+
+    @Test
+    public void testGetPartitionedTopicMetadata() throws Exception {
+        int numPartitions = 4;
+        String topic = "persistent://my-property/my-ns/my-partitionedtopic1-" + System.currentTimeMillis();
+
+        admin.topics().createPartitionedTopic(topic, numPartitions);
+
+        CommandPartitionedTopicMetadata commandPartitionedTopicMetadata =
+                CommandPartitionedTopicMetadata.newBuilder().setTopic(topic).build();
+        TestStreamObserver<CommandPartitionedTopicMetadataResponse> response = TestStreamObserver.create();
+
+        stub.getPartitionMetadata(commandPartitionedTopicMetadata, response);
+
+        assertEquals(response.takeOneMessage().getPartitions(), numPartitions);
+
+        response.waitForCompletion();
+    }
+
+    private static String getPayload(CommandMessage message) {
         ByteBuf headersAndPayload = Unpooled.wrappedBuffer(message.getHeadersAndPayload().toByteArray());
         parseMessageMetadata(headersAndPayload);
         ByteBuf payload = Unpooled.copiedBuffer(headersAndPayload);
