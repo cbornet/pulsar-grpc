@@ -82,11 +82,6 @@ public class ConsumerCnx implements ServerCnx {
     }
 
     @Override
-    public void removedConsumer(Consumer consumer) {
-        responseObserver.onCompleted();
-    }
-
-    @Override
     public void closeConsumer(Consumer consumer) {
         responseObserver.onCompleted();
     }

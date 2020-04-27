@@ -456,11 +456,11 @@ message CommandUnsubscribe {
 
 // Reset an existing consumer to a particular message id
 message CommandSeek {
-    required uint64 consumer_id = 1;
-    required uint64 request_id  = 2;
-
-    optional MessageIdData message_id = 3;
-    optional uint64 message_publish_time = 4;
+    required uint64 request_id           = 1;
+    oneof seek_one_of {
+        MessageIdData message_id = 2;
+        uint64 message_publish_time = 3;
+    }
 }
 
 // Message sent by broker to client when a topic
@@ -481,6 +481,7 @@ message ConsumeInput {
         CommandRedeliverUnacknowledgedMessages redeliverUnacknowledgedMessages = 4;
         CommandConsumerStats consumerStats                                     = 5;
         CommandGetLastMessageId getLastMessageId                               = 6;
+        CommandSeek seek                                                       = 7;
     }
 }
 
@@ -507,7 +508,7 @@ message CommandProducerSuccess {
 
     // The last sequence id that was stored by this producer in the previous session
     // This will only be meaningful if deduplication has been enabled.
-    optional int64  last_sequence_id = 2 [default = -1];
+    optional int64 last_sequence_id = 2 [default = -1];
     optional bytes schema_version    = 3;
 }
 

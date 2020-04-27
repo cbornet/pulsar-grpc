@@ -22,6 +22,7 @@ import org.apache.pulsar.protocols.grpc.api.CommandSend;
 import org.apache.pulsar.protocols.grpc.api.CommandSubscribe;
 import org.apache.pulsar.protocols.grpc.api.ConsumeInput;
 import org.apache.pulsar.protocols.grpc.api.ConsumeOutput;
+import org.apache.pulsar.protocols.grpc.api.MessageIdData;
 import org.apache.pulsar.protocols.grpc.api.PulsarGrpc;
 import org.apache.pulsar.protocols.grpc.api.SendResult;
 import org.slf4j.Logger;
@@ -443,6 +444,165 @@ public class ProducerConsumerCompatibilityTest extends ProducerConsumerBase {
         assertEquals(response.getLastMessageId().getEntryId(), -1);
         assertEquals(response.getLastMessageId().getPartition(), -1);
         assertEquals(response.getLastMessageId().getBatchIndex(), -1);
+
+        consumeInput.onCompleted();
+        consumeOutput.waitForCompletion();
+        log.info("-- Exiting {} test --", methodName);
+    }
+
+    @Test(timeOut = 30000)
+    public void testSubscriptionSeekByMessageId() throws Exception {
+        log.info("-- Starting {} test --", methodName);
+
+        // Lookup
+        PulsarGrpc.PulsarBlockingStub blockingStub = PulsarGrpc.newBlockingStub(channel);
+        blockingStub.lookupTopic(Commands.newLookup("persistent://my-property/my-ns/my-topic1", false));
+
+        // Subscribe
+        CommandSubscribe subscribe = Commands.newSubscribe("persistent://my-property/my-ns/my-topic1",
+                "my-subscriber-name", CommandSubscribe.SubType.Exclusive, 0,
+                "test" , 0);
+        PulsarGrpc.PulsarStub consumerStub = Commands.attachConsumerParams(stub, subscribe);
+
+        TestStreamObserver<ConsumeOutput> consumeOutput = TestStreamObserver.create();
+        StreamObserver<ConsumeInput> consumeInput = consumerStub.consume(consumeOutput);
+
+        assertTrue(consumeOutput.takeOneMessage().hasSubscribeSuccess());
+
+        // Send flow permits
+        consumeInput.onNext(Commands.newFlow(100));
+
+        ProducerBuilder<byte[]> producerBuilder = pulsarClient.newProducer()
+                .enableBatching(false)
+                .topic("persistent://my-property/my-ns/my-topic1");
+
+        Producer<byte[]> producer = producerBuilder.create();
+        for (int i = 0; i < 10; i++) {
+            String message = "my-message-" + i;
+            producer.send(message.getBytes());
+        }
+
+        CommandMessage message = null;
+        CommandMessage seekMessage = null;
+        Set<String> messageSet = Sets.newHashSet();
+        for (int i = 0; i < 10; i++) {
+            message = consumeOutput.takeOneMessage().getMessage();
+            String receivedMessage = getPayload(message);
+            String expectedMessage = "my-message-" + i;
+            testMessageOrderAndDuplicates(messageSet, receivedMessage, expectedMessage);
+            if (i == 5) {
+                seekMessage = message;
+            }
+        }
+        // Acknowledge the consumption of all messages at once
+        consumeInput.onNext(Commands.newAck(message.getMessageId(), AckType.Cumulative));
+
+        MessageIdData messageId = seekMessage.getMessageId();
+        consumeInput.onNext(Commands.newSeek(1, messageId.getLedgerId(), messageId.getEntryId()));
+
+        // At the moment the consumer is disconnected during a seek. So we reconnect
+        // See https://github.com/apache/pulsar/issues/5073
+        consumeOutput.waitForCompletion();
+        Thread.sleep(100);
+        consumeInput = consumerStub.consume(consumeOutput);
+        assertTrue(consumeOutput.takeOneMessage().hasSubscribeSuccess());
+
+        // Send flow permits
+        consumeInput.onNext(Commands.newFlow(100));
+
+        messageSet = Sets.newHashSet();
+        for (int i = 5; i < 10; i++) {
+            message = consumeOutput.takeOneMessage().getMessage();
+            String receivedMessage = getPayload(message);
+            String expectedMessage = "my-message-" + i;
+            testMessageOrderAndDuplicates(messageSet, receivedMessage, expectedMessage);
+        }
+
+        // Acknowledge the consumption of all messages at once
+        consumeInput.onNext(Commands.newAck(message.getMessageId(), AckType.Cumulative));
+        Thread.sleep(100);
+
+        consumeInput.onCompleted();
+        consumeOutput.waitForCompletion();
+        log.info("-- Exiting {} test --", methodName);
+    }
+
+    @Test(timeOut = 30000)
+    public void testSubscriptionSeekByTimestamp() throws Exception {
+        log.info("-- Starting {} test --", methodName);
+
+        // Lookup
+        PulsarGrpc.PulsarBlockingStub blockingStub = PulsarGrpc.newBlockingStub(channel);
+        blockingStub.lookupTopic(Commands.newLookup("persistent://my-property/my-ns/my-topic1", false));
+
+        // Subscribe
+        CommandSubscribe subscribe = Commands.newSubscribe("persistent://my-property/my-ns/my-topic1",
+                "my-subscriber-name", CommandSubscribe.SubType.Exclusive, 0,
+                "test" , 0);
+        PulsarGrpc.PulsarStub consumerStub = Commands.attachConsumerParams(stub, subscribe);
+
+        TestStreamObserver<ConsumeOutput> consumeOutput = TestStreamObserver.create();
+        StreamObserver<ConsumeInput> consumeInput = consumerStub.consume(consumeOutput);
+
+        assertTrue(consumeOutput.takeOneMessage().hasSubscribeSuccess());
+
+        // Send flow permits
+        consumeInput.onNext(Commands.newFlow(100));
+
+        ProducerBuilder<byte[]> producerBuilder = pulsarClient.newProducer()
+                .enableBatching(false)
+                .topic("persistent://my-property/my-ns/my-topic1");
+
+        Producer<byte[]> producer = producerBuilder.create();
+        long timestamp = Long.MAX_VALUE;
+        for (int i = 0; i < 10; i++) {
+            String message = "my-message-" + i;
+            if (i == 5) {
+                timestamp = System.currentTimeMillis();
+            }
+            producer.send(message.getBytes());
+            Thread.sleep(10);
+        }
+
+        CommandMessage message = null;
+        CommandMessage seekMessage = null;
+        Set<String> messageSet = Sets.newHashSet();
+        for (int i = 0; i < 10; i++) {
+            message = consumeOutput.takeOneMessage().getMessage();
+            String receivedMessage = getPayload(message);
+            String expectedMessage = "my-message-" + i;
+            testMessageOrderAndDuplicates(messageSet, receivedMessage, expectedMessage);
+            if (i == 5) {
+                seekMessage = message;
+            }
+        }
+        // Acknowledge the consumption of all messages at once
+        consumeInput.onNext(Commands.newAck(message.getMessageId(), AckType.Cumulative));
+
+        MessageIdData messageId = seekMessage.getMessageId();
+        consumeInput.onNext(Commands.newSeek(1, timestamp));
+
+        // At the moment the consumer is disconnected during a seek. So we reconnect
+        // See https://github.com/apache/pulsar/issues/5073
+        consumeOutput.waitForCompletion();
+        Thread.sleep(100);
+        consumeInput = consumerStub.consume(consumeOutput);
+        assertTrue(consumeOutput.takeOneMessage().hasSubscribeSuccess());
+
+        // Send flow permits
+        consumeInput.onNext(Commands.newFlow(100));
+
+        messageSet = Sets.newHashSet();
+        for (int i = 5; i < 10; i++) {
+            message = consumeOutput.takeOneMessage().getMessage();
+            String receivedMessage = getPayload(message);
+            String expectedMessage = "my-message-" + i;
+            testMessageOrderAndDuplicates(messageSet, receivedMessage, expectedMessage);
+        }
+
+        // Acknowledge the consumption of all messages at once
+        consumeInput.onNext(Commands.newAck(message.getMessageId(), AckType.Cumulative));
+        Thread.sleep(100);
 
         consumeInput.onCompleted();
         consumeOutput.waitForCompletion();

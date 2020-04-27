@@ -56,6 +56,7 @@ import org.apache.pulsar.protocols.grpc.api.CommandProducer;
 import org.apache.pulsar.protocols.grpc.api.CommandProducerSuccess;
 import org.apache.pulsar.protocols.grpc.api.CommandReachedEndOfTopic;
 import org.apache.pulsar.protocols.grpc.api.CommandRedeliverUnacknowledgedMessages;
+import org.apache.pulsar.protocols.grpc.api.CommandSeek;
 import org.apache.pulsar.protocols.grpc.api.CommandSend;
 import org.apache.pulsar.protocols.grpc.api.CommandSendError;
 import org.apache.pulsar.protocols.grpc.api.CommandSendReceipt;
@@ -515,6 +516,28 @@ public class Commands {
 
         return ConsumeOutput.newBuilder().setGetLastMessageIdResponse(response).build();
     }
+
+    public static ConsumeInput newSeek(long requestId, long ledgerId, long entryId) {
+        CommandSeek.Builder seekBuilder = CommandSeek.newBuilder();
+        seekBuilder.setRequestId(requestId);
+
+        MessageIdData.Builder messageIdBuilder = MessageIdData.newBuilder();
+        messageIdBuilder.setLedgerId(ledgerId);
+        messageIdBuilder.setEntryId(entryId);
+        MessageIdData messageId = messageIdBuilder.build();
+        seekBuilder.setMessageId(messageId);
+
+        return ConsumeInput.newBuilder().setSeek(seekBuilder).build();
+    }
+
+    public static ConsumeInput newSeek(long requestId, long timestamp) {
+        CommandSeek.Builder seekBuilder = CommandSeek.newBuilder();
+        seekBuilder.setRequestId(requestId);
+        seekBuilder.setMessagePublishTime(timestamp);
+
+        return ConsumeInput.newBuilder().setSeek(seekBuilder).build();
+    }
+
 
     public static PulsarGrpc.PulsarStub attachProducerParams(PulsarGrpc.PulsarStub stub, CommandProducer producerParams) {
         Metadata headers = new Metadata();

@@ -639,6 +639,8 @@ public class PulsarGrpcServiceTest {
 
         consumeInput.onCompleted();
 
+        Thread.sleep(100);
+
         TestStreamObserver<ConsumeOutput> observer2 = TestStreamObserver.create();
         StreamObserver<ConsumeInput> consumeInput2 = consumerStub.consume(observer2);
 
@@ -1230,13 +1232,14 @@ public class PulsarGrpcServiceTest {
         assertTrue(observer.takeOneMessage().hasSubscribeSuccess());
 
         consumeInput.onNext(Commands.newUnsubscribe(1));
-        // TODO: invert calls to removedConsumer() and sendSuccess() in doUnsubscribe
-        //       so that we get the success message before the complete
-        //ConsumeOutput consumeOutput = observer.takeOneMessage();
-        //assertTrue(consumeOutput.hasSuccess());
-        //assertEquals(consumeOutput.getSuccess().getRequestId(), 1L);
 
-        observer.waitForCompletion();
+        ConsumeOutput consumeOutput = observer.takeOneMessage();
+        assertTrue(consumeOutput.hasSuccess());
+        assertEquals(consumeOutput.getSuccess().getRequestId(), 1L);
+
+        consumeInput.onCompleted();
+        // Here we get an error since the consumer was already removed by the unsubscribed
+        observer.waitForError();
     }
 
     @Test(timeOut = 30000)

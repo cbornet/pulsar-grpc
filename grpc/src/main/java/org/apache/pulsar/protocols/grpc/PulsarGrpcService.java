@@ -58,6 +58,7 @@ import org.apache.pulsar.protocols.grpc.api.CommandLookupTopic;
 import org.apache.pulsar.protocols.grpc.api.CommandLookupTopicResponse;
 import org.apache.pulsar.protocols.grpc.api.CommandProducer;
 import org.apache.pulsar.protocols.grpc.api.CommandRedeliverUnacknowledgedMessages;
+import org.apache.pulsar.protocols.grpc.api.CommandSeek;
 import org.apache.pulsar.protocols.grpc.api.CommandSend;
 import org.apache.pulsar.protocols.grpc.api.CommandSubscribe;
 import org.apache.pulsar.protocols.grpc.api.CommandSubscribe.InitialPosition;
@@ -342,11 +343,13 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
             @Override
             public void onError(Throwable throwable) {
                 closeProduce(producerFuture, remoteAddress);
+                responseObserver.onCompleted();
             }
 
             @Override
             public void onCompleted() {
                 closeProduce(producerFuture, remoteAddress);
+                responseObserver.onCompleted();
             }
         };
     }
@@ -519,6 +522,7 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
                 if (consumerFuture.isDone() && !consumerFuture.isCompletedExceptionally()) {
                     consumer = consumerFuture.getNow(null);
                 }
+                long requestId;
                 switch (consumeInput.getConsumerInputOneofCase()) {
                     case ACK:
                         if (consumer != null) {
@@ -549,7 +553,7 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
                             log.debug("Received CommandConsumerStats call from {}", remoteAddress);
                         }
                         CommandConsumerStats commandConsumerStats = consumeInput.getConsumerStats();
-                        final long requestId = commandConsumerStats.getRequestId();
+                        requestId = commandConsumerStats.getRequestId();
 
                         if (consumer == null) {
                             log.error(
@@ -599,11 +603,58 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
                                     remoteAddress);
                         }
                         break;
+                    case SEEK:
+                        CommandSeek seek = consumeInput.getSeek();
+                        requestId = seek.getRequestId();
+
+                        if (consumer == null) {
+                            responseObserver.onNext(Commands.newError(requestId, ServerError.MetadataError, "Consumer not found"));
+                            return;
+                        }
+                        if (!seek.hasMessageId() && !seek.hasMessagePublishTime()) {
+                            responseObserver.onNext(
+                                    Commands.newError(requestId, ServerError.MetadataError,
+                                            "Message id and message publish time were not present"));
+                            return;
+                        }
+                        if (seek.hasMessageId()) {
+                            Subscription subscription = consumer.getSubscription();
+                            MessageIdData msgIdData = seek.getMessageId();
+
+                            Position position = new PositionImpl(msgIdData.getLedgerId(), msgIdData.getEntryId());
+
+                            subscription.resetCursor(position).thenRun(() -> {
+                                log.info("[{}] [{}][{}] Reset subscription to message id {}", remoteAddress,
+                                        subscription.getTopic().getName(), subscription.getName(), position);
+                                // At the moment the consumer is disconnected during a seek.
+                                // See https://github.com/apache/pulsar/issues/5073
+                                // responseObserver.onNext(Commands.newSuccess(requestId));
+                            }).exceptionally(ex -> {
+                                log.warn("[{}][{}] Failed to reset subscription: {}", remoteAddress, subscription, ex.getMessage(), ex);
+                                responseObserver.onNext(Commands.newError(requestId, ServerError.UnknownError,
+                                        "Error when resetting subscription: " + ex.getCause().getMessage()));
+                                return null;
+                            });
+                        } else {
+                            Subscription subscription = consumer.getSubscription();
+                            long timestamp = seek.getMessagePublishTime();
+
+                            subscription.resetCursor(timestamp).thenRun(() -> {
+                                log.info("[{}] [{}][{}] Reset subscription to publish time {}", remoteAddress,
+                                        subscription.getTopic().getName(), subscription.getName(), timestamp);
+                                responseObserver.onNext(Commands.newSuccess(requestId));
+                            }).exceptionally(ex -> {
+                                log.warn("[{}][{}] Failed to reset subscription: {}", remoteAddress, subscription, ex.getMessage(), ex);
+                                responseObserver.onNext(Commands.newError(requestId, ServerError.UnknownError,
+                                        "Reset subscription to publish time error: " + ex.getCause().getMessage()));
+                                return null;
+                            });
+                        }
+                        break;
 
                     default:
                         break;
                 }
-
             }
 
             @Override
@@ -754,6 +805,7 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
         try {
             consumer.close();
             log.info("[{}] Closed consumer {}", remoteAddress, consumer);
+            responseObserver.onCompleted();
         } catch (BrokerServiceException e) {
             log.warn("[{]] Error closing consumer {} : {}", remoteAddress, consumer, e);
             responseObserver.onError(newStatusException(Status.INTERNAL, e,

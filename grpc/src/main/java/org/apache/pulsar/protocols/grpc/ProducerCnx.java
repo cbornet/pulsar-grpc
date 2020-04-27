@@ -86,11 +86,6 @@ public class ProducerCnx implements ServerCnx {
     }
 
     @Override
-    public void removedProducer(Producer producer) {
-        responseObserver.onCompleted();
-    }
-
-    @Override
     public void closeProducer(Producer producer) {
         responseObserver.onCompleted();
     }
