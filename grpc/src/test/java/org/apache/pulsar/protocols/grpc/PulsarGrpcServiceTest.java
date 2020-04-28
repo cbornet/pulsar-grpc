@@ -117,6 +117,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.function.Supplier;
 
 import static org.apache.pulsar.broker.cache.ConfigurationCacheService.POLICIES;
@@ -239,7 +240,7 @@ public class PulsarGrpcServiceTest {
         return (int) TimeUnit.SECONDS.convert(time, unit);
     }
 
-    @Test(timeOut = 30000)
+    @Test
     public void testProduce() throws Exception {
         // test PRODUCER success case
         Metadata headers = new Metadata();
@@ -275,7 +276,7 @@ public class PulsarGrpcServiceTest {
         assertEquals(topicRef.getProducers().size(), 0);
     }
 
-    @Test(timeOut = 30000)
+    @Test
     public void testProduceMissingHeader() throws Exception {
         TestStreamObserver<SendResult> observer = TestStreamObserver.create();
         stub.produce(observer);
@@ -284,7 +285,7 @@ public class PulsarGrpcServiceTest {
         assertEquals(actualStatus.getCode(), Status.Code.INVALID_ARGUMENT);
     }
 
-    @Test(timeOut = 30000)
+    @Test
     public void testProducerOnNotOwnedTopic() throws Exception {
         // Force the case where the broker doesn't own any topic
         doReturn(false).when(namespaceService).isServiceUnitActive(any(TopicName.class));
@@ -296,7 +297,7 @@ public class PulsarGrpcServiceTest {
         assertFalse(pulsar.getBrokerService().getTopicReference(nonOwnedTopicName).isPresent());
     }
 
-    @Test(timeOut = 30000)
+    @Test
     public void testProducerCommandWithAuthorizationPositive() throws Exception {
         AuthorizationService authorizationService = mock(AuthorizationService.class);
         doReturn(CompletableFuture.completedFuture(true)).when(authorizationService).canProduceAsync(Mockito.any(),
@@ -326,7 +327,7 @@ public class PulsarGrpcServiceTest {
         assertEquals(topicRef.getProducers().size(), 0);
     }
 
-    @Test(timeOut = 30000)
+    @Test
     public void testNonExistentTopic() throws Exception {
         ZooKeeperDataCache<Policies> zkDataCache = mock(ZooKeeperDataCache.class);
         ConfigurationCacheService configCacheService = mock(ConfigurationCacheService.class);
@@ -354,7 +355,7 @@ public class PulsarGrpcServiceTest {
         verifyConsumeFails(consumerParams, Status.PERMISSION_DENIED, ServerError.AuthorizationError);
     }
 
-    @Test(timeOut = 30000)
+    @Test
     public void testClusterAccess() throws Exception {
         svcConfig.setAuthorizationEnabled(true);
         AuthorizationService authorizationService = spy(new AuthorizationService(svcConfig, configCacheService));
@@ -386,7 +387,7 @@ public class PulsarGrpcServiceTest {
         verifyProduceFails(producerParams, Status.PERMISSION_DENIED, ServerError.AuthorizationError);
     }
 
-    @Test(timeOut = 30000)
+    @Test
     public void testNonExistentTopicSuperUserAccess() throws Exception {
         AuthorizationService authorizationService = spy(new AuthorizationService(svcConfig, configCacheService));
         doReturn(authorizationService).when(brokerService).getAuthorizationService();
@@ -435,7 +436,7 @@ public class PulsarGrpcServiceTest {
         observer2.waitForCompletion();
     }
 
-    @Test(timeOut = 30000)
+    @Test
     public void testProducerCommandWithAuthorizationNegative() throws Exception {
         AuthorizationService authorizationService = mock(AuthorizationService.class);
         doReturn(CompletableFuture.completedFuture(false)).when(authorizationService).canProduceAsync(Mockito.any(),
@@ -449,7 +450,7 @@ public class PulsarGrpcServiceTest {
         verifyProduceFails(producerParams, Status.PERMISSION_DENIED, ServerError.AuthorizationError);
     }
 
-    @Test(timeOut = 30000)
+    @Test
     public void testSendCommand() throws Exception {
         Metadata headers = new Metadata();
         CommandProducer producerParams = Commands.newProducer(successTopicName,"prod-name", Collections.emptyMap());
@@ -480,7 +481,7 @@ public class PulsarGrpcServiceTest {
         observer.waitForCompletion();
     }
 
-    @Test(timeOut = 30000)
+    @Test
     public void testUseSameProducerName() throws Exception {
         String producerName = "my-producer";
         // Create producer first time
@@ -501,7 +502,7 @@ public class PulsarGrpcServiceTest {
         observer.waitForCompletion();
     }
 
-    @Test(timeOut = 30000)
+    @Test
     public void testCreateProducerTimeout() throws Exception {
         // Delay the topic creation in a deterministic way
         CompletableFuture<Runnable> openTopicFuture = new CompletableFuture<>();
@@ -611,7 +612,7 @@ public class PulsarGrpcServiceTest {
         observer2.waitForCompletion();
     }
 
-    @Test(timeOut = 30000)
+    @Test
     public void testSubscribeTimeout() throws Exception {
         // Delay the topic creation in a deterministic way
         CompletableFuture<Runnable> openTopicTask = new CompletableFuture<>();
@@ -661,7 +662,7 @@ public class PulsarGrpcServiceTest {
         observer2.waitForCompletion();
     }
 
-    @Test(timeOut = 30000)
+    @Test
     public void testSubscribeBookieTimeout() throws Exception {
         // Delay the topic creation in a deterministic way
         CompletableFuture<Runnable> openTopicSuccess = new CompletableFuture<>();
@@ -725,7 +726,7 @@ public class PulsarGrpcServiceTest {
         observer2.waitForCompletion();
     }
 
-    @Test(timeOut = 30000)
+    @Test
     public void testSubscribeCommand() throws Exception {
         final String failSubName = "failSub";
 
@@ -760,7 +761,7 @@ public class PulsarGrpcServiceTest {
         verifyConsumeFails(subscribe, Status.FAILED_PRECONDITION, ServerError.PersistenceError);
     }
 
-    @Test(timeOut = 30000)
+    @Test
     public void testSubscribeCommandWithAuthorizationPositive() throws Exception {
         AuthorizationService authorizationService = mock(AuthorizationService.class);
         doReturn(CompletableFuture.completedFuture(true)).when(authorizationService).canConsumeAsync(Mockito.any(),
@@ -782,7 +783,7 @@ public class PulsarGrpcServiceTest {
         observer.waitForCompletion();
     }
 
-    @Test(timeOut = 30000)
+    @Test
     public void testSubscribeCommandWithAuthorizationNegative() throws Exception {
         AuthorizationService authorizationService = mock(AuthorizationService.class);
         doReturn(CompletableFuture.completedFuture(false)).when(authorizationService).canConsumeAsync(Mockito.any(),
@@ -797,7 +798,7 @@ public class PulsarGrpcServiceTest {
         verifyConsumeFails(subscribe, Status.PERMISSION_DENIED, ServerError.AuthorizationError);
     }
 
-    @Test(timeOut = 30000)
+    @Test
     public void testAckCommand() throws Exception {
         PositionImpl pos = new PositionImpl(0, 0);
         doReturn(pos).when(cursorMock).getMarkDeletedPosition();
@@ -819,7 +820,7 @@ public class PulsarGrpcServiceTest {
         observer.waitForCompletion();
     }
 
-    @Test(timeOut = 30000)
+    @Test
     public void testFlowCommand() throws Exception {
         CommandSubscribe subscribe = Commands.newSubscribe(successTopicName, successSubName, SubType.Exclusive, 0,
                 "test" /* consumer name */, 0 /* avoid reseting cursor */);
@@ -838,7 +839,7 @@ public class PulsarGrpcServiceTest {
         observer.waitForCompletion();
     }
 
-    @Test(timeOut = 30000)
+    @Test
     public void testProducerSuccessOnEncryptionRequiredTopic() throws Exception {
         // Set encryption_required to true
         ZooKeeperDataCache<Policies> zkDataCache = mock(ZooKeeperDataCache.class);
@@ -872,7 +873,7 @@ public class PulsarGrpcServiceTest {
         observer.waitForCompletion();
     }
 
-    @Test(timeOut = 30000)
+    @Test
     public void testProducerFailureOnEncryptionRequiredTopic() throws Exception {
         // Set encryption_required to true
         ZooKeeperDataCache<Policies> zkDataCache = mock(ZooKeeperDataCache.class);
@@ -893,7 +894,7 @@ public class PulsarGrpcServiceTest {
         assertEquals(topicRef.getProducers().size(), 0);
     }
 
-    @Test(timeOut = 30000)
+    @Test
     public void testSendSuccessOnEncryptionRequiredTopic() throws Exception {
         // Set encryption_required to true
         ZooKeeperDataCache<Policies> zkDataCache = mock(ZooKeeperDataCache.class);
@@ -935,7 +936,7 @@ public class PulsarGrpcServiceTest {
         observer.waitForCompletion();
     }
 
-    @Test(timeOut = 30000)
+    @Test
     public void testSendFailureOnEncryptionRequiredTopic() throws Exception {
         // Set encryption_required to true
         ZooKeeperDataCache<Policies> zkDataCache = mock(ZooKeeperDataCache.class);
@@ -980,7 +981,7 @@ public class PulsarGrpcServiceTest {
         assertTrue(true);
     }
 
-    @Test(timeOut = 30000)
+    @Test
     public void testInvalidTopicOnLookup() throws Exception {
         String invalidTopicName = "xx/ass/aa/aaa";
         CommandLookupTopic lookup = Commands.newLookup(invalidTopicName, false);
@@ -992,7 +993,7 @@ public class PulsarGrpcServiceTest {
                 ServerError.InvalidTopicName);
     }
 
-    @Test(timeOut = 30000)
+    @Test
     public void testInvalidTopicOnGetPartitionMetadata() throws Exception {
         String invalidTopicName = "xx/ass/aa/aaa";
         CommandPartitionedTopicMetadata request = Commands.newPartitionMetadataRequest(invalidTopicName);
@@ -1004,7 +1005,7 @@ public class PulsarGrpcServiceTest {
                 ServerError.InvalidTopicName);
     }
 
-    @Test(timeOut = 30000)
+    @Test
     public void testInvalidTopicOnProducer() throws Exception {
         String invalidTopicName = "xx/ass/aa/aaa";
 
@@ -1012,7 +1013,7 @@ public class PulsarGrpcServiceTest {
         verifyProduceFails(producerParams, Status.INVALID_ARGUMENT, ServerError.InvalidTopicName);
     }
 
-    @Test(timeOut = 30000)
+    @Test
     public void testInvalidTopicOnSubscribe() throws Exception {
         String invalidTopicName = "xx/ass/aa/aaa";
 
@@ -1021,7 +1022,7 @@ public class PulsarGrpcServiceTest {
         verifyConsumeFails(subscribe, Status.INVALID_ARGUMENT, ServerError.InvalidTopicName);
     }
 
-    @Test(timeOut = 30000)
+    @Test
     public void testDelayedClosedProducer() throws Exception {
         CompletableFuture<Topic> delayFuture = new CompletableFuture<>();
         Topic topic = spy(new NonPersistentTopic(successTopicName, brokerService));
@@ -1049,7 +1050,7 @@ public class PulsarGrpcServiceTest {
         observer.waitForCompletion();
     }
 
-    @Test(timeOut = 30000)
+    @Test
     public void testProducerValidationEnforced() throws Exception {
         Topic spyTopic = spy(new NonPersistentTopic(successTopicName, brokerService));
         doReturn(CompletableFuture.completedFuture(true)).when(spyTopic).hasSchema();
@@ -1060,7 +1061,7 @@ public class PulsarGrpcServiceTest {
         verifyProduceFails(producerParams, Status.FAILED_PRECONDITION, ServerError.IncompatibleSchema);
     }
 
-    @Test(timeOut = 30000)
+    @Test
     public void testProducerProducerBlockedQuotaExceededErrorOnBacklogQuotaExceeded() throws Exception {
         Topic spyTopic = spy(new PersistentTopic(successTopicName, ledgerMock, brokerService));
         doReturn(true).when(spyTopic).isBacklogQuotaExceeded("exceeded-producer");
@@ -1073,7 +1074,7 @@ public class PulsarGrpcServiceTest {
         verifyProduceFails(producerParams, Status.FAILED_PRECONDITION, ServerError.ProducerBlockedQuotaExceededError);
     }
 
-    @Test(timeOut = 30000)
+    @Test
     public void testProducerProducerBlockedQuotaExceededExceptionOnBacklogQuotaExceeded() throws Exception {
         Topic spyTopic = spy(new PersistentTopic(successTopicName, ledgerMock, brokerService));
         doReturn(true).when(spyTopic).isBacklogQuotaExceeded("exceeded-producer");
@@ -1086,7 +1087,7 @@ public class PulsarGrpcServiceTest {
         verifyProduceFails(producerParams, Status.FAILED_PRECONDITION, ServerError.ProducerBlockedQuotaExceededException);
     }
 
-    @Test(timeOut = 30000)
+    @Test
     public void testProducerWithSchema() throws Exception {
         LongSchemaVersion schemaVersion = new LongSchemaVersion(42L);
         Map<String, String> schemaProps = new HashMap<>();
@@ -1125,7 +1126,7 @@ public class PulsarGrpcServiceTest {
         observer.waitForCompletion();
     }
 
-    @Test(timeOut = 30000)
+    @Test
     public void testActiveConsumerChange() throws Exception {
         // test SUBSCRIBE on topic and cursor creation success
         CommandSubscribe subscribe = Commands.newSubscribe(successTopicName, successSubName, SubType.Failover, 0,
@@ -1156,7 +1157,7 @@ public class PulsarGrpcServiceTest {
         observer2.waitForCompletion();
     }
 
-    @Test(timeOut = 30000)
+    @Test
     public void testReachEndOfTopic() throws Exception {
         PositionImpl pos = new PositionImpl(0, 0);
         doReturn(pos).when(cursorMock).getMarkDeletedPosition();
@@ -1179,7 +1180,7 @@ public class PulsarGrpcServiceTest {
         observer.waitForCompletion();
     }
 
-    @Test(timeOut = 30000)
+    @Test
     public void testConsumerStats() throws Exception {
         CommandSubscribe subscribe = Commands.newSubscribe(successTopicName, successSubName, SubType.Exclusive, 0,
                 "test" /* consumer name */, 0 /* avoid reseting cursor */);
@@ -1201,7 +1202,7 @@ public class PulsarGrpcServiceTest {
         observer.waitForCompletion();
     }
 
-    @Test(timeOut = 30000)
+    @Test
     public void testConsumerStatsError() throws Exception {
         // Delay the topic creation in a deterministic way
         CompletableFuture<Runnable> openTopicTask = new CompletableFuture<>();
@@ -1235,7 +1236,7 @@ public class PulsarGrpcServiceTest {
         observer.waitForCompletion();
     }
 
-    @Test(timeOut = 30000)
+    @Test
     public void testUnsubscribeSuccess() throws Exception {
         CommandSubscribe subscribe = Commands.newSubscribe(successTopicName, successSubName, SubType.Exclusive, 0,
                 "test" /* consumer name */, 0 /* avoid reseting cursor */);
@@ -1256,7 +1257,7 @@ public class PulsarGrpcServiceTest {
         observer.waitForError();
     }
 
-    @Test(timeOut = 30000)
+    @Test
     public void testUnsubscribeError() throws Exception {
         CommandSubscribe subscribe = Commands.newSubscribe(successTopicName, successSubName, SubType.Shared, 0,
                 "test" /* consumer name */, 0 /* avoid reseting cursor */);
@@ -1284,7 +1285,7 @@ public class PulsarGrpcServiceTest {
     }
 
     private void verifyProduceFails(CommandProducer producerParams, Status expectedStatus, ServerError expectedCode)
-            throws ExecutionException, InterruptedException {
+            throws ExecutionException, InterruptedException, TimeoutException {
         PulsarGrpc.PulsarStub producerStub = Commands.attachProducerParams(stub, producerParams);
         TestStreamObserver<SendResult> sendResult = new TestStreamObserver<>();
         producerStub.produce(sendResult);
@@ -1292,7 +1293,7 @@ public class PulsarGrpcServiceTest {
     }
 
     private void verifyConsumeFails(CommandSubscribe consumerParams, Status expectedStatus, ServerError expectedCode)
-            throws ExecutionException, InterruptedException {
+            throws ExecutionException, InterruptedException, TimeoutException {
         PulsarGrpc.PulsarStub producerStub = Commands.attachConsumerParams(stub, consumerParams);
         TestStreamObserver<ConsumeOutput> sendResult = new TestStreamObserver<>();
         producerStub.consume(sendResult);
@@ -1330,24 +1331,28 @@ public class PulsarGrpcServiceTest {
             complete.countDown();
         }
 
-        public T takeOneMessage() throws InterruptedException {
-            return queue.take();
+        public T takeOneMessage() throws InterruptedException, TimeoutException {
+            T poll = queue.poll(1, TimeUnit.SECONDS);
+            if (poll == null) {
+                throw new TimeoutException("Timeout occurred while waiting message");
+            }
+            return poll;
         }
 
         public T pollOneMessage() throws InterruptedException {
             return queue.poll();
         }
 
-        public Throwable waitForError() throws ExecutionException, InterruptedException {
-            return error.get();
+        public Throwable waitForError() throws ExecutionException, InterruptedException, TimeoutException {
+            return error.get(1, TimeUnit.SECONDS);
         }
 
         public void waitForCompletion() throws InterruptedException {
-            complete.await();
+            complete.await(1, TimeUnit.SECONDS);
         }
 
         public void waitForErrorOrCompletion() throws InterruptedException {
-            errorOrComplete.await();
+            errorOrComplete.await(1, TimeUnit.SECONDS);
         }
     }
 

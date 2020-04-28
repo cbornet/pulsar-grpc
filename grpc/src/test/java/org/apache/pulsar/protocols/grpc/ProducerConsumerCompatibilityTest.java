@@ -47,6 +47,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 import static org.apache.pulsar.common.protocol.Commands.parseMessageMetadata;
 import static org.mockito.Mockito.doReturn;
@@ -92,7 +93,7 @@ public class ProducerConsumerCompatibilityTest extends ProducerConsumerBase {
         super.internalCleanup();
     }
 
-    @Test(timeOut = 30000)
+    @Test
     public void testPulsarProducerAndGrpcConsumer() throws Exception {
         log.info("-- Starting {} test --", methodName);
 
@@ -140,7 +141,7 @@ public class ProducerConsumerCompatibilityTest extends ProducerConsumerBase {
         log.info("-- Exiting {} test --", methodName);
     }
 
-    @Test(timeOut = 30000)
+    @Test
     public void testGrpcProducerAndPulsarConsumer() throws Exception {
         log.info("-- Starting {} test --", methodName);
 
@@ -189,7 +190,7 @@ public class ProducerConsumerCompatibilityTest extends ProducerConsumerBase {
         log.info("-- Exiting {} test --", methodName);
     }
 
-    @Test(timeOut = 30000)
+    @Test
     public void testRedeliverUnacknowledgedMessages() throws Exception {
         log.info("-- Starting {} test --", methodName);
 
@@ -248,7 +249,7 @@ public class ProducerConsumerCompatibilityTest extends ProducerConsumerBase {
         log.info("-- Exiting {} test --", methodName);
     }
 
-    @Test(timeOut = 30000)
+    @Test
     public void testRedeliverSingleUnacknowledgedMessage() throws Exception {
         log.info("-- Starting {} test --", methodName);
 
@@ -304,7 +305,7 @@ public class ProducerConsumerCompatibilityTest extends ProducerConsumerBase {
         log.info("-- Exiting {} test --", methodName);
     }
 
-    @Test(timeOut = 30000)
+    @Test
     public void testAckedMessagesAreNotRedelivered() throws Exception {
         log.info("-- Starting {} test --", methodName);
 
@@ -369,7 +370,7 @@ public class ProducerConsumerCompatibilityTest extends ProducerConsumerBase {
         log.info("-- Exiting {} test --", methodName);
     }
 
-    @Test(timeOut = 30000)
+    @Test
     public void testGetLastMessageId() throws Exception {
         log.info("-- Starting {} test --", methodName);
 
@@ -423,7 +424,7 @@ public class ProducerConsumerCompatibilityTest extends ProducerConsumerBase {
         log.info("-- Exiting {} test --", methodName);
     }
 
-    @Test(timeOut = 30000)
+    @Test
     public void testGetLastMessageIdNotProducedYet() throws Exception {
         log.info("-- Starting {} test --", methodName);
 
@@ -457,7 +458,7 @@ public class ProducerConsumerCompatibilityTest extends ProducerConsumerBase {
         log.info("-- Exiting {} test --", methodName);
     }
 
-    @Test(timeOut = 30000)
+    @Test
     public void testSubscriptionSeekByMessageId() throws Exception {
         log.info("-- Starting {} test --", methodName);
 
@@ -534,7 +535,7 @@ public class ProducerConsumerCompatibilityTest extends ProducerConsumerBase {
         log.info("-- Exiting {} test --", methodName);
     }
 
-    @Test(timeOut = 30000)
+    @Test
     public void testSubscriptionSeekByTimestamp() throws Exception {
         log.info("-- Starting {} test --", methodName);
 
@@ -670,7 +671,6 @@ public class ProducerConsumerCompatibilityTest extends ProducerConsumerBase {
         private final LinkedBlockingQueue<T> queue = new LinkedBlockingQueue<>();
         private final CompletableFuture<Throwable> error = new CompletableFuture<>();
         private final CountDownLatch complete = new CountDownLatch(1);
-        private final CountDownLatch errorOrComplete = new CountDownLatch(1);
 
         private TestStreamObserver() {
         }
@@ -682,35 +682,26 @@ public class ProducerConsumerCompatibilityTest extends ProducerConsumerBase {
 
         @Override
         public void onError(Throwable t) {
-            errorOrComplete.countDown();
             error.complete(t);
         }
 
         @Override
         public void onCompleted() {
-            errorOrComplete.countDown();
             complete.countDown();
         }
 
-        public T takeOneMessage() throws InterruptedException {
-            return queue.take();
-        }
-
-        public T pollOneMessage() throws InterruptedException {
-            return queue.poll();
-        }
-
-        public Throwable waitForError() throws ExecutionException, InterruptedException {
-            return error.get();
+        public T takeOneMessage() throws InterruptedException, TimeoutException {
+            T poll = queue.poll(1, TimeUnit.SECONDS);
+            if (poll == null) {
+                throw new TimeoutException("Timeout occurred while waiting message");
+            }
+            return poll;
         }
 
         public void waitForCompletion() throws InterruptedException {
-            complete.await();
+            complete.await(1, TimeUnit.SECONDS);
         }
 
-        public void waitForErrorOrCompletion() throws InterruptedException {
-            errorOrComplete.await();
-        }
     }
 
 }
