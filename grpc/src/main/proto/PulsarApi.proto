@@ -27,8 +27,10 @@ service Pulsar {
     rpc produce(stream CommandSend) returns (stream SendResult) {}
     rpc consume(stream ConsumeInput) returns (stream ConsumeOutput) {}
     rpc get_schema(CommandGetSchema) returns (CommandGetSchemaResponse) {}
+    rpc get_or_create_schema(CommandGetOrCreateSchema) returns (CommandGetOrCreateSchemaResponse) {}
     rpc lookup_topic(CommandLookupTopic) returns (CommandLookupTopicResponse) {}
     rpc get_partition_metadata(CommandPartitionedTopicMetadata) returns (CommandPartitionedTopicMetadataResponse) {}
+    rpc get_topics_of_namespace(CommandGetTopicsOfNamespace) returns (CommandGetTopicsOfNamespaceResponse) {}
 }
 
 message Schema {
@@ -483,18 +485,16 @@ message CommandGetLastMessageIdResponse {
 
 message CommandGetTopicsOfNamespace {
     enum Mode {
-        PERSISTENT = 0;
+        PERSISTENT     = 0;
         NON_PERSISTENT = 1;
-        ALL = 2;
+        ALL            = 2;
     }
-    required uint64 request_id    = 1;
-    required string namespace    = 2;
-    optional Mode mode = 3 [default = PERSISTENT];
+    required string namespace = 1;
+    optional Mode mode        = 2 [default = PERSISTENT];
 }
 
 message CommandGetTopicsOfNamespaceResponse {
-    required uint64 request_id    = 1;
-    repeated string topics         = 2;
+    repeated string topics = 1;
 }
 
 message CommandGetSchema {
@@ -508,16 +508,11 @@ message CommandGetSchemaResponse {
 }
 
 message CommandGetOrCreateSchema {
-    required uint64 request_id = 1;
-    required string topic      = 2;
-    required Schema schema     = 3;
+    required string topic      = 1;
+    required Schema schema     = 2;
 }
 
 message CommandGetOrCreateSchemaResponse {
-    required uint64 request_id      = 1;
-    optional ServerError error_code = 2;
-    optional string error_message   = 3;
-
     optional bytes schema_version   = 4;
 }
 

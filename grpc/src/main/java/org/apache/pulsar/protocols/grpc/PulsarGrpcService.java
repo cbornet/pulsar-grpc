@@ -45,17 +45,23 @@ import org.apache.pulsar.client.impl.BatchMessageIdImpl;
 import org.apache.pulsar.client.impl.MessageIdImpl;
 import org.apache.pulsar.common.api.proto.PulsarApi;
 import org.apache.pulsar.common.naming.Metadata;
+import org.apache.pulsar.common.naming.NamespaceName;
 import org.apache.pulsar.common.naming.TopicName;
 import org.apache.pulsar.common.policies.data.BacklogQuota;
 import org.apache.pulsar.common.protocol.schema.SchemaData;
 import org.apache.pulsar.common.protocol.schema.SchemaInfoUtil;
 import org.apache.pulsar.common.protocol.schema.SchemaVersion;
+import org.apache.pulsar.common.schema.SchemaType;
 import org.apache.pulsar.common.util.FutureUtil;
 import org.apache.pulsar.protocols.grpc.api.CommandConsumerStats;
 import org.apache.pulsar.protocols.grpc.api.CommandFlow;
 import org.apache.pulsar.protocols.grpc.api.CommandGetLastMessageId;
+import org.apache.pulsar.protocols.grpc.api.CommandGetOrCreateSchema;
+import org.apache.pulsar.protocols.grpc.api.CommandGetOrCreateSchemaResponse;
 import org.apache.pulsar.protocols.grpc.api.CommandGetSchema;
 import org.apache.pulsar.protocols.grpc.api.CommandGetSchemaResponse;
+import org.apache.pulsar.protocols.grpc.api.CommandGetTopicsOfNamespace;
+import org.apache.pulsar.protocols.grpc.api.CommandGetTopicsOfNamespaceResponse;
 import org.apache.pulsar.protocols.grpc.api.CommandLookupTopic;
 import org.apache.pulsar.protocols.grpc.api.CommandLookupTopicResponse;
 import org.apache.pulsar.protocols.grpc.api.CommandPartitionedTopicMetadata;
@@ -89,6 +95,7 @@ import java.util.stream.Collectors;
 import static org.apache.pulsar.broker.admin.impl.PersistentTopicsBase.getPartitionedTopicMetadata;
 import static org.apache.pulsar.common.protocol.Commands.parseMessageMetadata;
 import static org.apache.pulsar.protocols.grpc.Commands.convertCommandAck;
+import static org.apache.pulsar.protocols.grpc.Commands.convertGetTopicsOfNamespaceMode;
 import static org.apache.pulsar.protocols.grpc.Commands.convertKeySharedMeta;
 import static org.apache.pulsar.protocols.grpc.Commands.convertServerError;
 import static org.apache.pulsar.protocols.grpc.Commands.convertSubscribeInitialPosition;
@@ -199,7 +206,40 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
     }
 
     @Override
-    public void getPartitionMetadata(CommandPartitionedTopicMetadata partitionMetadata, StreamObserver<CommandPartitionedTopicMetadataResponse> responseObserver) {
+    public void getOrCreateSchema(CommandGetOrCreateSchema commandGetOrCreateSchema, StreamObserver<CommandGetOrCreateSchemaResponse> responseObserver) {
+        SocketAddress remoteAddress = REMOTE_ADDRESS_CTX_KEY.get();
+        if (log.isDebugEnabled()) {
+            log.debug("Received CommandGetOrCreateSchema call from {}", remoteAddress);
+        }
+        String topicName = commandGetOrCreateSchema.getTopic();
+        SchemaData schemaData = getSchema(commandGetOrCreateSchema.getSchema());
+        SchemaData schema = schemaData.getType() == SchemaType.NONE ? null : schemaData;
+        service.getTopicIfExists(topicName).thenAccept(topicOpt -> {
+            if (topicOpt.isPresent()) {
+                Topic topic = topicOpt.get();
+                CompletableFuture<SchemaVersion> schemaVersionFuture = tryAddSchema(topic, schema, remoteAddress);
+                schemaVersionFuture.exceptionally(ex -> {
+                    ServerError errorCode = convertServerError(BrokerServiceException.getClientErrorCode(ex));
+                    responseObserver.onError(Commands.newStatusException(Status.INTERNAL, ex, errorCode));
+                    return null;
+                }).thenAccept(schemaVersion -> {
+                    responseObserver.onNext(Commands.newGetOrCreateSchemaResponse(schemaVersion));
+                    responseObserver.onCompleted();
+                });
+            } else {
+                responseObserver.onError(Commands.newStatusException(Status.INVALID_ARGUMENT, "Topic not found", null,
+                        ServerError.TopicNotFound));
+            }
+        }).exceptionally(ex -> {
+            ServerError errorCode = convertServerError(BrokerServiceException.getClientErrorCode(ex));
+            responseObserver.onError(Commands.newStatusException(Status.INTERNAL, ex, errorCode));
+            return null;
+        });
+    }
+
+    @Override
+    public void getPartitionMetadata(CommandPartitionedTopicMetadata partitionMetadata,
+            StreamObserver<CommandPartitionedTopicMetadataResponse> responseObserver) {
         final SocketAddress remoteAddress = REMOTE_ADDRESS_CTX_KEY.get();
         final String authRole = AUTH_ROLE_CTX_KEY.get();
         final AuthenticationDataSource authenticationData = AUTH_DATA_CTX_KEY.get();
@@ -257,6 +297,33 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
             responseObserver.onError(Commands.newStatusException(Status.RESOURCE_EXHAUSTED,
                     "Failed due to too many pending lookup requests", null, ServerError.TooManyRequests));
         }
+    }
+
+    @Override
+    public void getTopicsOfNamespace(CommandGetTopicsOfNamespace commandGetTopicsOfNamespace,
+            StreamObserver<CommandGetTopicsOfNamespaceResponse> responseObserver) {
+        final SocketAddress remoteAddress = REMOTE_ADDRESS_CTX_KEY.get();
+        final String namespace = commandGetTopicsOfNamespace.getNamespace();
+        final CommandGetTopicsOfNamespace.Mode mode = commandGetTopicsOfNamespace.getMode();
+        final NamespaceName namespaceName = NamespaceName.get(namespace);
+
+        service.pulsar().getNamespaceService().getListOfTopics(namespaceName, convertGetTopicsOfNamespaceMode(mode))
+                .thenAccept(topics -> {
+                    if (log.isDebugEnabled()) {
+                        log.debug("[{}] Received CommandGetTopicsOfNamespace for namespace [//{}], size:{}",
+                                remoteAddress, namespace, topics.size());
+                    }
+
+                    responseObserver.onNext(Commands.newGetTopicsOfNamespaceResponse(topics));
+                    responseObserver.onCompleted();
+                })
+                .exceptionally(ex -> {
+                    log.warn("[{}] Error GetTopicsOfNamespace for namespace [//{}]",
+                            remoteAddress, namespace);
+                    responseObserver.onError(Commands.newStatusException(Status.INTERNAL, ex,
+                            convertServerError(BrokerServiceException.getClientErrorCode(new BrokerServiceException.ServerMetadataException(ex)))));
+                    return null;
+                });
     }
 
     @Override

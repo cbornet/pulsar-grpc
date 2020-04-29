@@ -47,8 +47,12 @@ import org.apache.pulsar.protocols.grpc.api.CommandError;
 import org.apache.pulsar.protocols.grpc.api.CommandFlow;
 import org.apache.pulsar.protocols.grpc.api.CommandGetLastMessageId;
 import org.apache.pulsar.protocols.grpc.api.CommandGetLastMessageIdResponse;
+import org.apache.pulsar.protocols.grpc.api.CommandGetOrCreateSchema;
+import org.apache.pulsar.protocols.grpc.api.CommandGetOrCreateSchemaResponse;
 import org.apache.pulsar.protocols.grpc.api.CommandGetSchema;
 import org.apache.pulsar.protocols.grpc.api.CommandGetSchemaResponse;
+import org.apache.pulsar.protocols.grpc.api.CommandGetTopicsOfNamespace;
+import org.apache.pulsar.protocols.grpc.api.CommandGetTopicsOfNamespaceResponse;
 import org.apache.pulsar.protocols.grpc.api.CommandLookupTopic;
 import org.apache.pulsar.protocols.grpc.api.CommandLookupTopicResponse;
 import org.apache.pulsar.protocols.grpc.api.CommandMessage;
@@ -264,7 +268,6 @@ public class Commands {
         if (version != null) {
             schema.setSchemaVersion(ByteString.copyFrom(version.bytes()));
         }
-
         return schema.build();
     }
 
@@ -272,7 +275,19 @@ public class Commands {
         CommandGetSchemaResponse.Builder schemaResponse = CommandGetSchemaResponse.newBuilder()
                 .setSchemaVersion(ByteString.copyFrom(version.bytes()))
                 .setSchema(getSchema(schema));
+        return schemaResponse.build();
+    }
 
+    public static CommandGetOrCreateSchema newGetOrCreateSchema(String topic, SchemaInfo schemaInfo) {
+        return CommandGetOrCreateSchema.newBuilder()
+                .setTopic(topic)
+                .setSchema(getSchema(schemaInfo))
+                .build();
+    }
+
+    public static CommandGetOrCreateSchemaResponse newGetOrCreateSchemaResponse(SchemaVersion schemaVersion) {
+        CommandGetOrCreateSchemaResponse.Builder schemaResponse = CommandGetOrCreateSchemaResponse.newBuilder()
+                .setSchemaVersion(ByteString.copyFrom(schemaVersion.bytes()));
         return schemaResponse.build();
     }
 
@@ -553,6 +568,22 @@ public class Commands {
         return ConsumeInput.newBuilder().setSeek(seekBuilder).build();
     }
 
+    public static CommandGetTopicsOfNamespace newGetTopicsOfNamespaceRequest(String namespace, CommandGetTopicsOfNamespace.Mode mode) {
+        CommandGetTopicsOfNamespace.Builder topicsBuilder = CommandGetTopicsOfNamespace.newBuilder();
+        topicsBuilder.setNamespace(namespace).setMode(mode);
+
+        return topicsBuilder.build();
+    }
+
+    public static CommandGetTopicsOfNamespaceResponse newGetTopicsOfNamespaceResponse(List<String> topics) {
+        CommandGetTopicsOfNamespaceResponse.Builder topicsResponseBuilder =
+                CommandGetTopicsOfNamespaceResponse.newBuilder();
+
+        topicsResponseBuilder.addAllTopics(topics);
+
+        return topicsResponseBuilder.build();
+    }
+
 
     public static PulsarGrpc.PulsarStub attachProducerParams(PulsarGrpc.PulsarStub stub, CommandProducer producerParams) {
         Metadata headers = new Metadata();
@@ -743,5 +774,21 @@ public class Commands {
         );
         ack.getMessageIdList().forEach(messageIdData -> builder.addMessageId(convertMessageIdData(messageIdData)));
         return builder.build();
+    }
+
+    public static PulsarApi.CommandGetTopicsOfNamespace.Mode convertGetTopicsOfNamespaceMode(CommandGetTopicsOfNamespace.Mode mode) {
+        if (mode == null) {
+            return null;
+        }
+        switch (mode) {
+            case NON_PERSISTENT:
+                return PulsarApi.CommandGetTopicsOfNamespace.Mode.NON_PERSISTENT;
+            case PERSISTENT:
+                return PulsarApi.CommandGetTopicsOfNamespace.Mode.PERSISTENT;
+            case ALL:
+                return PulsarApi.CommandGetTopicsOfNamespace.Mode.ALL;
+            default:
+                throw new IllegalStateException("Unexpected GetTopicsOfNamespace mode: " + mode);
+        }
     }
 }

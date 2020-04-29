@@ -7,15 +7,26 @@ import io.grpc.netty.NettyChannelBuilder;
 import io.grpc.stub.StreamObserver;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+import org.apache.pulsar.broker.service.schema.LongSchemaVersion;
 import org.apache.pulsar.client.api.Consumer;
 import org.apache.pulsar.client.api.Message;
 import org.apache.pulsar.client.api.Producer;
 import org.apache.pulsar.client.api.ProducerBuilder;
 import org.apache.pulsar.client.api.ProducerConsumerBase;
+import org.apache.pulsar.client.api.SimpleSchemaTest;
 import org.apache.pulsar.common.api.proto.PulsarApi;
 import org.apache.pulsar.common.protocol.Commands.ChecksumType;
+import org.apache.pulsar.common.protocol.schema.SchemaVersion;
 import org.apache.pulsar.protocols.grpc.api.CommandAck.AckType;
 import org.apache.pulsar.protocols.grpc.api.CommandGetLastMessageIdResponse;
+import org.apache.pulsar.protocols.grpc.api.CommandGetOrCreateSchema;
+import org.apache.pulsar.protocols.grpc.api.CommandGetOrCreateSchemaResponse;
+import org.apache.pulsar.protocols.grpc.api.CommandGetSchema;
+import org.apache.pulsar.protocols.grpc.api.CommandGetSchemaResponse;
 import org.apache.pulsar.protocols.grpc.api.CommandLookupTopic;
 import org.apache.pulsar.protocols.grpc.api.CommandLookupTopicResponse;
 import org.apache.pulsar.protocols.grpc.api.CommandLookupTopicResponse.LookupType;
@@ -29,6 +40,7 @@ import org.apache.pulsar.protocols.grpc.api.ConsumeInput;
 import org.apache.pulsar.protocols.grpc.api.ConsumeOutput;
 import org.apache.pulsar.protocols.grpc.api.MessageIdData;
 import org.apache.pulsar.protocols.grpc.api.PulsarGrpc;
+import org.apache.pulsar.protocols.grpc.api.Schema;
 import org.apache.pulsar.protocols.grpc.api.SendResult;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -653,6 +665,67 @@ public class ProducerConsumerCompatibilityTest extends ProducerConsumerBase {
         response.waitForCompletion();
     }
 
+    @Test
+    public void testGetSchema() throws Exception {
+        pulsarClient.newProducer(org.apache.pulsar.client.api.Schema.AVRO(V1Data.class))
+                .topic("persistent://my-property/my-ns/my-topic1")
+                .create();
+
+        pulsarClient.newProducer(org.apache.pulsar.client.api.Schema.AVRO(V2Data.class))
+                .topic("persistent://my-property/my-ns/my-topic1")
+                .create();
+        TestStreamObserver<CommandGetSchemaResponse> response = TestStreamObserver.create();
+        CommandGetSchema commandGetSchema = CommandGetSchema.newBuilder()
+                .setTopic("persistent://my-property/my-ns/my-topic1")
+                .build();
+
+        stub.getSchema(commandGetSchema, response);
+        CommandGetSchemaResponse schemaResponse = response.takeOneMessage();
+
+        assertEquals(schemaResponse.getSchema().getType(), Schema.Type.Avro);
+        SchemaVersion schemaVersion = pulsar.getSchemaRegistryService()
+                .versionFromBytes(schemaResponse.getSchemaVersion().toByteArray());
+        assertEquals(schemaVersion, new LongSchemaVersion(1));
+    }
+
+    @Test
+    public void testGetSchemaWithVersion() throws Exception {
+        pulsarClient.newProducer(org.apache.pulsar.client.api.Schema.AVRO(V1Data.class))
+                .topic("persistent://my-property/my-ns/my-topic1")
+                .create();
+
+        pulsarClient.newProducer(org.apache.pulsar.client.api.Schema.AVRO(V2Data.class))
+                .topic("persistent://my-property/my-ns/my-topic1")
+                .create();
+
+        TestStreamObserver<CommandGetSchemaResponse> response = TestStreamObserver.create();
+        CommandGetSchema commandGetSchema =
+                Commands.newGetSchema("persistent://my-property/my-ns/my-topic1", new LongSchemaVersion(0));
+
+        stub.getSchema(commandGetSchema, response);
+        CommandGetSchemaResponse schemaResponse = response.takeOneMessage();
+
+        assertEquals(schemaResponse.getSchema().getType(), Schema.Type.Avro);
+        SchemaVersion schemaVersion = pulsar.getSchemaRegistryService()
+                .versionFromBytes(schemaResponse.getSchemaVersion().toByteArray());
+        assertEquals(schemaVersion, new LongSchemaVersion(0));
+    }
+
+    @Test
+    public void testGetOrCreateSchema() throws Exception {
+        admin.topics().createNonPartitionedTopic("persistent://my-property/my-ns/my-topic1");
+        TestStreamObserver<CommandGetOrCreateSchemaResponse> response = TestStreamObserver.create();
+        CommandGetOrCreateSchema getOrCreateSchema = Commands.newGetOrCreateSchema(
+                "persistent://my-property/my-ns/my-topic1",
+                org.apache.pulsar.client.api.Schema.STRING.getSchemaInfo());
+
+        stub.getOrCreateSchema(getOrCreateSchema, response);
+
+        SchemaVersion schemaVersion = pulsar.getSchemaRegistryService()
+                .versionFromBytes(response.takeOneMessage().getSchemaVersion().toByteArray());
+        assertEquals(schemaVersion, new LongSchemaVersion(0));
+    }
+
     private static String getPayload(CommandMessage message) {
         ByteBuf headersAndPayload = Unpooled.wrappedBuffer(message.getHeadersAndPayload().toByteArray());
         parseMessageMetadata(headersAndPayload);
@@ -663,6 +736,8 @@ public class ProducerConsumerCompatibilityTest extends ProducerConsumerBase {
     }
 
     private static class TestStreamObserver<T> implements StreamObserver<T> {
+
+        public static final int TIMEOUT = 10000;
 
         public static <T> TestStreamObserver<T> create() {
             return new TestStreamObserver<>();
@@ -691,17 +766,38 @@ public class ProducerConsumerCompatibilityTest extends ProducerConsumerBase {
         }
 
         public T takeOneMessage() throws InterruptedException, TimeoutException {
-            T poll = queue.poll(1, TimeUnit.SECONDS);
+            T poll = queue.poll(TIMEOUT, TimeUnit.SECONDS);
             if (poll == null) {
                 throw new TimeoutException("Timeout occurred while waiting message");
             }
             return poll;
         }
 
-        public void waitForCompletion() throws InterruptedException {
-            complete.await(1, TimeUnit.SECONDS);
+        public void waitForError() throws InterruptedException, TimeoutException, ExecutionException {
+            error.get(TIMEOUT, TimeUnit.SECONDS);
         }
 
+        public void waitForCompletion() throws InterruptedException {
+            complete.await(TIMEOUT, TimeUnit.SECONDS);
+        }
+
+    }
+
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    static class V1Data {
+        int i;
+    }
+
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    static class V2Data {
+        int i;
+        Integer j;
     }
 
 }
