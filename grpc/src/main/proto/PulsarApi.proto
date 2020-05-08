@@ -25,6 +25,7 @@ option java_multiple_files = true;
 
 service Pulsar {
     rpc produce(stream CommandSend) returns (stream SendResult) {}
+    rpc produceSingle(CommandProduceSingle) returns (CommandSendReceipt) {}
     rpc consume(stream ConsumeInput) returns (stream ConsumeOutput) {}
     rpc get_schema(CommandGetSchema) returns (CommandGetSchemaResponse) {}
     rpc get_or_create_schema(CommandGetOrCreateSchema) returns (CommandGetOrCreateSchemaResponse) {}
@@ -282,16 +283,16 @@ message CommandProducer {
 }
 
 message CommandSend {
-    required uint64 sequence_id = 2;
-    optional int32 num_messages = 3 [default = 1];
-    optional uint64 txnid_least_bits = 4 [default = 0];
-    optional uint64 txnid_most_bits = 5 [default = 0];
+    required uint64 sequence_id         = 1;
+    optional int32 num_messages         = 2 [default = 1];
+    optional uint64 txnid_least_bits    = 3 [default = 0];
+    optional uint64 txnid_most_bits     = 4 [default = 0];
 
     /// Add highest sequence id to support batch message with external sequence id
-    optional uint64 highest_sequence_id = 6 [default = 0];
+    optional uint64 highest_sequence_id = 5 [default = 0];
 
     // Opaque payload and headers
-    required bytes headers_and_payload = 7;
+    required bytes headers_and_payload  = 6;
 }
 
 message CommandSendReceipt {
@@ -312,6 +313,11 @@ message SendResult {
         CommandSendReceipt send_receipt         = 2;
         CommandSendError send_error             = 3;
     }
+}
+
+message CommandProduceSingle {
+    required CommandProducer producer = 1;
+    required CommandSend send         = 2;
 }
 
 message CommandMessage {

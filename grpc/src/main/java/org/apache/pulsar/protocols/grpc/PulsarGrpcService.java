@@ -19,6 +19,7 @@
 package org.apache.pulsar.protocols.grpc;
 
 import com.google.common.base.Strings;
+import io.grpc.Context;
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import io.netty.channel.EventLoopGroup;
@@ -74,10 +75,13 @@ import org.apache.pulsar.protocols.grpc.api.CommandNewTxn;
 import org.apache.pulsar.protocols.grpc.api.CommandNewTxnResponse;
 import org.apache.pulsar.protocols.grpc.api.CommandPartitionedTopicMetadata;
 import org.apache.pulsar.protocols.grpc.api.CommandPartitionedTopicMetadataResponse;
+import org.apache.pulsar.protocols.grpc.api.CommandProduceSingle;
 import org.apache.pulsar.protocols.grpc.api.CommandProducer;
 import org.apache.pulsar.protocols.grpc.api.CommandRedeliverUnacknowledgedMessages;
 import org.apache.pulsar.protocols.grpc.api.CommandSeek;
 import org.apache.pulsar.protocols.grpc.api.CommandSend;
+import org.apache.pulsar.protocols.grpc.api.CommandSendError;
+import org.apache.pulsar.protocols.grpc.api.CommandSendReceipt;
 import org.apache.pulsar.protocols.grpc.api.CommandSubscribe;
 import org.apache.pulsar.protocols.grpc.api.CommandSubscribe.InitialPosition;
 import org.apache.pulsar.protocols.grpc.api.CommandSubscribe.SubType;
@@ -101,6 +105,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Semaphore;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 
 import static org.apache.pulsar.broker.admin.impl.PersistentTopicsBase.getPartitionedTopicMetadata;
@@ -419,6 +424,40 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
                                 convertServerError(BrokerServiceException.getClientErrorCode(ex))));
                     }
                 });
+    }
+
+    @Override
+    public void produceSingle(CommandProduceSingle request, StreamObserver<CommandSendReceipt> responseObserver) {
+        Context ctx = Context.current();
+        ctx = ctx.withValue(PRODUCER_PARAMS_CTX_KEY, request.getProducer());
+        AtomicReference<StreamObserver<CommandSend>> producer = new AtomicReference<>();
+        StreamObserver<SendResult> produceObserver = new StreamObserver<SendResult>() {
+            @Override
+            public void onNext(SendResult sendResult) {
+                if (sendResult.hasSendReceipt()) {
+                    responseObserver.onNext(sendResult.getSendReceipt());
+                    producer.get().onCompleted();
+                } else if (sendResult.hasSendError()) {
+                    CommandSendError sendError = sendResult.getSendError();
+                    responseObserver.onError(newStatusException(Status.FAILED_PRECONDITION, sendError.getMessage(),
+                            null, sendError.getError()));
+                    producer.get().onCompleted();
+                } else if (sendResult.hasProducerSuccess()) {
+                    producer.get().onNext(request.getSend());
+                }
+            }
+
+            @Override
+            public void onError(Throwable t) {
+                responseObserver.onError(t);
+            }
+
+            @Override
+            public void onCompleted() {
+                responseObserver.onCompleted();
+            }
+        };
+        producer.set(produce(produceObserver));
     }
 
     @Override
