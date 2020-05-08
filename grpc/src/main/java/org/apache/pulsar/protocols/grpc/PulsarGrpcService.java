@@ -53,7 +53,13 @@ import org.apache.pulsar.common.protocol.schema.SchemaInfoUtil;
 import org.apache.pulsar.common.protocol.schema.SchemaVersion;
 import org.apache.pulsar.common.schema.SchemaType;
 import org.apache.pulsar.common.util.FutureUtil;
+import org.apache.pulsar.protocols.grpc.api.CommandAddPartitionToTxn;
+import org.apache.pulsar.protocols.grpc.api.CommandAddPartitionToTxnResponse;
+import org.apache.pulsar.protocols.grpc.api.CommandAddSubscriptionToTxn;
+import org.apache.pulsar.protocols.grpc.api.CommandAddSubscriptionToTxnResponse;
 import org.apache.pulsar.protocols.grpc.api.CommandConsumerStats;
+import org.apache.pulsar.protocols.grpc.api.CommandEndTxn;
+import org.apache.pulsar.protocols.grpc.api.CommandEndTxnResponse;
 import org.apache.pulsar.protocols.grpc.api.CommandFlow;
 import org.apache.pulsar.protocols.grpc.api.CommandGetLastMessageId;
 import org.apache.pulsar.protocols.grpc.api.CommandGetOrCreateSchema;
@@ -64,6 +70,8 @@ import org.apache.pulsar.protocols.grpc.api.CommandGetTopicsOfNamespace;
 import org.apache.pulsar.protocols.grpc.api.CommandGetTopicsOfNamespaceResponse;
 import org.apache.pulsar.protocols.grpc.api.CommandLookupTopic;
 import org.apache.pulsar.protocols.grpc.api.CommandLookupTopicResponse;
+import org.apache.pulsar.protocols.grpc.api.CommandNewTxn;
+import org.apache.pulsar.protocols.grpc.api.CommandNewTxnResponse;
 import org.apache.pulsar.protocols.grpc.api.CommandPartitionedTopicMetadata;
 import org.apache.pulsar.protocols.grpc.api.CommandPartitionedTopicMetadataResponse;
 import org.apache.pulsar.protocols.grpc.api.CommandProducer;
@@ -82,6 +90,9 @@ import org.apache.pulsar.protocols.grpc.api.PulsarGrpc;
 import org.apache.pulsar.protocols.grpc.api.Schema;
 import org.apache.pulsar.protocols.grpc.api.SendResult;
 import org.apache.pulsar.protocols.grpc.api.ServerError;
+import org.apache.pulsar.transaction.coordinator.TransactionCoordinatorID;
+import org.apache.pulsar.transaction.impl.common.TxnID;
+import org.apache.pulsar.transaction.impl.common.TxnStatus;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -323,6 +334,90 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
                     responseObserver.onError(Commands.newStatusException(Status.INTERNAL, ex,
                             convertServerError(BrokerServiceException.getClientErrorCode(new BrokerServiceException.ServerMetadataException(ex)))));
                     return null;
+                });
+    }
+
+    @Override
+    public void createTransaction(CommandNewTxn command, StreamObserver<CommandNewTxnResponse> responseObserver) {
+        SocketAddress remoteAddress = REMOTE_ADDRESS_CTX_KEY.get();
+        if (log.isDebugEnabled()) {
+            log.debug("Receive new txn request to transaction meta store {} from {}.", command.getTcId(), remoteAddress);
+        }
+        TransactionCoordinatorID tcId = TransactionCoordinatorID.get(command.getTcId());
+        service.pulsar().getTransactionMetadataStoreService().newTransaction(tcId)
+                .whenComplete(((txnID, ex) -> {
+                    if (ex == null) {
+                        if (log.isDebugEnabled()) {
+                            log.debug("Send response {} for new txn request", tcId.getId());
+                        }
+                        responseObserver.onNext(Commands.newTxnResponse(txnID.getLeastSigBits(), txnID.getMostSigBits()));
+                        responseObserver.onCompleted();
+                    } else {
+                        if (log.isDebugEnabled()) {
+                            log.debug("Send response error for new txn request", ex);
+                        }
+                        responseObserver.onError(Commands.newStatusException(Status.FAILED_PRECONDITION, ex,
+                                convertServerError(BrokerServiceException.getClientErrorCode(ex))));
+                    }
+                }));
+    }
+
+    @Override
+    public void addPartitionsToTransaction(CommandAddPartitionToTxn command, StreamObserver<CommandAddPartitionToTxnResponse> responseObserver) {
+        SocketAddress remoteAddress = REMOTE_ADDRESS_CTX_KEY.get();
+        TxnID txnID = new TxnID(command.getTxnidMostBits(), command.getTxnidLeastBits());
+        if (log.isDebugEnabled()) {
+            log.debug("Receive add published partition to txn request from {} with txnId {}", remoteAddress, txnID);
+        }
+        service.pulsar().getTransactionMetadataStoreService().addProducedPartitionToTxn(txnID, command.getPartitionsList())
+                .whenComplete(((v, ex) -> {
+                    if (ex == null) {
+                        if (log.isDebugEnabled()) {
+                            log.debug("Send response success for add published partition to txn request");
+                        }
+                        responseObserver.onNext(Commands.newAddPartitionToTxnResponse());
+                        responseObserver.onCompleted();
+                    } else {
+                        if (log.isDebugEnabled()) {
+                            log.debug("Send response error for add published partition to txn request", ex);
+                        }
+                        responseObserver.onError(Commands.newStatusException(Status.FAILED_PRECONDITION, ex,
+                                convertServerError(BrokerServiceException.getClientErrorCode(ex))));
+                    }
+                }));
+    }
+
+    @Override
+    public void endTransaction(CommandEndTxn command, StreamObserver<CommandEndTxnResponse> responseObserver) {
+        SocketAddress remoteAddress = REMOTE_ADDRESS_CTX_KEY.get();
+        TxnStatus newStatus = null;
+        switch (command.getTxnAction()) {
+            case COMMIT:
+                newStatus = TxnStatus.COMMITTING;
+                break;
+            case ABORT:
+                newStatus = TxnStatus.ABORTING;
+                break;
+        }
+        TxnID txnID = new TxnID(command.getTxnidMostBits(), command.getTxnidLeastBits());
+        if (log.isDebugEnabled()) {
+            log.debug("Receive end txn by {} request from {} with txnId {}", newStatus, remoteAddress, txnID);
+        }
+        service.pulsar().getTransactionMetadataStoreService().updateTxnStatus(txnID, newStatus, TxnStatus.OPEN)
+                .whenComplete((v, ex) -> {
+                    if (ex == null) {
+                        if (log.isDebugEnabled()) {
+                            log.debug("Send response success for end txn request");
+                        }
+                        responseObserver.onNext(Commands.newEndTxnResponse(txnID.getLeastSigBits(), txnID.getMostSigBits()));
+                        responseObserver.onCompleted();
+                    } else {
+                        if (log.isDebugEnabled()) {
+                            log.debug("Send response error for end txn request");
+                        }
+                        responseObserver.onError(Commands.newStatusException(Status.FAILED_PRECONDITION, ex,
+                                convertServerError(BrokerServiceException.getClientErrorCode(ex))));
+                    }
                 });
     }
 
@@ -631,7 +726,7 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
                             }
 
                             responseObserver.onError(newStatusException(Status.FAILED_PRECONDITION, exception.getCause(),
-                                        convertServerError(BrokerServiceException.getClientErrorCode(exception))));
+                                    convertServerError(BrokerServiceException.getClientErrorCode(exception))));
                             consumerFuture.completeExceptionally(exception);
                             return null;
                         });

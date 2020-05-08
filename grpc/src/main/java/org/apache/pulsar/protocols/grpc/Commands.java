@@ -30,7 +30,6 @@ import org.apache.pulsar.client.api.Range;
 import org.apache.pulsar.common.api.proto.PulsarApi;
 import org.apache.pulsar.common.api.proto.PulsarApi.MessageMetadata;
 import org.apache.pulsar.common.policies.data.ConsumerStats;
-import org.apache.pulsar.common.protocol.ByteBufPair;
 import org.apache.pulsar.common.protocol.Commands.ChecksumType;
 import org.apache.pulsar.common.protocol.schema.SchemaVersion;
 import org.apache.pulsar.common.schema.SchemaInfo;
@@ -40,9 +39,13 @@ import org.apache.pulsar.protocols.grpc.api.CommandAck;
 import org.apache.pulsar.protocols.grpc.api.CommandAck.AckType;
 import org.apache.pulsar.protocols.grpc.api.CommandAck.ValidationError;
 import org.apache.pulsar.protocols.grpc.api.CommandActiveConsumerChange;
+import org.apache.pulsar.protocols.grpc.api.CommandAddPartitionToTxn;
+import org.apache.pulsar.protocols.grpc.api.CommandAddPartitionToTxnResponse;
 import org.apache.pulsar.protocols.grpc.api.CommandAuthChallenge;
 import org.apache.pulsar.protocols.grpc.api.CommandConsumerStats;
 import org.apache.pulsar.protocols.grpc.api.CommandConsumerStatsResponse;
+import org.apache.pulsar.protocols.grpc.api.CommandEndTxn;
+import org.apache.pulsar.protocols.grpc.api.CommandEndTxnResponse;
 import org.apache.pulsar.protocols.grpc.api.CommandError;
 import org.apache.pulsar.protocols.grpc.api.CommandFlow;
 import org.apache.pulsar.protocols.grpc.api.CommandGetLastMessageId;
@@ -56,6 +59,8 @@ import org.apache.pulsar.protocols.grpc.api.CommandGetTopicsOfNamespaceResponse;
 import org.apache.pulsar.protocols.grpc.api.CommandLookupTopic;
 import org.apache.pulsar.protocols.grpc.api.CommandLookupTopicResponse;
 import org.apache.pulsar.protocols.grpc.api.CommandMessage;
+import org.apache.pulsar.protocols.grpc.api.CommandNewTxn;
+import org.apache.pulsar.protocols.grpc.api.CommandNewTxnResponse;
 import org.apache.pulsar.protocols.grpc.api.CommandPartitionedTopicMetadata;
 import org.apache.pulsar.protocols.grpc.api.CommandPartitionedTopicMetadataResponse;
 import org.apache.pulsar.protocols.grpc.api.CommandProducer;
@@ -82,6 +87,7 @@ import org.apache.pulsar.protocols.grpc.api.PulsarGrpc;
 import org.apache.pulsar.protocols.grpc.api.Schema;
 import org.apache.pulsar.protocols.grpc.api.SendResult;
 import org.apache.pulsar.protocols.grpc.api.ServerError;
+import org.apache.pulsar.protocols.grpc.api.TxnAction;
 
 import java.util.Collections;
 import java.util.List;
@@ -584,6 +590,46 @@ public class Commands {
         return topicsResponseBuilder.build();
     }
 
+    public static CommandNewTxn newTxn(long tcId) {
+        return CommandNewTxn.newBuilder()
+                .setTcId(tcId)
+                .build();
+    }
+
+    public static CommandNewTxnResponse newTxnResponse(long leastSigBits, long mostSigBits) {
+        return CommandNewTxnResponse.newBuilder()
+          .setTxnidLeastBits(leastSigBits)
+          .setTxnidMostBits(mostSigBits)
+          .build();
+    }
+
+    public static CommandAddPartitionToTxn newAddPartitionToTxn(long txnIdLeastBits, long txnIdMostBits,
+            Iterable<String> partitions) {
+        return  CommandAddPartitionToTxn.newBuilder()
+                .setTxnidLeastBits(txnIdLeastBits)
+                .setTxnidMostBits(txnIdMostBits)
+                .addAllPartitions(partitions)
+                .build();
+    }
+
+    public static CommandAddPartitionToTxnResponse newAddPartitionToTxnResponse() {
+        return CommandAddPartitionToTxnResponse.getDefaultInstance();
+    }
+
+    public static CommandEndTxn newEndTxn(long txnIdLeastBits, long txnIdMostBits, TxnAction txnAction) {
+        return CommandEndTxn.newBuilder()
+                .setTxnidLeastBits(txnIdLeastBits)
+                .setTxnidMostBits(txnIdMostBits)
+                .setTxnAction(txnAction)
+                .build();
+    }
+
+    public static CommandEndTxnResponse newEndTxnResponse(long txnIdLeastBits, long txnIdMostBits) {
+        return CommandEndTxnResponse.newBuilder()
+                .setTxnidLeastBits(txnIdLeastBits)
+                .setTxnidMostBits(txnIdMostBits)
+                .build();
+    }
 
     public static PulsarGrpc.PulsarStub attachProducerParams(PulsarGrpc.PulsarStub stub, CommandProducer producerParams) {
         Metadata headers = new Metadata();

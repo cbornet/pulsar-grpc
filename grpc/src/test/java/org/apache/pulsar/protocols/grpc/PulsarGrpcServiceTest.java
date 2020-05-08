@@ -25,6 +25,7 @@ import io.grpc.Metadata;
 import io.grpc.Server;
 import io.grpc.ServerInterceptors;
 import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import io.grpc.inprocess.InProcessChannelBuilder;
 import io.grpc.inprocess.InProcessServerBuilder;
 import io.grpc.stub.MetadataUtils;
@@ -45,6 +46,7 @@ import org.apache.bookkeeper.util.ZkUtils;
 import org.apache.pulsar.broker.NoOpShutdownService;
 import org.apache.pulsar.broker.PulsarService;
 import org.apache.pulsar.broker.ServiceConfiguration;
+import org.apache.pulsar.broker.TransactionMetadataStoreService;
 import org.apache.pulsar.broker.admin.AdminResource;
 import org.apache.pulsar.broker.authorization.AuthorizationService;
 import org.apache.pulsar.broker.authorization.PulsarAuthorizationProvider;
@@ -57,7 +59,6 @@ import org.apache.pulsar.broker.service.nonpersistent.NonPersistentTopic;
 import org.apache.pulsar.broker.service.persistent.PersistentTopic;
 import org.apache.pulsar.broker.service.schema.DefaultSchemaRegistryService;
 import org.apache.pulsar.broker.service.schema.LongSchemaVersion;
-import org.apache.pulsar.client.api.Schema;
 import org.apache.pulsar.common.api.proto.PulsarApi;
 import org.apache.pulsar.common.naming.NamespaceName;
 import org.apache.pulsar.common.naming.TopicName;
@@ -66,33 +67,30 @@ import org.apache.pulsar.common.policies.data.BacklogQuota;
 import org.apache.pulsar.common.policies.data.Policies;
 import org.apache.pulsar.common.protocol.Commands.ChecksumType;
 import org.apache.pulsar.common.protocol.schema.SchemaData;
-import org.apache.pulsar.common.protocol.schema.SchemaVersion;
 import org.apache.pulsar.common.schema.SchemaInfo;
 import org.apache.pulsar.common.schema.SchemaType;
 import org.apache.pulsar.protocols.grpc.api.CommandAck.AckType;
-import org.apache.pulsar.protocols.grpc.api.CommandActiveConsumerChange;
 import org.apache.pulsar.protocols.grpc.api.CommandConsumerStatsResponse;
 import org.apache.pulsar.protocols.grpc.api.CommandError;
-import org.apache.pulsar.protocols.grpc.api.CommandGetOrCreateSchema;
-import org.apache.pulsar.protocols.grpc.api.CommandGetOrCreateSchemaResponse;
-import org.apache.pulsar.protocols.grpc.api.CommandGetSchemaResponse;
 import org.apache.pulsar.protocols.grpc.api.CommandGetTopicsOfNamespace;
 import org.apache.pulsar.protocols.grpc.api.CommandGetTopicsOfNamespaceResponse;
-import org.apache.pulsar.protocols.grpc.api.CommandLookupTopic;
-import org.apache.pulsar.protocols.grpc.api.CommandLookupTopicResponse;
-import org.apache.pulsar.protocols.grpc.api.CommandPartitionedTopicMetadata;
-import org.apache.pulsar.protocols.grpc.api.CommandPartitionedTopicMetadataResponse;
+import org.apache.pulsar.protocols.grpc.api.CommandNewTxn;
+import org.apache.pulsar.protocols.grpc.api.CommandNewTxnResponse;
 import org.apache.pulsar.protocols.grpc.api.CommandProducer;
 import org.apache.pulsar.protocols.grpc.api.CommandSend;
 import org.apache.pulsar.protocols.grpc.api.CommandSubscribe;
 import org.apache.pulsar.protocols.grpc.api.CommandSubscribe.SubType;
-import org.apache.pulsar.protocols.grpc.api.CommandSuccess;
 import org.apache.pulsar.protocols.grpc.api.ConsumeInput;
 import org.apache.pulsar.protocols.grpc.api.ConsumeOutput;
 import org.apache.pulsar.protocols.grpc.api.PulsarGrpc;
 import org.apache.pulsar.protocols.grpc.api.SendResult;
 import org.apache.pulsar.protocols.grpc.api.ServerError;
+import org.apache.pulsar.protocols.grpc.api.TxnAction;
 import org.apache.pulsar.shaded.com.google.protobuf.v241.ByteString;
+import org.apache.pulsar.transaction.coordinator.TransactionCoordinatorID;
+import org.apache.pulsar.transaction.coordinator.impl.InMemTransactionMetadataStoreProvider;
+import org.apache.pulsar.transaction.impl.common.TxnID;
+import org.apache.pulsar.transaction.impl.common.TxnStatus;
 import org.apache.pulsar.zookeeper.ZooKeeperCache;
 import org.apache.pulsar.zookeeper.ZooKeeperDataCache;
 import org.apache.pulsar.zookeeper.ZookeeperClientFactoryImpl;
@@ -132,7 +130,6 @@ import java.util.function.Supplier;
 import static org.apache.pulsar.broker.cache.ConfigurationCacheService.POLICIES;
 import static org.apache.pulsar.protocols.grpc.Constants.CONSUMER_PARAMS_METADATA_KEY;
 import static org.apache.pulsar.protocols.grpc.Constants.ERROR_CODE_METADATA_KEY;
-import static org.apache.pulsar.protocols.grpc.Constants.PRODUCER_PARAMS_METADATA_KEY;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doReturn;
@@ -144,11 +141,10 @@ import static org.testng.Assert.assertFalse;
 import static org.testng.Assert.assertNotNull;
 import static org.testng.Assert.assertNull;
 import static org.testng.Assert.assertTrue;
+import static org.testng.Assert.fail;
 
 @Test
 public class PulsarGrpcServiceTest {
-
-    private static final Logger log = LoggerFactory.getLogger(PulsarGrpcServiceTest.class);
 
     private ServiceConfiguration svcConfig;
     protected BrokerService brokerService;
@@ -156,6 +152,7 @@ public class PulsarGrpcServiceTest {
     private PulsarService pulsar;
     private ConfigurationCacheService configCacheService;
     protected NamespaceService namespaceService;
+    private TransactionMetadataStoreService transactionMetadataStoreService;
 
     protected final String successTopicName = "persistent://prop/use/ns-abc/successTopic";
     private final String failTopicName = "persistent://prop/use/ns-abc/failTopic";
@@ -172,6 +169,7 @@ public class PulsarGrpcServiceTest {
 
     private Server server;
     private PulsarGrpc.PulsarStub stub;
+    private PulsarGrpc.PulsarBlockingStub blockingStub;
 
     @BeforeMethod
     public void setup() throws Exception {
@@ -222,6 +220,10 @@ public class PulsarGrpcServiceTest {
         doReturn(true).when(namespaceService).isServiceUnitOwned(any());
         doReturn(true).when(namespaceService).isServiceUnitActive(any());
 
+        transactionMetadataStoreService =
+                new TransactionMetadataStoreService(new InMemTransactionMetadataStoreProvider(), pulsar);
+        doReturn(transactionMetadataStoreService).when(pulsar).getTransactionMetadataStoreService();
+
         setupMLAsyncCallbackMocks();
 
         String serverName = InProcessServerBuilder.generateName();
@@ -237,6 +239,7 @@ public class PulsarGrpcServiceTest {
 
         ManagedChannel channel = InProcessChannelBuilder.forName(serverName).build();
         stub = PulsarGrpc.newStub(channel);
+        blockingStub = PulsarGrpc.newBlockingStub(channel);
     }
 
     @AfterMethod
@@ -969,25 +972,26 @@ public class PulsarGrpcServiceTest {
     @Test
     public void testInvalidTopicOnLookup() throws Exception {
         String invalidTopicName = "xx/ass/aa/aaa";
-        CommandLookupTopic lookup = Commands.newLookup(invalidTopicName, false);
-        TestStreamObserver<CommandLookupTopicResponse> lookupResponse = TestStreamObserver.create();
+        try {
+            blockingStub.lookupTopic(Commands.newLookup(invalidTopicName, false));
+            fail("StatusRuntimeException should have been thrown");
+        } catch (StatusRuntimeException e) {
+            assertErrorIsStatusExceptionWithServerError(e, Status.INVALID_ARGUMENT,
+                    ServerError.InvalidTopicName);
+        }
 
-        stub.lookupTopic(lookup, lookupResponse);
-
-        assertErrorIsStatusExceptionWithServerError(lookupResponse.waitForError(), Status.INVALID_ARGUMENT,
-                ServerError.InvalidTopicName);
     }
 
     @Test
     public void testInvalidTopicOnGetPartitionMetadata() throws Exception {
         String invalidTopicName = "xx/ass/aa/aaa";
-        CommandPartitionedTopicMetadata request = Commands.newPartitionMetadataRequest(invalidTopicName);
-        TestStreamObserver<CommandPartitionedTopicMetadataResponse> response = TestStreamObserver.create();
-
-        stub.getPartitionMetadata(request, response);
-
-        assertErrorIsStatusExceptionWithServerError(response.waitForError(), Status.INVALID_ARGUMENT,
-                ServerError.InvalidTopicName);
+        try {
+            blockingStub.getPartitionMetadata(Commands.newPartitionMetadataRequest(invalidTopicName));
+            fail("StatusRuntimeException should have been sent");
+        } catch (StatusRuntimeException e) {
+            assertErrorIsStatusExceptionWithServerError(e, Status.INVALID_ARGUMENT,
+                    ServerError.InvalidTopicName);
+        }
     }
 
     @Test
@@ -1268,16 +1272,99 @@ public class PulsarGrpcServiceTest {
     }
 
     @Test
-    public void testGetTopicsOfNamespace() throws Exception {
+    public void testGetTopicsOfNamespace() {
         doReturn(CompletableFuture.completedFuture(Arrays.asList("my-topic1", "my-topic2"))).when(namespaceService)
                 .getListOfTopics(NamespaceName.get("xx/ass/aa"), PulsarApi.CommandGetTopicsOfNamespace.Mode.PERSISTENT);
 
-        TestStreamObserver<CommandGetTopicsOfNamespaceResponse> response = TestStreamObserver.create();
-        stub.getTopicsOfNamespace(Commands.newGetTopicsOfNamespaceRequest("xx/ass/aa", CommandGetTopicsOfNamespace.Mode.PERSISTENT), response);
+        CommandGetTopicsOfNamespace request =
+                Commands.newGetTopicsOfNamespaceRequest("xx/ass/aa", CommandGetTopicsOfNamespace.Mode.PERSISTENT);
+        CommandGetTopicsOfNamespaceResponse topics = blockingStub.getTopicsOfNamespace(request);
 
-        CommandGetTopicsOfNamespaceResponse topics = response.takeOneMessage();
         assertEquals(topics.getTopicsList().get(0), "my-topic1");
         assertEquals(topics.getTopicsList().get(1), "my-topic2");
+    }
+
+    @Test
+    public void testCreateTransaction() {
+        long tcId = 100;
+        transactionMetadataStoreService.addTransactionMetadataStore(TransactionCoordinatorID.get(tcId));
+
+        CommandNewTxnResponse txn = blockingStub.createTransaction(Commands.newTxn(tcId));
+
+        TxnStatus txnStatus = transactionMetadataStoreService.getTxnMeta(new TxnID(txn.getTxnidMostBits(), txn.getTxnidLeastBits()))
+                .thenApply(txnMeta -> txnMeta.status())
+                .getNow(null);
+
+        assertEquals(txnStatus, TxnStatus.OPEN);
+        assertEquals(txn.getTxnidMostBits(), tcId);
+        assertEquals(txn.getTxnidLeastBits(), 0);
+    }
+
+    @Test
+    public void testCreateTransactionError() {
+        try {
+            blockingStub.createTransaction(CommandNewTxn.getDefaultInstance());
+            fail("StatusRuntimeException should have been thrown");
+        } catch (StatusRuntimeException e) {
+            assertErrorIsStatusExceptionWithServerError(e, Status.FAILED_PRECONDITION,
+                    ServerError.TransactionCoordinatorNotFound);
+        }
+    }
+
+    @Test
+    public void testAddPartitionsToTransaction() {
+        long tcId = 100;
+        transactionMetadataStoreService.addTransactionMetadataStore(TransactionCoordinatorID.get(tcId));
+
+        CommandNewTxnResponse txn = blockingStub.createTransaction(Commands.newTxn(tcId));
+
+        List<String> partitions = Arrays.asList("part1", "part2");
+        blockingStub.addPartitionsToTransaction(Commands.newAddPartitionToTxn(txn.getTxnidLeastBits(), txn.getTxnidMostBits(), partitions));
+
+        List<String> txnPartitions = transactionMetadataStoreService.getTxnMeta(new TxnID(txn.getTxnidMostBits(), txn.getTxnidLeastBits()))
+                .thenApply(txnMeta -> txnMeta.producedPartitions())
+                .getNow(null);
+
+        assertEquals(txnPartitions, partitions);
+    }
+
+    @Test
+    public void testAddPartitionsToTransactionError() {
+        List<String> partitions = Arrays.asList("part1", "part2");
+        try {
+            blockingStub.addPartitionsToTransaction(Commands.newAddPartitionToTxn(100, 200, partitions));
+            fail("StatusRuntimeException should have been thrown");
+        } catch (StatusRuntimeException e) {
+            assertErrorIsStatusExceptionWithServerError(e, Status.FAILED_PRECONDITION,
+                    ServerError.TransactionCoordinatorNotFound);
+        }
+    }
+
+    @Test
+    public void testEndTransaction() {
+        long tcId = 100;
+        transactionMetadataStoreService.addTransactionMetadataStore(TransactionCoordinatorID.get(tcId));
+
+        CommandNewTxnResponse txn = blockingStub.createTransaction(Commands.newTxn(tcId));
+
+        blockingStub.endTransaction(Commands.newEndTxn(txn.getTxnidLeastBits(), txn.getTxnidMostBits(), TxnAction.ABORT));
+
+        TxnStatus txnStatus = transactionMetadataStoreService.getTxnMeta(new TxnID(txn.getTxnidMostBits(), txn.getTxnidLeastBits()))
+                .thenApply(txnMeta -> txnMeta.status())
+                .getNow(null);
+
+        assertEquals(txnStatus, TxnStatus.ABORTING);
+    }
+
+    @Test
+    public void testEndTransactionError() {
+        try {
+            blockingStub.endTransaction(Commands.newEndTxn(100, 200, TxnAction.ABORT));
+            fail("StatusRuntimeException should have been thrown");
+        } catch (StatusRuntimeException e) {
+            assertErrorIsStatusExceptionWithServerError(e, Status.FAILED_PRECONDITION,
+                    ServerError.TransactionCoordinatorNotFound);
+        }
     }
 
     private void verifyProduceFails(CommandProducer producerParams, Status expectedStatus, ServerError expectedCode)
