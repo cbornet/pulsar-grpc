@@ -21,6 +21,7 @@ package org.apache.pulsar.protocols.grpc;
 import com.google.common.base.Strings;
 import io.grpc.Context;
 import io.grpc.Status;
+import io.grpc.stub.CallStreamObserver;
 import io.grpc.stub.StreamObserver;
 import io.netty.channel.EventLoopGroup;
 import org.apache.bookkeeper.mledger.AsyncCallbacks;
@@ -56,8 +57,6 @@ import org.apache.pulsar.common.schema.SchemaType;
 import org.apache.pulsar.common.util.FutureUtil;
 import org.apache.pulsar.protocols.grpc.api.CommandAddPartitionToTxn;
 import org.apache.pulsar.protocols.grpc.api.CommandAddPartitionToTxnResponse;
-import org.apache.pulsar.protocols.grpc.api.CommandAddSubscriptionToTxn;
-import org.apache.pulsar.protocols.grpc.api.CommandAddSubscriptionToTxnResponse;
 import org.apache.pulsar.protocols.grpc.api.CommandConsumerStats;
 import org.apache.pulsar.protocols.grpc.api.CommandEndTxn;
 import org.apache.pulsar.protocols.grpc.api.CommandEndTxnResponse;
@@ -428,10 +427,35 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
 
     @Override
     public void produceSingle(CommandProduceSingle request, StreamObserver<CommandSendReceipt> responseObserver) {
-        Context ctx = Context.current();
-        ctx = ctx.withValue(PRODUCER_PARAMS_CTX_KEY, request.getProducer());
+        Context ctx = Context.current().withValue(PRODUCER_PARAMS_CTX_KEY, request.getProducer());
+        Context previousCtx = ctx.attach();
         AtomicReference<StreamObserver<CommandSend>> producer = new AtomicReference<>();
-        StreamObserver<SendResult> produceObserver = new StreamObserver<SendResult>() {
+        StreamObserver<SendResult> produceObserver = new CallStreamObserver<SendResult>() {
+            @Override
+            public boolean isReady() {
+                return true;
+            }
+
+            @Override
+            public void setOnReadyHandler(Runnable onReadyHandler) {
+                // Nothing to do
+            }
+
+            @Override
+            public void disableAutoInboundFlowControl() {
+                // Nothing to do
+            }
+
+            @Override
+            public void request(int count) {
+                // Nothing to do
+            }
+
+            @Override
+            public void setMessageCompression(boolean enable) {
+                // Nothing to do
+            }
+
             @Override
             public void onNext(SendResult sendResult) {
                 if (sendResult.hasSendReceipt()) {
@@ -458,6 +482,7 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
             }
         };
         producer.set(produce(produceObserver));
+        ctx.detach(previousCtx);
     }
 
     @Override

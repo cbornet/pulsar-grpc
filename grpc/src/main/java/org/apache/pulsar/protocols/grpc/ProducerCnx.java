@@ -18,7 +18,7 @@
  */
 package org.apache.pulsar.protocols.grpc;
 
-import io.grpc.stub.ServerCallStreamObserver;
+import io.grpc.stub.CallStreamObserver;
 import io.grpc.stub.StreamObserver;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
@@ -39,7 +39,7 @@ public class ProducerCnx implements ServerCnx {
     private final SocketAddress remoteAddress;
     private final String authRole;
     private final AuthenticationDataSource authenticationData;
-    private final ServerCallStreamObserver<SendResult> responseObserver;
+    private final CallStreamObserver<SendResult> responseObserver;
     private final EventLoop eventLoop;
 
     // Max number of pending requests per produce RPC
@@ -61,9 +61,10 @@ public class ProducerCnx implements ServerCnx {
                 .getMaxConcurrentNonPersistentMessagePerConnection();
         this.authRole = authRole;
         this.authenticationData = authenticationData;
-        this.responseObserver = (ServerCallStreamObserver<SendResult>) responseObserver;
+        this.responseObserver = (CallStreamObserver<SendResult>) responseObserver;
         this.responseObserver.disableAutoInboundFlowControl();
         this.responseObserver.setOnReadyHandler(onReadyHandler);
+
         this.eventLoop = eventLoop;
     }
 

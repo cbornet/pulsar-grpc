@@ -76,8 +76,10 @@ import org.apache.pulsar.protocols.grpc.api.CommandGetTopicsOfNamespace;
 import org.apache.pulsar.protocols.grpc.api.CommandGetTopicsOfNamespaceResponse;
 import org.apache.pulsar.protocols.grpc.api.CommandNewTxn;
 import org.apache.pulsar.protocols.grpc.api.CommandNewTxnResponse;
+import org.apache.pulsar.protocols.grpc.api.CommandProduceSingle;
 import org.apache.pulsar.protocols.grpc.api.CommandProducer;
 import org.apache.pulsar.protocols.grpc.api.CommandSend;
+import org.apache.pulsar.protocols.grpc.api.CommandSendReceipt;
 import org.apache.pulsar.protocols.grpc.api.CommandSubscribe;
 import org.apache.pulsar.protocols.grpc.api.CommandSubscribe.SubType;
 import org.apache.pulsar.protocols.grpc.api.ConsumeInput;
@@ -102,8 +104,6 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
 import org.mockito.invocation.InvocationOnMock;
 import org.mockito.stubbing.Answer;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.testng.annotations.AfterMethod;
 import org.testng.annotations.BeforeMethod;
 import org.testng.annotations.Test;
@@ -1364,6 +1364,92 @@ public class PulsarGrpcServiceTest {
         } catch (StatusRuntimeException e) {
             assertErrorIsStatusExceptionWithServerError(e, Status.FAILED_PRECONDITION,
                     ServerError.TransactionCoordinatorNotFound);
+        }
+    }
+
+    @Test
+    public void testProduceSingle() {
+        CommandProducer producerParams = Commands.newProducer(successTopicName,"prod-name", Collections.emptyMap());
+
+        PulsarApi.MessageMetadata messageMetadata = PulsarApi.MessageMetadata.newBuilder()
+                .setPublishTime(System.currentTimeMillis())
+                .setProducerName("prod-name")
+                .setSequenceId(0)
+                .build();
+
+        CommandSend send = Commands.newSend(1, 0, 1, ChecksumType.None,
+                messageMetadata, Unpooled.buffer(1024));
+
+        CommandProduceSingle produceSingle = CommandProduceSingle.newBuilder()
+                .setProducer(producerParams)
+                .setSend(send)
+                .build();
+
+        CommandSendReceipt sendReceipt = blockingStub.produceSingle(produceSingle);
+        assertEquals(sendReceipt.getSequenceId(), 1);
+    }
+
+    @Test
+    public void testProduceSingleError() {
+        String invalidTopicName = "xx/ass/aa/aaa";
+        CommandProducer producerParams = Commands.newProducer(invalidTopicName,"prod-name", Collections.emptyMap());
+
+        PulsarApi.MessageMetadata messageMetadata = PulsarApi.MessageMetadata.newBuilder()
+                .setPublishTime(System.currentTimeMillis())
+                .setProducerName("prod-name")
+                .setSequenceId(0)
+                .build();
+
+        CommandSend send = Commands.newSend(1, 0, 1, ChecksumType.None,
+                messageMetadata, Unpooled.buffer(1024));
+
+        CommandProduceSingle produceSingle = CommandProduceSingle.newBuilder()
+                .setProducer(producerParams)
+                .setSend(send)
+                .build();
+
+        try {
+            blockingStub.produceSingle(produceSingle);
+            fail("StatusRuntimeException should have been sent");
+        } catch (StatusRuntimeException e) {
+            assertErrorIsStatusExceptionWithServerError(e, Status.INVALID_ARGUMENT, ServerError.InvalidTopicName);
+        }
+    }
+
+    @Test
+    public void testProduceSingleSendError() throws Exception {
+        // Set encryption_required to true
+        ZooKeeperDataCache<Policies> zkDataCache = mock(ZooKeeperDataCache.class);
+        Policies policies = mock(Policies.class);
+        policies.encryption_required = true;
+        policies.topicDispatchRate = Maps.newHashMap();
+        policies.clusterDispatchRate = Maps.newHashMap();
+        doReturn(Optional.of(policies)).when(zkDataCache).get(AdminResource.path(POLICIES, TopicName.get(encryptionRequiredTopicName).getNamespace()));
+        doReturn(CompletableFuture.completedFuture(Optional.of(policies))).when(zkDataCache).getAsync(AdminResource.path(POLICIES, TopicName.get(encryptionRequiredTopicName).getNamespace()));
+        doReturn(zkDataCache).when(configCacheService).policiesCache();
+
+        CommandProducer producerParams = Commands.newProducer(encryptionRequiredTopicName,
+                "prod-name", true, null);
+
+        PulsarApi.MessageMetadata messageMetadata = PulsarApi.MessageMetadata.newBuilder()
+                .setPublishTime(System.currentTimeMillis())
+                .setProducerName("prod-name")
+                .setSequenceId(0)
+                .build();
+
+        CommandSend send = Commands.newSend(1, 0, 1, ChecksumType.None,
+                messageMetadata, Unpooled.buffer(1024));
+
+        CommandProduceSingle produceSingle = CommandProduceSingle.newBuilder()
+                .setProducer(producerParams)
+                .setSend(send)
+                .build();
+
+        try {
+            blockingStub.produceSingle(produceSingle);
+            fail("StatusRuntimeException should have been sent");
+        } catch (StatusRuntimeException e) {
+            assertErrorIsStatusExceptionWithServerError(e, Status.FAILED_PRECONDITION, ServerError.MetadataError);
         }
     }
 
