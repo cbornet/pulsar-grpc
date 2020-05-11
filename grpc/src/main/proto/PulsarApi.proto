@@ -24,12 +24,26 @@ option java_multiple_files = true;
 // option optimize_for = LITE_RUNTIME;
 
 service Pulsar {
+    // Create a Producer and produce messages through it as a stream.
+    // The Producer parameters must be set in a CommandProducer message passed in the pulsar-producer-params-bin metadata.
+    // The Producer is closed when the call terminates.
     rpc produce(stream CommandSend) returns (stream SendResult) {}
+
+    // Create a Producer, produce a single message then close the Producer.
     rpc produceSingle(CommandProduceSingle) returns (CommandSendReceipt) {}
+
+    // Create a Consumer and consume messages through it as a stream.
+    // The Consumer parameters must be set in a CommandSubscribe message passed in the
+    // pulsar-consumer-params-bin metadata.
+    // The Consumer is closed when the call terminates.
     rpc consume(stream ConsumeInput) returns (stream ConsumeOutput) {}
+
     rpc get_schema(CommandGetSchema) returns (CommandGetSchemaResponse) {}
     rpc get_or_create_schema(CommandGetOrCreateSchema) returns (CommandGetOrCreateSchemaResponse) {}
+
+    // Lookup the broker serving the topic and get the parameters of the gRPC server of this broker in the response
     rpc lookup_topic(CommandLookupTopic) returns (CommandLookupTopicResponse) {}
+
     rpc get_partition_metadata(CommandPartitionedTopicMetadata) returns (CommandPartitionedTopicMetadataResponse) {}
     rpc get_topics_of_namespace(CommandGetTopicsOfNamespace) returns (CommandGetTopicsOfNamespaceResponse) {}
     rpc create_transaction(CommandNewTxn) returns (CommandNewTxnResponse) {}
@@ -39,91 +53,85 @@ service Pulsar {
 
 message Schema {
     enum Type {
-        None = 0;
-        String = 1;
-        Json = 2;
-        Protobuf = 3;
-        Avro = 4;
-        Bool = 5;
-        Int8 = 6;
-        Int16 = 7;
-        Int32 = 8;
-        Int64 = 9;
-        Float = 10;
-        Double = 11;
-        Date = 12;
-        Time = 13;
+        None      = 0;
+        String    = 1;
+        Json      = 2;
+        Protobuf  = 3;
+        Avro      = 4;
+        Bool      = 5;
+        Int8      = 6;
+        Int16     = 7;
+        Int32     = 8;
+        Int64     = 9;
+        Float     = 10;
+        Double    = 11;
+        Date      = 12;
+        Time      = 13;
         Timestamp = 14;
-        KeyValue = 15;
+        KeyValue  = 15;
     }
 
-    required string name = 1;
-    required bytes schema_data = 3;
-    required Type type = 4;
-    map<string, string> properties = 5;
-
+    required string name           = 1;
+    required bytes schema_data     = 2;
+    required Type type             = 3;
+    map<string, string> properties = 4;
 }
 
 message MessageIdData {
-    required uint64 ledgerId = 1;
-    required uint64 entryId  = 2;
-    optional int32 partition = 3 [default = -1];
+    required uint64 ledgerId   = 1;
+    required uint64 entryId    = 2;
+    optional int32 partition   = 3 [default = -1];
     optional int32 batch_index = 4 [default = -1];
 }
 
 message IntRange {
     required int32 start = 1;
-    required int32 end = 2;
+    required int32 end   = 2;
 }
 
 enum ServerError {
-    UnknownError        = 0;
-    MetadataError       = 1; // Error with ZK/metadata
-    PersistenceError    = 2; // Error writing reading from BK
-    AuthenticationError = 3; // Non valid authentication
-    AuthorizationError  = 4; // Not authorized to use resource
-
-    ConsumerBusy        = 5; // Unable to subscribe/unsubscribe because
-                             // other consumers are connected
-    ServiceNotReady     = 6; // Any error that requires client retry operation with a fresh lookup
-    ProducerBlockedQuotaExceededError = 7; // Unable to create producer because backlog quota exceeded
+    UnknownError                          = 0;
+    MetadataError                         = 1; // Error with ZK/metadata
+    PersistenceError                      = 2; // Error writing reading from BK
+    AuthenticationError                   = 3; // Non valid authentication
+    AuthorizationError                    = 4; // Not authorized to use resource
+    ConsumerBusy                          = 5; // Unable to subscribe/unsubscribe because other consumers are connected
+    ServiceNotReady                       = 6; // Any error that requires client retry operation with a fresh lookup
+    ProducerBlockedQuotaExceededError     = 7; // Unable to create producer because backlog quota exceeded
     ProducerBlockedQuotaExceededException = 8; // Exception while creating producer because quota exceeded
-    ChecksumError = 9; // Error while verifying message checksum
-    UnsupportedVersionError = 10; // Error when an older client/version doesn't support a required feature
-    TopicNotFound = 11; // Topic not found
-    SubscriptionNotFound = 12; // Subscription not found
-    ConsumerNotFound = 13; // Consumer not found
-    TooManyRequests = 14; // Error with too many simultaneously request
-    TopicTerminatedError = 15; // The topic has been terminated
-
-    ProducerBusy         = 16; // Producer with same name is already connected
-    InvalidTopicName = 17; // The topic name is not valid
-
-    IncompatibleSchema = 18; // Specified schema was incompatible with topic schema
-    ConsumerAssignError = 19; // Dispatcher assign consumer error
-
-    TransactionCoordinatorNotFound = 20; // Transaction coordinator not found error
-    InvalidTxnStatus = 21; // Invalid txn status error
+    ChecksumError                         = 9; // Error while verifying message checksum
+    UnsupportedVersionError               = 10; // Error when an older client/version doesn't support a required feature
+    TopicNotFound                         = 11; // Topic not found
+    SubscriptionNotFound                  = 12; // Subscription not found
+    ConsumerNotFound                      = 13; // Consumer not found
+    TooManyRequests                       = 14; // Error with too many simultaneously request
+    TopicTerminatedError                  = 15; // The topic has been terminated
+    ProducerBusy                          = 16; // Producer with same name is already connected
+    InvalidTopicName                      = 17; // The topic name is not valid
+    IncompatibleSchema                    = 18; // Specified schema was incompatible with topic schema
+    ConsumerAssignError                   = 19; // Dispatcher assign consumer error
+    TransactionCoordinatorNotFound        = 20; // Transaction coordinator not found error
+    InvalidTxnStatus                      = 21; // Invalid txn status error
 }
 
 message CommandConnect {
-    optional string auth_method_name = 1;
-    optional bytes auth_data = 2;
+    optional string auth_method_name     = 1;
+    optional bytes auth_data             = 2;
 
     // Client can ask to be proxyied to a specific broker
     // This is only honored by a Pulsar proxy
-    optional string proxy_to_broker_url = 3;
+    optional string proxy_to_broker_url  = 3;
 
     // Original principal that was verified by
     // a Pulsar proxy. In this case the auth info above
     // will be the auth of the proxy itself
-    optional string original_principal = 7;
+    optional string original_principal   = 4;
 
     // Original auth role and auth Method that was passed
     // to the proxy. In this case the auth info above
     // will be the auth of the proxy itself
-    optional string original_auth_data = 8;
-    optional string original_auth_method = 9;
+    optional string original_auth_data   = 5;
+    optional string original_auth_method = 6;
 
 }
 
@@ -164,7 +172,7 @@ message AuthRoleToken {
 
 enum KeySharedMode {
     AUTO_SPLIT = 0;
-    STICKY = 1;
+    STICKY     = 1;
 }
 
 message KeySharedMeta {
@@ -183,49 +191,49 @@ message CommandSubscribe {
     required string subscription  = 2;
     required SubType subType      = 3;
 
-    optional string consumer_name = 5;
-    optional int32 priority_level = 6;
+    optional string consumer_name = 4;
+    optional int32 priority_level = 5;
 
     // Signal wether the subscription should be backed by a
     // durable cursor or not
-    optional bool durable         = 7 [default = true];
+    optional bool durable         = 6 [default = true];
 
     // If specified, the subscription will position the cursor
     // markd-delete position  on the particular message id and
     // will send messages from that point
-    optional MessageIdData start_message_id = 8;
+    optional MessageIdData start_message_id = 7;
 
     /// Add optional metadata key=value to this consumer
-    map<string, string>  metadata           = 9;
+    map<string, string>  metadata           = 8;
 
-    optional bool read_compacted            = 10;
+    optional bool read_compacted            = 9;
 
-    optional Schema schema                  = 11;
+    optional Schema schema                  = 10;
     enum InitialPosition {
         Latest   = 0;
         Earliest = 1;
     }
     // Signal whether the subscription will initialize on latest
     // or not -- earliest
-    optional InitialPosition initialPosition = 12 [default = Latest];
+    optional InitialPosition initialPosition   = 11 [default = Latest];
 
     // Mark the subscription as "replicated". Pulsar will make sure
     // to periodically sync the state of replicated subscriptions
     // across different clusters (when using geo-replication).
-    optional bool replicate_subscription_state = 13;
+    optional bool replicate_subscription_state = 12;
 
     // If true, the subscribe operation will cause a topic to be
     // created if it does not exist already (and if topic auto-creation
     // is allowed by broker.
     // If false, the subscribe operation will fail if the topic
     // does not exist.
-    optional bool force_topic_creation = 14 [default = true];
+    optional bool force_topic_creation = 13 [default = true];
 
     // If specified, the subscription will reset cursor's position back
     // to specified seconds and  will send messages from that point
-    optional uint64 start_message_rollback_duration_sec = 15 [default = 0];
+    optional uint64 start_message_rollback_duration_sec = 14 [default = 0];
 
-    optional KeySharedMeta keySharedMeta = 16;
+    optional KeySharedMeta keySharedMeta = 15;
 }
 
 message CommandPartitionedTopicMetadata {
@@ -332,49 +340,49 @@ message CommandAck {
         Individual = 0;
         Cumulative = 1;
     }
-    required AckType ack_type         = 2;
+    required AckType ack_type         = 1;
 
     // In case of individual acks, the client can pass a list of message ids
-    repeated MessageIdData message_id = 3;
+    repeated MessageIdData message_id = 2;
 
     // Acks can contain a flag to indicate the consumer
     // received an invalid message that got discarded
     // before being passed on to the application.
     enum ValidationError {
         UncompressedSizeCorruption = 0;
-        DecompressionError = 1;
-        ChecksumMismatch = 2;
-        BatchDeSerializeError = 3;
-        DecryptionError = 4;
+        DecompressionError         = 1;
+        ChecksumMismatch           = 2;
+        BatchDeSerializeError      = 3;
+        DecryptionError            = 4;
     }
 
-    optional ValidationError validation_error = 4;
-    map<string, uint64> properties = 5;
+    optional ValidationError validation_error = 3;
+    map<string, uint64> properties            = 4;
 
-    optional uint64 txnid_least_bits = 6 [default = 0];
-    optional uint64 txnid_most_bits = 7 [default = 0];
+    optional uint64 txnid_least_bits          = 5 [default = 0];
+    optional uint64 txnid_most_bits           = 6 [default = 0];
 }
 
 // changes on active consumer
 message CommandActiveConsumerChange {
-    optional bool is_active     = 1 [default = false];
+    optional bool is_active = 1 [default = false];
 }
 
 message CommandFlow {
     // Max number of messages to prefetch, in addition
     // of any number previously specified
-    required uint32 messagePermits     = 1;
+    required uint32 messagePermits = 1;
 }
 
 message CommandUnsubscribe {
-    required uint64 request_id  = 1;
+    required uint64 request_id = 1;
 }
 
 // Reset an existing consumer to a particular message id
 message CommandSeek {
-    required uint64 request_id           = 1;
+    required uint64 request_id = 1;
     oneof seek_one_of {
-        MessageIdData message_id = 2;
+        MessageIdData message_id    = 2;
         uint64 message_publish_time = 3;
     }
 }
@@ -386,7 +394,7 @@ message CommandReachedEndOfTopic {
 }
 
 message CommandRedeliverUnacknowledgedMessages {
-    repeated MessageIdData message_ids = 2;
+    repeated MessageIdData message_ids = 1;
 }
 
 message ConsumeInput {
@@ -416,75 +424,75 @@ message ConsumeOutput {
 
 message CommandSuccess {
     required uint64 request_id = 1;
-    optional Schema schema = 2;
+    optional Schema schema     = 2;
 }
 
 message CommandProducerSuccess {
-    required string producer_name    = 1;
+    required string producer_name   = 1;
 
     // The last sequence id that was stored by this producer in the previous session
     // This will only be meaningful if deduplication has been enabled.
     optional int64 last_sequence_id = 2 [default = -1];
-    optional bytes schema_version    = 3;
+    optional bytes schema_version   = 3;
 }
 
 message CommandSubscribeSuccess {
 }
 
 message CommandError {
-    required uint64 request_id  = 1;
+    required uint64 request_id = 1;
     required ServerError error = 2;
     required string message    = 3;
 }
 
 message CommandConsumerStats {
-    required uint64 request_id         = 1;
+    required uint64 request_id = 1;
 }
 
 message CommandConsumerStatsResponse {
-    required uint64 request_id              = 1;
-    optional ServerError error_code         = 2;
-    optional string error_message           = 3;
+    required uint64 request_id                 = 1;
+    optional ServerError error_code            = 2;
+    optional string error_message              = 3;
 
     /// Total rate of messages delivered to the consumer. msg/s
-    optional double msgRateOut                  = 4;
+    optional double msgRateOut                 = 4;
 
     /// Total throughput delivered to the consumer. bytes/s
-    optional double msgThroughputOut            = 5;
+    optional double msgThroughputOut           = 5;
 
     /// Total rate of messages redelivered by this consumer. msg/s
-    optional double msgRateRedeliver            = 6;
+    optional double msgRateRedeliver           = 6;
 
     /// Name of the consumer
-    optional string consumerName                = 7;
+    optional string consumerName               = 7;
 
     /// Number of available message permits for the consumer
-    optional uint64 availablePermits            = 8;
+    optional uint64 availablePermits           = 8;
 
     /// Number of unacknowledged messages for the consumer
-    optional uint64 unackedMessages             = 9;
+    optional uint64 unackedMessages            = 9;
 
     /// Flag to verify if consumer is blocked due to reaching threshold of unacked messages
-    optional bool blockedConsumerOnUnackedMsgs  = 10;
+    optional bool blockedConsumerOnUnackedMsgs = 10;
 
     /// Address of this consumer
-    optional string address                     = 11;
+    optional string address                    = 11;
 
     /// Timestamp of connection
-    optional string connectedSince              = 12;
+    optional string connectedSince             = 12;
 
     /// Whether this subscription is Exclusive or Shared or Failover
-    optional string type                        = 13;
+    optional string type                       = 13;
 
     /// Total rate of messages expired on this subscription. msg/s
-    optional double msgRateExpired              = 14;
+    optional double msgRateExpired             = 14;
 
     /// Number of messages in the subscription backlog
-    optional uint64 msgBacklog                  = 15;
+    optional uint64 msgBacklog                 = 15;
 }
 
 message CommandGetLastMessageId {
-    required uint64 request_id  = 1;
+    required uint64 request_id = 1;
 }
 
 message CommandGetLastMessageIdResponse {
@@ -512,24 +520,24 @@ message CommandGetSchema {
 }
 
 message CommandGetSchemaResponse {
-    optional Schema schema          = 1;
-    optional bytes schema_version   = 2;
+    optional Schema schema        = 1;
+    optional bytes schema_version = 2;
 }
 
 message CommandGetOrCreateSchema {
-    required string topic      = 1;
-    required Schema schema     = 2;
+    required string topic  = 1;
+    required Schema schema = 2;
 }
 
 message CommandGetOrCreateSchemaResponse {
-    optional bytes schema_version   = 4;
+    optional bytes schema_version = 4;
 }
 
 /// --- transaction related ---
 
 enum TxnAction {
     COMMIT = 0;
-    ABORT = 1;
+    ABORT  = 1;
 }
 
 message CommandNewTxn {
@@ -550,19 +558,6 @@ message CommandAddPartitionToTxn {
 message CommandAddPartitionToTxnResponse {
 }
 
-message Subscription {
-    required string topic        = 1;
-    required string subscription = 2;
-}
-message CommandAddSubscriptionToTxn {
-    optional uint64 txnid_least_bits   = 1 [default = 0];
-    optional uint64 txnid_most_bits    = 2 [default = 0];
-    repeated Subscription subscription = 3;
-}
-
-message CommandAddSubscriptionToTxnResponse {
-}
-
 message CommandEndTxn {
     optional uint64 txnid_least_bits = 1 [default = 0];
     optional uint64 txnid_most_bits  = 2 [default = 0];
@@ -572,36 +567,4 @@ message CommandEndTxn {
 message CommandEndTxnResponse {
     optional uint64 txnid_least_bits = 1 [default = 0];
     optional uint64 txnid_most_bits  = 2 [default = 0];
-}
-
-message CommandEndTxnOnPartition {
-    required uint64 request_id = 1;
-    optional uint64 txnid_least_bits = 2 [default = 0];
-    optional uint64 txnid_most_bits = 3 [default = 0];
-    optional string topic = 4;
-    optional TxnAction txn_action = 5;
-}
-
-message CommandEndTxnOnPartitionResponse {
-    required uint64 request_id = 1;
-    optional uint64 txnid_least_bits = 2 [default = 0];
-    optional uint64 txnid_most_bits = 3 [default = 0];
-    optional ServerError error = 4;
-    optional string message = 5;
-}
-
-message CommandEndTxnOnSubscription {
-    required uint64 request_id = 1;
-    optional uint64 txnid_least_bits = 2 [default = 0];
-    optional uint64 txnid_most_bits = 3 [default = 0];
-    optional Subscription subscription= 4;
-    optional TxnAction txn_action = 5;
-}
-
-message CommandEndTxnOnSubscriptionResponse {
-    required uint64 request_id = 1;
-    optional uint64 txnid_least_bits = 2 [default = 0];
-    optional uint64 txnid_most_bits = 3 [default = 0];
-    optional ServerError error = 4;
-    optional string message = 5;
 }
