@@ -124,7 +124,7 @@ public class ConsumerCnx implements ServerCnx {
 
                 ByteBuf metadataAndPayload = entry.getDataBuffer();
                 // increment ref-count of data and release at the end of process: so, we can get chance to call entry.release
-                metadataAndPayload.retain();
+                //metadataAndPayload.retain();
                 // skip checksum by incrementing reader-index if consumer-client doesn't support checksum verification
                 //if (getRemoteEndpointProtocolVersion() < PulsarApi.ProtocolVersion.v11.getNumber()) {
                 //    org.apache.pulsar.common.protocol.Commands.skipChecksumIfPresent(metadataAndPayload);
