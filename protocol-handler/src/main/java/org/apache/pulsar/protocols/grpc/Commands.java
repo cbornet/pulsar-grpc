@@ -753,8 +753,13 @@ public class Commands {
                 .map(intRange -> PulsarApi.IntRange.newBuilder()
                         .setStart(intRange.getStart())
                         .setEnd(intRange.getEnd()))
-                .forEach(builder::addHashRanges);
-        return builder.build();
+                .forEach(hashRangeBuilder -> {
+                    builder.addHashRanges(hashRangeBuilder);
+                    hashRangeBuilder.recycle();
+                });
+        PulsarApi.KeySharedMeta keySharedMeta = builder.build();
+        builder.recycle();
+        return keySharedMeta;
     }
 
     public static PulsarApi.CommandAck.AckType convertAckType(AckType type) {
@@ -795,12 +800,14 @@ public class Commands {
         if (messageIdData == null) {
             return null;
         }
-        return PulsarApi.MessageIdData.newBuilder()
+        PulsarApi.MessageIdData.Builder builder = PulsarApi.MessageIdData.newBuilder()
                 .setBatchIndex(messageIdData.getBatchIndex())
                 .setEntryId(messageIdData.getEntryId())
                 .setLedgerId(messageIdData.getLedgerId())
-                .setPartition(messageIdData.getPartition())
-                .build();
+                .setPartition(messageIdData.getPartition());
+        PulsarApi.MessageIdData messageIdData_ = builder.build();
+        builder.recycle();
+        return messageIdData_;
     }
 
     public static PulsarApi.CommandAck convertCommandAck(CommandAck ack) {
@@ -813,14 +820,18 @@ public class Commands {
                 .setConsumerId(0L)
                 .setTxnidLeastBits(ack.getTxnidLeastBits())
                 .setTxnidMostBits(ack.getTxnidMostBits());
-        ack.getPropertiesMap().forEach((k,v) ->
-                builder.addProperties(PulsarApi.KeyLongValue.newBuilder()
-                        .setKey(k)
-                        .setValue(v)
-                        .build())
-        );
-        ack.getMessageIdList().forEach(messageIdData -> builder.addMessageId(convertMessageIdData(messageIdData)));
-        return builder.build();
+        ack.getPropertiesMap().forEach((k,v) -> {
+            PulsarApi.KeyLongValue.Builder keyLongValue = PulsarApi.KeyLongValue.newBuilder()
+                    .setKey(k)
+                    .setValue(v);
+            builder.addProperties(keyLongValue);
+            keyLongValue.recycle();
+        });
+        ack.getMessageIdList().stream()
+                .map(Commands::convertMessageIdData)
+                .forEach(builder::addMessageId);
+        PulsarApi.CommandAck ack_ = builder.build();
+        return ack_;
     }
 
     public static PulsarApi.CommandGetTopicsOfNamespace.Mode convertGetTopicsOfNamespaceMode(CommandGetTopicsOfNamespace.Mode mode) {

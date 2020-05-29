@@ -818,7 +818,10 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
                 switch (consumeInput.getConsumerInputOneofCase()) {
                     case ACK:
                         if (consumer != null) {
-                            consumer.messageAcked(convertCommandAck(consumeInput.getAck()));
+                            PulsarApi.CommandAck ack = convertCommandAck(consumeInput.getAck());
+                            consumer.messageAcked(ack);
+                            ack.getMessageIdList().forEach(PulsarApi.MessageIdData::recycle);
+                            ack.recycle();
                         }
                         break;
                     case FLOW:
@@ -872,6 +875,7 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
                                         .map(Commands::convertMessageIdData)
                                         .collect(Collectors.toList());
                                 consumer.redeliverUnacknowledgedMessages(messageIdDataList);
+                                messageIdDataList.forEach(PulsarApi.MessageIdData::recycle);
                             } else {
                                 consumer.redeliverUnacknowledgedMessages();
                             }
