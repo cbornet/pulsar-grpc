@@ -58,15 +58,14 @@ import org.apache.pulsar.broker.service.Topic;
 import org.apache.pulsar.broker.service.nonpersistent.NonPersistentTopic;
 import org.apache.pulsar.broker.service.persistent.PersistentTopic;
 import org.apache.pulsar.broker.service.schema.DefaultSchemaRegistryService;
-import org.apache.pulsar.broker.service.schema.LongSchemaVersion;
 import org.apache.pulsar.common.api.proto.PulsarApi;
 import org.apache.pulsar.common.naming.NamespaceName;
 import org.apache.pulsar.common.naming.TopicName;
 import org.apache.pulsar.common.policies.data.AuthAction;
 import org.apache.pulsar.common.policies.data.BacklogQuota;
 import org.apache.pulsar.common.policies.data.Policies;
-import org.apache.pulsar.common.protocol.Commands.ChecksumType;
 import org.apache.pulsar.common.protocol.schema.SchemaData;
+import org.apache.pulsar.common.schema.LongSchemaVersion;
 import org.apache.pulsar.common.schema.SchemaInfo;
 import org.apache.pulsar.common.schema.SchemaType;
 import org.apache.pulsar.protocols.grpc.api.CommandAck.AckType;
@@ -468,7 +467,7 @@ public class PulsarGrpcServiceTest {
                 .build();
         ByteBuf data = Unpooled.buffer(1024);
 
-        CommandSend clientCommand = Commands.newSend(1, 0, 1, ChecksumType.None, messageMetadata, data);
+        CommandSend clientCommand = Commands.newSend(1, 0, 1, messageMetadata, data);
 
         request.onNext(clientCommand);
         SendResult sendReceipt = observer.takeOneMessage();
@@ -917,7 +916,7 @@ public class PulsarGrpcServiceTest {
             .build();
         ByteBuf data = Unpooled.buffer(1024);
 
-        CommandSend send = Commands.newSend(1, 0, 1, ChecksumType.None, messageMetadata, data);
+        CommandSend send = Commands.newSend(1, 0, 1, messageMetadata, data);
         produce.onNext(send);
 
         assertTrue(observer.takeOneMessage().hasSendReceipt());
@@ -956,7 +955,7 @@ public class PulsarGrpcServiceTest {
             .build();
         ByteBuf data = Unpooled.buffer(1024);
 
-        CommandSend send = Commands.newSend(1, 0, 1, ChecksumType.None, messageMetadata, data);
+        CommandSend send = Commands.newSend(1, 0, 1, messageMetadata, data);
         produce.onNext(send);
 
         SendResult sendResult = observer.takeOneMessage();
@@ -1377,7 +1376,7 @@ public class PulsarGrpcServiceTest {
                 .setSequenceId(0)
                 .build();
 
-        CommandSend send = Commands.newSend(1, 0, 1, ChecksumType.None,
+        CommandSend send = Commands.newSend(1, 0, 1,
                 messageMetadata, Unpooled.buffer(1024));
 
         CommandProduceSingle produceSingle = CommandProduceSingle.newBuilder()
@@ -1400,7 +1399,7 @@ public class PulsarGrpcServiceTest {
                 .setSequenceId(0)
                 .build();
 
-        CommandSend send = Commands.newSend(1, 0, 1, ChecksumType.None,
+        CommandSend send = Commands.newSend(1, 0, 1,
                 messageMetadata, Unpooled.buffer(1024));
 
         CommandProduceSingle produceSingle = CommandProduceSingle.newBuilder()
@@ -1437,7 +1436,7 @@ public class PulsarGrpcServiceTest {
                 .setSequenceId(0)
                 .build();
 
-        CommandSend send = Commands.newSend(1, 0, 1, ChecksumType.None,
+        CommandSend send = Commands.newSend(1, 0, 1,
                 messageMetadata, Unpooled.buffer(1024));
 
         CommandProduceSingle produceSingle = CommandProduceSingle.newBuilder()

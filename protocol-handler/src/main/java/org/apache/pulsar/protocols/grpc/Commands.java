@@ -133,19 +133,19 @@ public class Commands {
         return SendResult.newBuilder().setProducerSuccess(producerSuccess).build();
     }
 
-    public static CommandSend newSend(long sequenceId, int numMessages, ChecksumType checksumType,
+    public static CommandSend newSend(long sequenceId, int numMessages,
             MessageMetadata messageMetadata, ByteBuf payload) {
-        return newSend(sequenceId, numMessages, 0, 0, checksumType, messageMetadata, payload);
+        return newSend(sequenceId, numMessages, 0, 0, messageMetadata, payload);
     }
 
     public static CommandSend newSend(long lowestSequenceId, long highestSequenceId, int numMessages,
-            ChecksumType checksumType, MessageMetadata messageMetadata, ByteBuf payload) {
+            MessageMetadata messageMetadata, ByteBuf payload) {
         return newSend(lowestSequenceId, highestSequenceId, numMessages, 0, 0,
-                checksumType, messageMetadata, payload);
+                messageMetadata, payload);
     }
 
     public static CommandSend newSend(long sequenceId, int numMessages,
-            long txnIdLeastBits, long txnIdMostBits, ChecksumType checksumType,
+            long txnIdLeastBits, long txnIdMostBits,
             MessageMetadata messageData, ByteBuf payload) {
         CommandSend.Builder sendBuilder = CommandSend.newBuilder();
         sendBuilder.setSequenceId(sequenceId);
@@ -158,15 +158,16 @@ public class Commands {
         if (txnIdMostBits > 0) {
             sendBuilder.setTxnidMostBits(txnIdMostBits);
         }
-        ByteBuf headersAndPayloadByteBuf = serializeMetadataAndPayload(checksumType, messageData, payload);
+        ByteBuf headersAndPayloadByteBuf = serializeMetadataAndPayload(ChecksumType.Crc32c, messageData, payload);
         ByteString headersAndPayload = copyFrom(headersAndPayloadByteBuf.nioBuffer());
+        headersAndPayloadByteBuf.release();
         sendBuilder.setHeadersAndPayload(headersAndPayload);
 
         return sendBuilder.build();
     }
 
     public static CommandSend newSend(long lowestSequenceId, long highestSequenceId, int numMessages,
-            long txnIdLeastBits, long txnIdMostBits, ChecksumType checksumType,
+            long txnIdLeastBits, long txnIdMostBits,
             MessageMetadata messageData, ByteBuf payload) {
         CommandSend.Builder sendBuilder = CommandSend.newBuilder();
         sendBuilder.setSequenceId(lowestSequenceId);
@@ -180,7 +181,7 @@ public class Commands {
         if (txnIdMostBits > 0) {
             sendBuilder.setTxnidMostBits(txnIdMostBits);
         }
-        ByteBuf headersAndPayloadByteBuf = serializeMetadataAndPayload(checksumType, messageData, payload);
+        ByteBuf headersAndPayloadByteBuf = serializeMetadataAndPayload(ChecksumType.Crc32c, messageData, payload);
         ByteString headersAndPayload = copyFrom(headersAndPayloadByteBuf.nioBuffer());
         sendBuilder.setHeadersAndPayload(headersAndPayload);
 

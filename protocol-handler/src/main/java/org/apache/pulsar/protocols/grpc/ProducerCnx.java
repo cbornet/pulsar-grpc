@@ -18,6 +18,8 @@
  */
 package org.apache.pulsar.protocols.grpc;
 
+import com.google.protobuf.CodedOutputStream;
+import com.scurrilous.circe.checksum.Crc32cIntChecksum;
 import io.grpc.stub.CallStreamObserver;
 import io.grpc.stub.StreamObserver;
 import io.netty.buffer.ByteBuf;
@@ -28,9 +30,14 @@ import org.apache.pulsar.broker.authentication.AuthenticationDataSource;
 import org.apache.pulsar.broker.service.BrokerService;
 import org.apache.pulsar.broker.service.Producer;
 import org.apache.pulsar.broker.service.ServerCnx;
+import org.apache.pulsar.common.allocator.PulsarByteBufAllocator;
 import org.apache.pulsar.protocols.grpc.api.CommandSend;
+import org.apache.pulsar.protocols.grpc.api.MessageMetadata;
 import org.apache.pulsar.protocols.grpc.api.SendResult;
+import org.apache.pulsar.protocols.grpc.api.SingleMessage;
+import org.apache.pulsar.protocols.grpc.api.SingleMessageMetadata;
 
+import java.io.IOException;
 import java.net.SocketAddress;
 import java.nio.ByteBuffer;
 
@@ -115,8 +122,29 @@ public class ProducerCnx implements ServerCnx {
     }
 
     public void handleSend(CommandSend send, Producer producer) {
-        ByteBuffer buffer = send.getHeadersAndPayload().asReadOnlyByteBuffer();
-        ByteBuf headersAndPayload = Unpooled.wrappedBuffer(buffer);
+        ByteBuf headersAndPayload;
+        switch (send.getSendOneofCase()) {
+            case HEADERS_AND_PAYLOAD:
+                ByteBuffer buffer = send.getHeadersAndPayload().asReadOnlyByteBuffer();
+                headersAndPayload = Unpooled.wrappedBuffer(buffer);
+                break;
+            case METADATA_AND_PAYLOAD:
+                MessageMetadata metadata = send.getMetadataAndPayload().getMetadata();
+                ByteBuffer payload = send.getMetadataAndPayload().getPayload().asReadOnlyByteBuffer();
+                headersAndPayload = serializeMetadataAndPayload(metadata, Unpooled.wrappedBuffer(payload));
+                break;
+            case BATCHED_MESSAGES:
+                metadata = send.getBatchedMessages().getMetadata();
+                ByteBuf batchedMessageMetadataAndPayload = PulsarByteBufAllocator.DEFAULT.buffer(1024);
+                send.getBatchedMessages().getMessagesList().forEach(
+                        singleMessage -> serializeSingleMessageInBatchWithPayload(singleMessage, batchedMessageMetadataAndPayload)
+                );
+                // TODO: It should be possible to serialize all at once and avoid a copy
+                headersAndPayload = serializeMetadataAndPayload(metadata, batchedMessageMetadataAndPayload);
+                break;
+            default:
+                return;
+        }
 
         if (producer.isNonPersistentTopic()) {
             // avoid processing non-persist message if reached max concurrent-message limit
@@ -226,4 +254,56 @@ public class ProducerCnx implements ServerCnx {
     public void sendProducerReceipt(long producerId, long sequenceId, long highestSequenceId, long ledgerId, long entryId) {
         responseObserver.onNext(Commands.newSendReceipt(sequenceId, highestSequenceId, ledgerId, entryId));
     }
+
+    private static ByteBuf serializeMetadataAndPayload(MessageMetadata msgMetadata, ByteBuf payload) {
+        int msgMetadataSize = msgMetadata.getSerializedSize();
+        int payloadSize = payload.readableBytes();
+        int headerContentSize = 10 + msgMetadataSize;
+        int checksumReaderIndex;
+        int totalSize = headerContentSize + payloadSize;
+        ByteBuf metadataAndPayload = PulsarByteBufAllocator.DEFAULT.buffer(totalSize, totalSize);
+
+        try {
+            metadataAndPayload.writeShort(3585);
+            checksumReaderIndex = metadataAndPayload.writerIndex();
+            metadataAndPayload.writerIndex(metadataAndPayload.writerIndex() + 4);
+            metadataAndPayload.writeInt(msgMetadataSize);
+            CodedOutputStream outStream = CodedOutputStream.newInstance(
+                    metadataAndPayload.nioBuffer(metadataAndPayload.writerIndex(), metadataAndPayload.writableBytes()));
+            msgMetadata.writeTo(outStream);
+            metadataAndPayload.writerIndex(metadataAndPayload.writerIndex() + msgMetadataSize);
+        } catch (IOException var13) {
+            throw new RuntimeException(var13);
+        }
+
+        metadataAndPayload.markReaderIndex();
+        metadataAndPayload.readerIndex(checksumReaderIndex + 4);
+        int metadataChecksum = Crc32cIntChecksum.computeChecksum(metadataAndPayload);
+        int computedChecksum = Crc32cIntChecksum.resumeChecksum(metadataChecksum, payload);
+        metadataAndPayload.setInt(checksumReaderIndex, computedChecksum);
+        metadataAndPayload.resetReaderIndex();
+
+        metadataAndPayload.writeBytes(payload);
+        return metadataAndPayload;
+    }
+
+    private static ByteBuf serializeSingleMessageInBatchWithPayload(SingleMessage singleMessage, ByteBuf batchBuffer) {
+        SingleMessageMetadata singleMessageMetadata = singleMessage.getMetadata();
+        ByteBuf payload = Unpooled.wrappedBuffer(singleMessage.getPayload().asReadOnlyByteBuffer());
+
+        // serialize meta-data size, meta-data and payload for single message in batch
+        int singleMsgMetadataSize = singleMessageMetadata.getSerializedSize();
+        try {
+            batchBuffer.writeInt(singleMsgMetadataSize);
+            CodedOutputStream outStream = CodedOutputStream.newInstance(
+                    batchBuffer.nioBuffer(batchBuffer.writerIndex(), batchBuffer.writableBytes()));
+            singleMessageMetadata.writeTo(outStream);
+            batchBuffer.writerIndex(batchBuffer.writerIndex() + singleMsgMetadataSize);
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+        return batchBuffer.writeBytes(payload);
+    }
+
+
 }

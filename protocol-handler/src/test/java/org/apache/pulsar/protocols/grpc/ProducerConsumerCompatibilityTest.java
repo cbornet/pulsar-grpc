@@ -1,6 +1,7 @@
 package org.apache.pulsar.protocols.grpc;
 
 import com.google.common.collect.Sets;
+import com.google.protobuf.ByteString;
 import io.grpc.ManagedChannel;
 import io.grpc.netty.NegotiationType;
 import io.grpc.netty.NettyChannelBuilder;
@@ -11,16 +12,15 @@ import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
-import org.apache.pulsar.broker.service.schema.LongSchemaVersion;
 import org.apache.pulsar.client.api.Consumer;
 import org.apache.pulsar.client.api.Message;
 import org.apache.pulsar.client.api.Producer;
 import org.apache.pulsar.client.api.ProducerBuilder;
 import org.apache.pulsar.client.api.ProducerConsumerBase;
-import org.apache.pulsar.client.api.SimpleSchemaTest;
 import org.apache.pulsar.common.api.proto.PulsarApi;
-import org.apache.pulsar.common.protocol.Commands.ChecksumType;
 import org.apache.pulsar.common.protocol.schema.SchemaVersion;
+import org.apache.pulsar.common.schema.LongSchemaVersion;
+import org.apache.pulsar.protocols.grpc.api.BatchedMessages;
 import org.apache.pulsar.protocols.grpc.api.CommandAck.AckType;
 import org.apache.pulsar.protocols.grpc.api.CommandGetLastMessageIdResponse;
 import org.apache.pulsar.protocols.grpc.api.CommandGetOrCreateSchema;
@@ -39,19 +39,21 @@ import org.apache.pulsar.protocols.grpc.api.CommandSubscribe;
 import org.apache.pulsar.protocols.grpc.api.ConsumeInput;
 import org.apache.pulsar.protocols.grpc.api.ConsumeOutput;
 import org.apache.pulsar.protocols.grpc.api.MessageIdData;
+import org.apache.pulsar.protocols.grpc.api.MessageMetadata;
+import org.apache.pulsar.protocols.grpc.api.MetadataAndPayload;
 import org.apache.pulsar.protocols.grpc.api.PulsarGrpc;
 import org.apache.pulsar.protocols.grpc.api.Schema;
 import org.apache.pulsar.protocols.grpc.api.SendResult;
+import org.apache.pulsar.protocols.grpc.api.SingleMessage;
+import org.apache.pulsar.protocols.grpc.api.SingleMessageMetadata;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.testng.annotations.AfterMethod;
 import org.testng.annotations.BeforeMethod;
 import org.testng.annotations.Test;
 
-import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
@@ -177,12 +179,124 @@ public class ProducerConsumerCompatibilityTest extends ProducerConsumerBase {
                     .setSequenceId(0)
                     .build();
             ByteBuf data = Unpooled.wrappedBuffer(message.getBytes());
-            commandSend.onNext(Commands.newSend(i, 1, ChecksumType.Crc32c, messageMetadata, data));
+            commandSend.onNext(Commands.newSend(i, 1, messageMetadata, data));
         }
 
         for (int i = 0; i < 10; i++) {
             assertTrue(sendResult.takeOneMessage().hasSendReceipt());
         }
+
+        commandSend.onCompleted();
+        sendResult.waitForCompletion();
+
+        Message<byte[]> msg = null;
+        Set<String> messageSet = Sets.newHashSet();
+        for (int i = 0; i < 10; i++) {
+            msg = consumer.receive(5, TimeUnit.SECONDS);
+            String receivedMessage = new String(msg.getData());
+            log.debug("Received message: [{}]", receivedMessage);
+            String expectedMessage = "my-message-" + i;
+            testMessageOrderAndDuplicates(messageSet, receivedMessage, expectedMessage);
+        }
+        // Acknowledge the consumption of all messages at once
+        consumer.acknowledgeCumulative(msg);
+        consumer.close();
+        log.info("-- Exiting {} test --", methodName);
+    }
+
+    @Test
+    public void testGrpcProducerAlternativeAndPulsarConsumer() throws Exception {
+        log.info("-- Starting {} test --", methodName);
+
+        Consumer<byte[]> consumer = pulsarClient.newConsumer().topic("persistent://my-property/my-ns/my-topic1")
+                .subscriptionName("my-subscriber-name").subscribe();
+
+        CommandProducer producer = Commands.newProducer("persistent://my-property/my-ns/my-topic1",
+                "test", Collections.emptyMap());
+
+        PulsarGrpc.PulsarStub producerStub = Commands.attachProducerParams(stub, producer);
+        TestStreamObserver<SendResult> sendResult = TestStreamObserver.create();
+        StreamObserver<CommandSend> commandSend = producerStub.produce(sendResult);
+
+        assertTrue(sendResult.takeOneMessage().hasProducerSuccess());
+
+        for (int i = 0; i < 10; i++) {
+            CommandSend.Builder builder = CommandSend.newBuilder()
+                    .setSequenceId(i)
+                    .setMetadataAndPayload(
+                            MetadataAndPayload.newBuilder()
+                                    .setMetadata(MessageMetadata.newBuilder()
+                                            .setPublishTime(System.currentTimeMillis())
+                                            .setProducerName("prod-name")
+                                            .setSequenceId(i))
+                                    .setPayload(ByteString.copyFromUtf8("my-message-" + i)));
+            commandSend.onNext(builder.build());
+        }
+
+        for (int i = 0; i < 10; i++) {
+            assertTrue(sendResult.takeOneMessage().hasSendReceipt());
+        }
+
+        commandSend.onCompleted();
+        sendResult.waitForCompletion();
+
+        Message<byte[]> msg = null;
+        Set<String> messageSet = Sets.newHashSet();
+        for (int i = 0; i < 10; i++) {
+            msg = consumer.receive(5, TimeUnit.SECONDS);
+            String receivedMessage = new String(msg.getData());
+            log.debug("Received message: [{}]", receivedMessage);
+            String expectedMessage = "my-message-" + i;
+            testMessageOrderAndDuplicates(messageSet, receivedMessage, expectedMessage);
+        }
+        // Acknowledge the consumption of all messages at once
+        consumer.acknowledgeCumulative(msg);
+        consumer.close();
+        log.info("-- Exiting {} test --", methodName);
+    }
+
+    @Test
+    public void testGrpcProducerBatchedAndPulsarConsumer() throws Exception {
+        log.info("-- Starting {} test --", methodName);
+
+        Consumer<byte[]> consumer = pulsarClient.newConsumer().topic("persistent://my-property/my-ns/my-topic1")
+                .subscriptionName("my-subscriber-name").subscribe();
+
+        CommandProducer producer = Commands.newProducer("persistent://my-property/my-ns/my-topic1",
+                "test", Collections.emptyMap());
+
+        PulsarGrpc.PulsarStub producerStub = Commands.attachProducerParams(stub, producer);
+        TestStreamObserver<SendResult> sendResult = TestStreamObserver.create();
+        StreamObserver<CommandSend> commandSend = producerStub.produce(sendResult);
+
+        assertTrue(sendResult.takeOneMessage().hasProducerSuccess());
+
+        BatchedMessages.Builder batchedMessagesBuilder = BatchedMessages.newBuilder();
+        for (int i = 0; i < 10; i++) {
+            ByteString message = ByteString.copyFromUtf8("my-message-" + i);
+            SingleMessage.Builder singleMessage = SingleMessage.newBuilder()
+                    .setMetadata(SingleMessageMetadata.newBuilder()
+                            .setSequenceId(i)
+                            .setPayloadSize(message.size()))
+                    .setPayload(message);
+            batchedMessagesBuilder.addMessages(singleMessage);
+        }
+
+        batchedMessagesBuilder.setMetadata(MessageMetadata.newBuilder()
+                .setNumMessagesInBatch(10)
+                .setSequenceId(0)
+                .setPublishTime(System.currentTimeMillis())
+                .setProducerName("prod-name")
+                .setHighestSequenceId(9));
+
+        CommandSend.Builder builder = CommandSend.newBuilder()
+                .setSequenceId(0)
+                .setNumMessages(10)
+                .setHighestSequenceId(9)
+                .setBatchedMessages(batchedMessagesBuilder);
+        commandSend.onNext(builder.build());
+
+        assertTrue(sendResult.takeOneMessage().hasSendReceipt());
 
         commandSend.onCompleted();
         sendResult.waitForCompletion();
