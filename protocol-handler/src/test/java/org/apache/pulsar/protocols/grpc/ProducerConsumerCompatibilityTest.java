@@ -36,6 +36,7 @@ import org.apache.pulsar.protocols.grpc.api.CommandPartitionedTopicMetadataRespo
 import org.apache.pulsar.protocols.grpc.api.CommandProducer;
 import org.apache.pulsar.protocols.grpc.api.CommandSend;
 import org.apache.pulsar.protocols.grpc.api.CommandSubscribe;
+import org.apache.pulsar.protocols.grpc.api.CompressionType;
 import org.apache.pulsar.protocols.grpc.api.ConsumeInput;
 import org.apache.pulsar.protocols.grpc.api.ConsumeOutput;
 import org.apache.pulsar.protocols.grpc.api.MessageIdData;
@@ -283,7 +284,6 @@ public class ProducerConsumerCompatibilityTest extends ProducerConsumerBase {
         }
 
         batchedMessagesBuilder.setMetadata(MessageMetadata.newBuilder()
-                .setNumMessagesInBatch(10)
                 .setSequenceId(0)
                 .setPublishTime(System.currentTimeMillis())
                 .setProducerName("prod-name")
@@ -291,7 +291,66 @@ public class ProducerConsumerCompatibilityTest extends ProducerConsumerBase {
 
         CommandSend.Builder builder = CommandSend.newBuilder()
                 .setSequenceId(0)
-                .setNumMessages(10)
+                .setHighestSequenceId(9)
+                .setBatchedMessages(batchedMessagesBuilder);
+        commandSend.onNext(builder.build());
+
+        assertTrue(sendResult.takeOneMessage().hasSendReceipt());
+
+        commandSend.onCompleted();
+        sendResult.waitForCompletion();
+
+        Message<byte[]> msg = null;
+        Set<String> messageSet = Sets.newHashSet();
+        for (int i = 0; i < 10; i++) {
+            msg = consumer.receive(5, TimeUnit.SECONDS);
+            String receivedMessage = new String(msg.getData());
+            log.debug("Received message: [{}]", receivedMessage);
+            String expectedMessage = "my-message-" + i;
+            testMessageOrderAndDuplicates(messageSet, receivedMessage, expectedMessage);
+        }
+        // Acknowledge the consumption of all messages at once
+        consumer.acknowledgeCumulative(msg);
+        consumer.close();
+        log.info("-- Exiting {} test --", methodName);
+    }
+
+    @Test
+    public void testGrpcProducerBatchedCompressedAndPulsarConsumer() throws Exception {
+        log.info("-- Starting {} test --", methodName);
+
+        Consumer<byte[]> consumer = pulsarClient.newConsumer().topic("persistent://my-property/my-ns/my-topic1")
+                .subscriptionName("my-subscriber-name").subscribe();
+
+        CommandProducer producer = Commands.newProducer("persistent://my-property/my-ns/my-topic1",
+                "test", Collections.emptyMap());
+
+        PulsarGrpc.PulsarStub producerStub = Commands.attachProducerParams(stub, producer);
+        TestStreamObserver<SendResult> sendResult = TestStreamObserver.create();
+        StreamObserver<CommandSend> commandSend = producerStub.produce(sendResult);
+
+        assertTrue(sendResult.takeOneMessage().hasProducerSuccess());
+
+        BatchedMessages.Builder batchedMessagesBuilder = BatchedMessages.newBuilder();
+        for (int i = 0; i < 10; i++) {
+            ByteString message = ByteString.copyFromUtf8("my-message-" + i);
+            SingleMessage.Builder singleMessage = SingleMessage.newBuilder()
+                    .setMetadata(SingleMessageMetadata.newBuilder()
+                            .setSequenceId(i)
+                            .setPayloadSize(message.size()))
+                    .setPayload(message);
+            batchedMessagesBuilder.addMessages(singleMessage);
+        }
+
+        batchedMessagesBuilder.setMetadata(MessageMetadata.newBuilder()
+                .setSequenceId(0)
+                .setPublishTime(System.currentTimeMillis())
+                .setCompression(CompressionType.LZ4)
+                .setProducerName("prod-name")
+                .setHighestSequenceId(9));
+
+        CommandSend.Builder builder = CommandSend.newBuilder()
+                .setSequenceId(0)
                 .setHighestSequenceId(9)
                 .setBatchedMessages(batchedMessagesBuilder);
         commandSend.onNext(builder.build());

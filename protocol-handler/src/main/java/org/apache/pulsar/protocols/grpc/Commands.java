@@ -28,7 +28,6 @@ import org.apache.pulsar.broker.service.Subscription;
 import org.apache.pulsar.client.api.KeySharedPolicy;
 import org.apache.pulsar.client.api.Range;
 import org.apache.pulsar.common.api.proto.PulsarApi;
-import org.apache.pulsar.common.api.proto.PulsarApi.MessageMetadata;
 import org.apache.pulsar.common.policies.data.ConsumerStats;
 import org.apache.pulsar.common.protocol.Commands.ChecksumType;
 import org.apache.pulsar.common.protocol.schema.SchemaVersion;
@@ -77,12 +76,14 @@ import org.apache.pulsar.protocols.grpc.api.CommandSubscribe.SubType;
 import org.apache.pulsar.protocols.grpc.api.CommandSubscribeSuccess;
 import org.apache.pulsar.protocols.grpc.api.CommandSuccess;
 import org.apache.pulsar.protocols.grpc.api.CommandUnsubscribe;
+import org.apache.pulsar.protocols.grpc.api.CompressionType;
 import org.apache.pulsar.protocols.grpc.api.ConsumeInput;
 import org.apache.pulsar.protocols.grpc.api.ConsumeOutput;
 import org.apache.pulsar.protocols.grpc.api.IntRange;
 import org.apache.pulsar.protocols.grpc.api.KeySharedMeta;
 import org.apache.pulsar.protocols.grpc.api.KeySharedMode;
 import org.apache.pulsar.protocols.grpc.api.MessageIdData;
+import org.apache.pulsar.protocols.grpc.api.MessageMetadata;
 import org.apache.pulsar.protocols.grpc.api.PulsarGrpc;
 import org.apache.pulsar.protocols.grpc.api.Schema;
 import org.apache.pulsar.protocols.grpc.api.SendResult;
@@ -134,19 +135,19 @@ public class Commands {
     }
 
     public static CommandSend newSend(long sequenceId, int numMessages,
-            MessageMetadata messageMetadata, ByteBuf payload) {
+            PulsarApi.MessageMetadata messageMetadata, ByteBuf payload) {
         return newSend(sequenceId, numMessages, 0, 0, messageMetadata, payload);
     }
 
     public static CommandSend newSend(long lowestSequenceId, long highestSequenceId, int numMessages,
-            MessageMetadata messageMetadata, ByteBuf payload) {
+            PulsarApi.MessageMetadata messageMetadata, ByteBuf payload) {
         return newSend(lowestSequenceId, highestSequenceId, numMessages, 0, 0,
                 messageMetadata, payload);
     }
 
     public static CommandSend newSend(long sequenceId, int numMessages,
             long txnIdLeastBits, long txnIdMostBits,
-            MessageMetadata messageData, ByteBuf payload) {
+            PulsarApi.MessageMetadata messageData, ByteBuf payload) {
         CommandSend.Builder sendBuilder = CommandSend.newBuilder();
         sendBuilder.setSequenceId(sequenceId);
         if (numMessages > 1) {
@@ -168,7 +169,7 @@ public class Commands {
 
     public static CommandSend newSend(long lowestSequenceId, long highestSequenceId, int numMessages,
             long txnIdLeastBits, long txnIdMostBits,
-            MessageMetadata messageData, ByteBuf payload) {
+            PulsarApi.MessageMetadata messageData, ByteBuf payload) {
         CommandSend.Builder sendBuilder = CommandSend.newBuilder();
         sendBuilder.setSequenceId(lowestSequenceId);
         sendBuilder.setHighestSequenceId(highestSequenceId);
@@ -847,6 +848,26 @@ public class Commands {
                 return PulsarApi.CommandGetTopicsOfNamespace.Mode.ALL;
             default:
                 throw new IllegalStateException("Unexpected GetTopicsOfNamespace mode: " + mode);
+        }
+    }
+
+    public static PulsarApi.CompressionType convertCompressionType(CompressionType type) {
+        if (type == null) {
+            return null;
+        }
+        switch (type) {
+            case NONE:
+                return PulsarApi.CompressionType.NONE;
+            case LZ4:
+                return PulsarApi.CompressionType.LZ4;
+            case ZLIB:
+                return PulsarApi.CompressionType.ZLIB;
+            case ZSTD:
+                return PulsarApi.CompressionType.ZSTD;
+            case SNAPPY:
+                return PulsarApi.CompressionType.SNAPPY;
+            default:
+                throw new IllegalStateException("Unexpected compression type: " + type);
         }
     }
 }

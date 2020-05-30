@@ -31,7 +31,12 @@ import org.apache.pulsar.broker.service.BrokerService;
 import org.apache.pulsar.broker.service.Producer;
 import org.apache.pulsar.broker.service.ServerCnx;
 import org.apache.pulsar.common.allocator.PulsarByteBufAllocator;
+import org.apache.pulsar.common.api.proto.PulsarApi;
+import org.apache.pulsar.common.compression.CompressionCodec;
+import org.apache.pulsar.common.compression.CompressionCodecProvider;
+import org.apache.pulsar.protocols.grpc.api.BatchedMessages;
 import org.apache.pulsar.protocols.grpc.api.CommandSend;
+import org.apache.pulsar.protocols.grpc.api.CompressionType;
 import org.apache.pulsar.protocols.grpc.api.MessageMetadata;
 import org.apache.pulsar.protocols.grpc.api.SendResult;
 import org.apache.pulsar.protocols.grpc.api.SingleMessage;
@@ -40,6 +45,9 @@ import org.apache.pulsar.protocols.grpc.api.SingleMessageMetadata;
 import java.io.IOException;
 import java.net.SocketAddress;
 import java.nio.ByteBuffer;
+import java.util.List;
+
+import static org.apache.pulsar.protocols.grpc.Commands.convertCompressionType;
 
 public class ProducerCnx implements ServerCnx {
     private final BrokerService service;
@@ -123,6 +131,8 @@ public class ProducerCnx implements ServerCnx {
 
     public void handleSend(CommandSend send, Producer producer) {
         ByteBuf headersAndPayload;
+        int numMessages = send.getNumMessages();
+
         switch (send.getSendOneofCase()) {
             case HEADERS_AND_PAYLOAD:
                 ByteBuffer buffer = send.getHeadersAndPayload().asReadOnlyByteBuffer();
@@ -130,17 +140,39 @@ public class ProducerCnx implements ServerCnx {
                 break;
             case METADATA_AND_PAYLOAD:
                 MessageMetadata metadata = send.getMetadataAndPayload().getMetadata();
+                if (metadata.hasNumMessagesInBatch()) {
+                    numMessages = metadata.getNumMessagesInBatch();
+                }
                 ByteBuffer payload = send.getMetadataAndPayload().getPayload().asReadOnlyByteBuffer();
                 headersAndPayload = serializeMetadataAndPayload(metadata, Unpooled.wrappedBuffer(payload));
                 break;
             case BATCHED_MESSAGES:
-                metadata = send.getBatchedMessages().getMetadata();
+                BatchedMessages batchedMessages = send.getBatchedMessages();
+                MessageMetadata.Builder metadataBuilder = batchedMessages.getMetadata().toBuilder();
+                metadata = batchedMessages.getMetadata();
                 ByteBuf batchedMessageMetadataAndPayload = PulsarByteBufAllocator.DEFAULT.buffer(1024);
-                send.getBatchedMessages().getMessagesList().forEach(
+                List<SingleMessage> messages = batchedMessages.getMessagesList();
+                metadataBuilder.setNumMessagesInBatch(messages.size());
+                numMessages = messages.size();
+                messages.forEach(
                         singleMessage -> serializeSingleMessageInBatchWithPayload(singleMessage, batchedMessageMetadataAndPayload)
                 );
-                // TODO: It should be possible to serialize all at once and avoid a copy
-                headersAndPayload = serializeMetadataAndPayload(metadata, batchedMessageMetadataAndPayload);
+                if (metadata.getCompression() != CompressionType.NONE) {
+                    PulsarApi.CompressionType compressionType = convertCompressionType(metadata.getCompression());
+                    CompressionCodec compressor = CompressionCodecProvider.getCompressionCodec(compressionType);
+                    int uncompressedSize = batchedMessageMetadataAndPayload.readableBytes();
+                    ByteBuf compressedPayload = compressor.encode(batchedMessageMetadataAndPayload);
+                    batchedMessageMetadataAndPayload.release();
+                    metadataBuilder.setUncompressedSize(uncompressedSize);
+                    headersAndPayload = serializeMetadataAndPayload(metadataBuilder.build(), compressedPayload);
+                    compressedPayload.release();
+                } else {
+                    // TODO: It should be possible to serialize all at once and avoid a copy
+                    // TODO: Metadata's num_messages_in_batch, sequence_id, highest_sequence_id can be filled from the batch data
+                    // TODO: CommandSend's num_messages_in_batch, sequence_id, highest_sequence_id can be filled from the batch data
+                    headersAndPayload = serializeMetadataAndPayload(metadataBuilder.build(), batchedMessageMetadataAndPayload);
+                    batchedMessageMetadataAndPayload.release();
+                }
                 break;
             default:
                 return;
@@ -155,7 +187,7 @@ public class ProducerCnx implements ServerCnx {
                         producer.getTopic().getName(),
                         SafeRun.safeRun(() -> responseObserver.onNext(Commands.newSendReceipt(sequenceId, highestSequenceId, -1, -1)))
                 );
-                producer.recordMessageDrop(send.getNumMessages());
+                producer.recordMessageDrop(numMessages);
                 return;
             } else {
                 nonPersistentPendingMessages++;
@@ -167,9 +199,9 @@ public class ProducerCnx implements ServerCnx {
         // Persist the message
         if (send.hasHighestSequenceId() && send.getSequenceId() <= send.getHighestSequenceId()) {
             producer.publishMessage(producer.getProducerId(), send.getSequenceId(), send.getHighestSequenceId(),
-                    headersAndPayload, send.getNumMessages());
+                    headersAndPayload, numMessages);
         } else {
-            producer.publishMessage(producer.getProducerId(), send.getSequenceId(), headersAndPayload, send.getNumMessages());
+            producer.publishMessage(producer.getProducerId(), send.getSequenceId(), headersAndPayload, numMessages);
         }
         onMessageHandled();
     }
@@ -288,6 +320,7 @@ public class ProducerCnx implements ServerCnx {
     }
 
     private static ByteBuf serializeSingleMessageInBatchWithPayload(SingleMessage singleMessage, ByteBuf batchBuffer) {
+        // TODO: It should be possible to get the payload size from protobuf and construct the SingleMessageMetadata here
         SingleMessageMetadata singleMessageMetadata = singleMessage.getMetadata();
         ByteBuf payload = Unpooled.wrappedBuffer(singleMessage.getPayload().asReadOnlyByteBuffer());
 

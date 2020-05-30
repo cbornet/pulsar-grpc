@@ -398,7 +398,7 @@ message CommandProducer {
 }
 
 message CommandSend {
-    required uint64 sequence_id         = 1;
+    optional uint64 sequence_id         = 1 [default = 0];
     optional int32 num_messages         = 2 [default = 1];
     optional uint64 txnid_least_bits    = 3 [default = 0];
     optional uint64 txnid_most_bits     = 4 [default = 0];
