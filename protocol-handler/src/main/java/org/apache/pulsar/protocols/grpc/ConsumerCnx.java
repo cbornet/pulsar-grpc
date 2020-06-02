@@ -107,44 +107,34 @@ public class ConsumerCnx implements ServerCnx {
     public CompletableFuture<Void> sendMessagesToConsumer(long consumerId, String topicName, Subscription subscription,
             int partitionIdx, List<Entry> entries, EntryBatchSizes batchSizes, RedeliveryTracker redeliveryTracker) {
         CompletableFuture<Void> writeFuture = new CompletableFuture<>();
-        //ctx.channel().eventLoop().execute(() -> {
-            for (int i = 0; i < entries.size(); i++) {
-                Entry entry = entries.get(i);
-                if (entry == null) {
-                    // Entry was filtered out
-                    continue;
-                }
-
-                MessageIdData.Builder messageIdBuilder = MessageIdData.newBuilder();
-                MessageIdData messageId = messageIdBuilder
-                        .setLedgerId(entry.getLedgerId())
-                        .setEntryId(entry.getEntryId())
-                        .setPartition(partitionIdx)
-                        .build();
-
-                ByteBuf metadataAndPayload = entry.getDataBuffer();
-                // increment ref-count of data and release at the end of process: so, we can get chance to call entry.release
-                //metadataAndPayload.retain();
-                // skip checksum by incrementing reader-index if consumer-client doesn't support checksum verification
-                //if (getRemoteEndpointProtocolVersion() < PulsarApi.ProtocolVersion.v11.getNumber()) {
-                //    org.apache.pulsar.common.protocol.Commands.skipChecksumIfPresent(metadataAndPayload);
-               // }
-
-                if (log.isDebugEnabled()) {
-                    log.debug("[{}-{}] Sending message to consumer, msg id {}-{}", topicName, subscription, entry.getLedgerId(), entry.getEntryId());
-                }
-
-                int redeliveryCount = 0;
-                PositionImpl position = PositionImpl.get(messageId.getLedgerId(), messageId.getEntryId());
-                if (redeliveryTracker.contains(position)) {
-                    redeliveryCount = redeliveryTracker.incrementAndGetRedeliveryCount(position);
-                }
-
-                responseObserver.onNext(Commands.newMessage(messageId, redeliveryCount, metadataAndPayload));
-                //messageId.recycle();
-                //messageIdBuilder.recycle();
-                entry.release();
+        for (int i = 0; i < entries.size(); i++) {
+            Entry entry = entries.get(i);
+            if (entry == null) {
+                // Entry was filtered out
+                continue;
             }
+
+            MessageIdData.Builder messageIdBuilder = MessageIdData.newBuilder();
+            messageIdBuilder
+                    .setLedgerId(entry.getLedgerId())
+                    .setEntryId(entry.getEntryId())
+                    .setPartition(partitionIdx);
+
+            ByteBuf metadataAndPayload = entry.getDataBuffer();
+
+            if (log.isDebugEnabled()) {
+                log.debug("[{}-{}] Sending message to consumer, msg id {}-{}", topicName, subscription, entry.getLedgerId(), entry.getEntryId());
+            }
+
+            int redeliveryCount = 0;
+            PositionImpl position = PositionImpl.get(messageIdBuilder.getLedgerId(), messageIdBuilder.getEntryId());
+            if (redeliveryTracker.contains(position)) {
+                redeliveryCount = redeliveryTracker.incrementAndGetRedeliveryCount(position);
+            }
+
+            responseObserver.onNext(Commands.newMessage(messageIdBuilder, redeliveryCount, metadataAndPayload));
+            entry.release();
+        }
 
             /*final ChannelPromise writePromise = ctx.newPromise().addListener(future -> {
                 if(future.isSuccess()) {
@@ -153,12 +143,12 @@ public class ConsumerCnx implements ServerCnx {
                     writeFuture.completeExceptionally(future.cause());
                 }
             });*/
-            // Use an empty write here so that we can just tie the flush with the write promise for last entry
-            //ctx.writeAndFlush(Unpooled.EMPTY_BUFFER, writePromise);
-            batchSizes.recyle();
+        // Use an empty write here so that we can just tie the flush with the write promise for last entry
+        //ctx.writeAndFlush(Unpooled.EMPTY_BUFFER, writePromise);
+        batchSizes.recyle();
         //});
         writeFuture.complete(null);
-            return writeFuture;
+        return writeFuture;
 
     }
 }

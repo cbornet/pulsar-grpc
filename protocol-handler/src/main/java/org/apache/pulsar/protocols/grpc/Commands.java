@@ -83,11 +83,11 @@ import org.apache.pulsar.protocols.grpc.api.IntRange;
 import org.apache.pulsar.protocols.grpc.api.KeySharedMeta;
 import org.apache.pulsar.protocols.grpc.api.KeySharedMode;
 import org.apache.pulsar.protocols.grpc.api.MessageIdData;
-import org.apache.pulsar.protocols.grpc.api.MessageMetadata;
 import org.apache.pulsar.protocols.grpc.api.PulsarGrpc;
 import org.apache.pulsar.protocols.grpc.api.Schema;
 import org.apache.pulsar.protocols.grpc.api.SendResult;
 import org.apache.pulsar.protocols.grpc.api.ServerError;
+import org.apache.pulsar.protocols.grpc.api.SingleMessageMetadata;
 import org.apache.pulsar.protocols.grpc.api.TxnAction;
 
 import java.util.Collections;
@@ -153,16 +153,10 @@ public class Commands {
         if (numMessages > 1) {
             sendBuilder.setNumMessages(numMessages);
         }
-        if (txnIdLeastBits > 0) {
-            sendBuilder.setTxnidLeastBits(txnIdLeastBits);
-        }
-        if (txnIdMostBits > 0) {
-            sendBuilder.setTxnidMostBits(txnIdMostBits);
-        }
         ByteBuf headersAndPayloadByteBuf = serializeMetadataAndPayload(ChecksumType.Crc32c, messageData, payload);
         ByteString headersAndPayload = copyFrom(headersAndPayloadByteBuf.nioBuffer());
         headersAndPayloadByteBuf.release();
-        sendBuilder.setHeadersAndPayload(headersAndPayload);
+        sendBuilder.setBinaryMetadataAndPayload(headersAndPayload);
 
         return sendBuilder.build();
     }
@@ -176,15 +170,9 @@ public class Commands {
         if (numMessages > 1) {
             sendBuilder.setNumMessages(numMessages);
         }
-        if (txnIdLeastBits > 0) {
-            sendBuilder.setTxnidLeastBits(txnIdLeastBits);
-        }
-        if (txnIdMostBits > 0) {
-            sendBuilder.setTxnidMostBits(txnIdMostBits);
-        }
         ByteBuf headersAndPayloadByteBuf = serializeMetadataAndPayload(ChecksumType.Crc32c, messageData, payload);
         ByteString headersAndPayload = copyFrom(headersAndPayloadByteBuf.nioBuffer());
-        sendBuilder.setHeadersAndPayload(headersAndPayload);
+        sendBuilder.setBinaryMetadataAndPayload(headersAndPayload);
 
         return sendBuilder.build();
     }
@@ -484,10 +472,10 @@ public class Commands {
         return ConsumeOutput.newBuilder().setReachedEndOfTopic(CommandReachedEndOfTopic.newBuilder()).build();
     }
 
-    public static ConsumeOutput newMessage(MessageIdData messageId, int redeliveryCount,
+    public static ConsumeOutput newMessage(MessageIdData.Builder messageIdBuilder, int redeliveryCount,
             ByteBuf metadataAndPayload) {
         CommandMessage.Builder msgBuilder = CommandMessage.newBuilder();
-        msgBuilder.setMessageId(messageId);
+        msgBuilder.setMessageId(messageIdBuilder);
         if (redeliveryCount > 0) {
             msgBuilder.setRedeliveryCount(redeliveryCount);
         }
@@ -750,14 +738,13 @@ public class Commands {
         }
         PulsarApi.KeySharedMeta.Builder builder = PulsarApi.KeySharedMeta.newBuilder()
                 .setKeySharedMode(convertKeySharedMode(meta.getKeySharedMode()));
-        meta.getHashRangesList().stream()
-                .map(intRange -> PulsarApi.IntRange.newBuilder()
-                        .setStart(intRange.getStart())
-                        .setEnd(intRange.getEnd()))
-                .forEach(hashRangeBuilder -> {
-                    builder.addHashRanges(hashRangeBuilder);
-                    hashRangeBuilder.recycle();
-                });
+        for (IntRange intRange : meta.getHashRangesList()) {
+            PulsarApi.IntRange.Builder hashRangeBuilder = PulsarApi.IntRange.newBuilder()
+                    .setStart(intRange.getStart())
+                    .setEnd(intRange.getEnd());
+            builder.addHashRanges(hashRangeBuilder);
+            hashRangeBuilder.recycle();
+        }
         PulsarApi.KeySharedMeta keySharedMeta = builder.build();
         builder.recycle();
         return keySharedMeta;
@@ -802,10 +789,14 @@ public class Commands {
             return null;
         }
         PulsarApi.MessageIdData.Builder builder = PulsarApi.MessageIdData.newBuilder()
-                .setBatchIndex(messageIdData.getBatchIndex())
                 .setEntryId(messageIdData.getEntryId())
-                .setLedgerId(messageIdData.getLedgerId())
-                .setPartition(messageIdData.getPartition());
+                .setLedgerId(messageIdData.getLedgerId());
+        if (messageIdData.hasPartition()) {
+            builder.setPartition(messageIdData.getPartition());
+        }
+        if (messageIdData.hasBatchIndex()) {
+            builder.setBatchIndex(messageIdData.getBatchIndex());
+        }
         PulsarApi.MessageIdData messageIdData_ = builder.build();
         builder.recycle();
         return messageIdData_;
@@ -817,10 +808,16 @@ public class Commands {
         }
         PulsarApi.CommandAck.Builder builder = PulsarApi.CommandAck.newBuilder()
                 .setAckType(convertAckType(ack.getAckType()))
-                .setValidationError(convertValidationError(ack.getValidationError()))
-                .setConsumerId(0L)
-                .setTxnidLeastBits(ack.getTxnidLeastBits())
-                .setTxnidMostBits(ack.getTxnidMostBits());
+                .setConsumerId(0L);
+        if (ack.hasValidationError()) {
+            builder.setValidationError(convertValidationError(ack.getValidationError()));
+        }
+        if (ack.hasTxnidLeastBits()) {
+            builder.setTxnidLeastBits(ack.getTxnidLeastBits());
+        }
+        if (ack.hasTxnidMostBits()) {
+            builder.setTxnidMostBits(ack.getTxnidMostBits());
+        }
         ack.getPropertiesMap().forEach((k,v) -> {
             PulsarApi.KeyLongValue.Builder keyLongValue = PulsarApi.KeyLongValue.newBuilder()
                     .setKey(k)
@@ -828,10 +825,12 @@ public class Commands {
             builder.addProperties(keyLongValue);
             keyLongValue.recycle();
         });
-        ack.getMessageIdList().stream()
-                .map(Commands::convertMessageIdData)
-                .forEach(builder::addMessageId);
+        for (MessageIdData messageIdData : ack.getMessageIdList()) {
+            PulsarApi.MessageIdData idData = convertMessageIdData(messageIdData);
+            builder.addMessageId(idData);
+        }
         PulsarApi.CommandAck ack_ = builder.build();
+        builder.recycle();
         return ack_;
     }
 
@@ -869,5 +868,35 @@ public class Commands {
             default:
                 throw new IllegalStateException("Unexpected compression type: " + type);
         }
+    }
+
+    public static PulsarApi.SingleMessageMetadata.Builder convertSingleMessageMetadata(SingleMessageMetadata messageMetadata) {
+        PulsarApi.SingleMessageMetadata.Builder builder = PulsarApi.SingleMessageMetadata.newBuilder();
+
+        if (messageMetadata.hasPartitionKey()) {
+            builder.setPartitionKey(messageMetadata.getPartitionKey());
+        }
+        if (messageMetadata.hasCompactedOut()) {
+            builder.setCompactedOut(messageMetadata.getCompactedOut());
+        }
+        if (messageMetadata.hasEventTime()) {
+            builder.setEventTime(messageMetadata.getEventTime());
+        }
+        if (messageMetadata.hasPartitionKeyB64Encoded()) {
+            builder.setPartitionKeyB64Encoded(messageMetadata.getPartitionKeyB64Encoded());
+        }
+        if (messageMetadata.hasOrderingKey()) {
+            builder.setOrderingKey(org.apache.pulsar.shaded.com.google.protobuf.v241.ByteString.copyFrom(messageMetadata.getOrderingKey().asReadOnlyByteBuffer()));
+        }
+        if (messageMetadata.hasSequenceId()) {
+            builder.setSequenceId(messageMetadata.getSequenceId());
+        }
+        if (messageMetadata.hasNullValue()) {
+            builder.setNullValue(messageMetadata.getNullValue());
+        }
+        messageMetadata.getPropertiesMap().forEach(
+                (k,v) -> builder.addProperties(PulsarApi.KeyValue.newBuilder().setKey(k).setValue(v))
+        );
+        return builder;
     }
 }
