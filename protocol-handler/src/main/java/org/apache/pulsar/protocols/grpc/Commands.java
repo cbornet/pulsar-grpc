@@ -480,7 +480,7 @@ public class Commands {
             msgBuilder.setRedeliveryCount(redeliveryCount);
         }
         ByteString headersAndPayload = copyFrom(metadataAndPayload.nioBuffer());
-        msgBuilder.setHeadersAndPayload(headersAndPayload);
+        msgBuilder.setBinaryMetadataAndPayload(headersAndPayload);
 
         return ConsumeOutput.newBuilder().setMessage(msgBuilder).build();
     }

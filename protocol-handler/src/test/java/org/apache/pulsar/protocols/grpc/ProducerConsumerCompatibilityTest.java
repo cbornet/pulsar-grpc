@@ -938,7 +938,7 @@ public class ProducerConsumerCompatibilityTest extends ProducerConsumerBase {
     }
 
     private static String getPayload(CommandMessage message) {
-        ByteBuf headersAndPayload = Unpooled.wrappedBuffer(message.getHeadersAndPayload().toByteArray());
+        ByteBuf headersAndPayload = Unpooled.wrappedBuffer(message.getBinaryMetadataAndPayload().toByteArray());
         parseMessageMetadata(headersAndPayload);
         ByteBuf payload = Unpooled.copiedBuffer(headersAndPayload);
         String receivedMessage = new String(payload.array());

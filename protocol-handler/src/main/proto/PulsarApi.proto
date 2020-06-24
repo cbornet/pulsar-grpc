@@ -288,6 +288,13 @@ message KeySharedMeta {
     repeated IntRange hashRanges         = 2;
 }
 
+enum PayloadType {
+    MESSAGES                          = 0;
+    BINARY                            = 1;
+    METADATA_AND_PAYLOAD              = 2;
+    METADATA_AND_PAYLOAD_UNCOMPRESSED = 3;
+}
+
 message CommandSubscribe {
     enum SubType {
         Exclusive  = 0;
@@ -342,6 +349,8 @@ message CommandSubscribe {
     optional uint64 start_message_rollback_duration_sec = 14 [default = 0];
 
     optional KeySharedMeta keySharedMeta = 15;
+
+    optional PayloadType preferedPayloadType = 16 [ default = MESSAGES ];
 }
 
 message CommandPartitionedTopicMetadata {
@@ -408,9 +417,9 @@ message CommandSend {
     oneof send_oneof {
         // Metatada and payload as raw bytes encoded with the Pulsar protocol
         bytes binary_metadata_and_payload       = 4;
-        // Messages are batched and compressed on broker
+        // Metatada and payload in protobuf
         MetadataAndPayload metadata_and_payload = 5;
-        // Messages are batched and compressed on broker
+        // Messages batched and compressed on broker
         Messages messages                       = 6;
     }
 
@@ -444,8 +453,15 @@ message CommandProduceSingle {
 message CommandMessage {
     required MessageIdData message_id  = 1;
     optional uint32 redelivery_count   = 2 [default = 0];
-    // Opaque payload and headers
-    required bytes headers_and_payload = 3;
+
+    oneof send_oneof {
+        // Metatada and payload as raw bytes encoded with the Pulsar protocol
+        bytes binary_metadata_and_payload       = 3;
+        // Metatada and payload in protobuf
+        MetadataAndPayload metadata_and_payload = 4;
+        // Messages batched and compressed on broker
+        Messages messages                       = 5;
+    }
 }
 
 message CommandAck {

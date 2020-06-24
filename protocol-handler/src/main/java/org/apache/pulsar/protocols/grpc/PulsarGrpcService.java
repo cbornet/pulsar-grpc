@@ -31,6 +31,7 @@ import org.apache.bookkeeper.mledger.Position;
 import org.apache.bookkeeper.mledger.impl.ManagedLedgerImpl;
 import org.apache.bookkeeper.mledger.impl.PositionImpl;
 import org.apache.pulsar.broker.ServiceConfiguration;
+import org.apache.pulsar.broker.authentication.AuthenticationDataCommand;
 import org.apache.pulsar.broker.authentication.AuthenticationDataSource;
 import org.apache.pulsar.broker.service.BrokerService;
 import org.apache.pulsar.broker.service.BrokerServiceException;
@@ -50,6 +51,7 @@ import org.apache.pulsar.common.naming.Metadata;
 import org.apache.pulsar.common.naming.NamespaceName;
 import org.apache.pulsar.common.naming.TopicName;
 import org.apache.pulsar.common.policies.data.BacklogQuota;
+import org.apache.pulsar.common.policies.data.TopicOperation;
 import org.apache.pulsar.common.protocol.schema.SchemaData;
 import org.apache.pulsar.common.protocol.schema.SchemaInfoUtil;
 import org.apache.pulsar.common.protocol.schema.SchemaVersion;
@@ -102,6 +104,7 @@ import org.slf4j.LoggerFactory;
 import java.net.SocketAddress;
 import java.util.List;
 import java.util.Map;
+import java.util.NoSuchElementException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicReference;
@@ -189,7 +192,9 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
     public void getSchema(CommandGetSchema commandGetSchema, StreamObserver<CommandGetSchemaResponse> responseObserver) {
         SocketAddress remoteAddress = REMOTE_ADDRESS_CTX_KEY.get();
         if (log.isDebugEnabled()) {
-            log.debug("Received CommandGetSchema call from {}", remoteAddress);
+            log.debug("Received CommandGetSchema call from {}, schemaVersion: {}, topic: {}",
+                    remoteAddress, new String(commandGetSchema.getSchemaVersion().toByteArray()),
+                    commandGetSchema.getTopic());
         }
 
         SchemaVersion schemaVersion = SchemaVersion.Latest;
@@ -523,8 +528,8 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
 
         CompletableFuture<Boolean> authorizationFuture;
         if (service.isAuthorizationEnabled()) {
-            authorizationFuture = service.getAuthorizationService().canProduceAsync(topicName,
-                    originalPrincipal != null ? originalPrincipal : authRole, authenticationData);
+            authorizationFuture = service.getAuthorizationService().allowTopicOperationAsync(topicName,
+                    TopicOperation.PRODUCE, originalPrincipal, authRole, authenticationData);
         } else {
             authorizationFuture = CompletableFuture.completedFuture(true);
         }
@@ -586,16 +591,21 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
                                 log.info("[{}] Cleared producer created after timeout on client side {}",
                                         remoteAddress, producer);
                             }
-                        } catch (BrokerServiceException ise) {
+                        } catch (Exception e) {
                             log.error("[{}] Failed to add producer to topic {}: {}", remoteAddress, topicName,
-                                    ise.getMessage());
-                            responseObserver.onError(newStatusException(Status.FAILED_PRECONDITION, ise,
-                                    convertServerError(BrokerServiceException.getClientErrorCode(ise))));
-                            producerFuture.completeExceptionally(ise);
+                                    e.getMessage());
+                            responseObserver.onError(newStatusException(Status.FAILED_PRECONDITION, e,
+                                    convertServerError(BrokerServiceException.getClientErrorCode(e))));
+                            producerFuture.completeExceptionally(e);
                         }
                     });
                 }).exceptionally(exception -> {
                     Throwable cause = exception.getCause();
+
+                    if (cause instanceof NoSuchElementException) {
+                        cause = new BrokerServiceException.TopicNotFoundException("Topic Not Found.");
+                    }
+
                     if (!(cause instanceof BrokerServiceException.ServiceUnitNotReadyException)) {
                         // Do not print stack traces for expected exceptions
                         log.error("[{}] Failed to create topic {}", remoteAddress, topicName, exception);
@@ -650,7 +660,7 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
     public StreamObserver<ConsumeInput> consume(StreamObserver<ConsumeOutput> responseObserver) {
         final CommandSubscribe subscribe = CONSUMER_PARAMS_CTX_KEY.get();
         final String authRole = AUTH_ROLE_CTX_KEY.get();
-        final AuthenticationDataSource authenticationData = AUTH_DATA_CTX_KEY.get();
+        AuthenticationDataSource authenticationData = AUTH_DATA_CTX_KEY.get();
         final SocketAddress remoteAddress = REMOTE_ADDRESS_CTX_KEY.get();
 
         if (subscribe == null) {
@@ -690,12 +700,18 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
         final boolean forceTopicCreation = subscribe.getForceTopicCreation();
         final KeySharedMeta keySharedMeta = subscribe.hasKeySharedMeta() ? subscribe.getKeySharedMeta() : null;
 
-        ConsumerCnx cnx = new ConsumerCnx(service, remoteAddress, authRole, authenticationData, responseObserver);
+        ConsumerCnx cnx = new ConsumerCnx(service, remoteAddress, authRole, authenticationData, responseObserver,
+                subscribe.getPreferedPayloadType());
 
         CompletableFuture<Boolean> authorizationFuture;
         if (service.isAuthorizationEnabled()) {
-            authorizationFuture = service.getAuthorizationService().canConsumeAsync(topicName,
-                    originalPrincipal != null ? originalPrincipal : authRole, authenticationData, subscriptionName);
+            if (authenticationData == null) {
+                authenticationData = new AuthenticationDataCommand("", subscriptionName);
+            } else {
+                authenticationData.setSubscription(subscriptionName);
+            }
+            authorizationFuture = service.getAuthorizationService().allowTopicOperationAsync(topicName,
+                    TopicOperation.CONSUME, originalPrincipal, authRole, authenticationData);
         } else {
             authorizationFuture = CompletableFuture.completedFuture(true);
         }

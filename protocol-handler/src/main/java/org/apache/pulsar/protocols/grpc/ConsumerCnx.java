@@ -25,13 +25,15 @@ import org.apache.bookkeeper.mledger.impl.PositionImpl;
 import org.apache.pulsar.broker.authentication.AuthenticationDataSource;
 import org.apache.pulsar.broker.service.BrokerService;
 import org.apache.pulsar.broker.service.Consumer;
+import org.apache.pulsar.broker.service.EntryBatchIndexesAcks;
 import org.apache.pulsar.broker.service.EntryBatchSizes;
 import org.apache.pulsar.broker.service.RedeliveryTracker;
-import org.apache.pulsar.broker.service.ServerCnx;
 import org.apache.pulsar.broker.service.Subscription;
+import org.apache.pulsar.broker.service.TransportCnx;
 import org.apache.pulsar.common.api.proto.PulsarApi;
 import org.apache.pulsar.protocols.grpc.api.ConsumeOutput;
 import org.apache.pulsar.protocols.grpc.api.MessageIdData;
+import org.apache.pulsar.protocols.grpc.api.PayloadType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -39,7 +41,7 @@ import java.net.SocketAddress;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 
-public class ConsumerCnx implements ServerCnx {
+public class ConsumerCnx implements TransportCnx {
 
     private static final Logger log = LoggerFactory.getLogger(ConsumerCnx.class);
 
@@ -48,14 +50,16 @@ public class ConsumerCnx implements ServerCnx {
     private final String authRole;
     private final AuthenticationDataSource authenticationData;
     private final StreamObserver<ConsumeOutput> responseObserver;
+    private final PayloadType preferedPayloadType;
 
     public ConsumerCnx(BrokerService service, SocketAddress remoteAddress, String authRole,
-            AuthenticationDataSource authenticationData, StreamObserver<ConsumeOutput> responseObserver) {
+            AuthenticationDataSource authenticationData, StreamObserver<ConsumeOutput> responseObserver, PayloadType preferedPayloadType) {
         this.service = service;
         this.remoteAddress = remoteAddress;
         this.authRole = authRole;
         this.authenticationData = authenticationData;
         this.responseObserver = responseObserver;
+        this.preferedPayloadType = preferedPayloadType;
     }
 
     @Override
@@ -69,7 +73,7 @@ public class ConsumerCnx implements ServerCnx {
     }
 
     @Override
-    public String getRole() {
+    public String getAuthRole() {
         return authRole;
     }
 
@@ -105,7 +109,8 @@ public class ConsumerCnx implements ServerCnx {
 
     @Override
     public CompletableFuture<Void> sendMessagesToConsumer(long consumerId, String topicName, Subscription subscription,
-            int partitionIdx, List<Entry> entries, EntryBatchSizes batchSizes, RedeliveryTracker redeliveryTracker) {
+            int partitionIdx, List<Entry> entries, EntryBatchSizes batchSizes, EntryBatchIndexesAcks batchIndexesAcks,
+            RedeliveryTracker redeliveryTracker) {
         CompletableFuture<Void> writeFuture = new CompletableFuture<>();
         for (int i = 0; i < entries.size(); i++) {
             Entry entry = entries.get(i);
@@ -132,21 +137,16 @@ public class ConsumerCnx implements ServerCnx {
                 redeliveryCount = redeliveryTracker.incrementAndGetRedeliveryCount(position);
             }
 
-            responseObserver.onNext(Commands.newMessage(messageIdBuilder, redeliveryCount, metadataAndPayload));
+            switch (preferedPayloadType) {
+                case BINARY:
+                    responseObserver.onNext(Commands.newMessage(messageIdBuilder, redeliveryCount, metadataAndPayload));
+                default:
+                    responseObserver.onNext(Commands.newMessage(messageIdBuilder, redeliveryCount, metadataAndPayload));
+            }
+
             entry.release();
         }
-
-            /*final ChannelPromise writePromise = ctx.newPromise().addListener(future -> {
-                if(future.isSuccess()) {
-                    writeFuture.complete(null);
-                } else {
-                    writeFuture.completeExceptionally(future.cause());
-                }
-            });*/
-        // Use an empty write here so that we can just tie the flush with the write promise for last entry
-        //ctx.writeAndFlush(Unpooled.EMPTY_BUFFER, writePromise);
         batchSizes.recyle();
-        //});
         writeFuture.complete(null);
         return writeFuture;
 

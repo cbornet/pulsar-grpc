@@ -29,7 +29,7 @@ import org.apache.bookkeeper.mledger.util.SafeRun;
 import org.apache.pulsar.broker.authentication.AuthenticationDataSource;
 import org.apache.pulsar.broker.service.BrokerService;
 import org.apache.pulsar.broker.service.Producer;
-import org.apache.pulsar.broker.service.ServerCnx;
+import org.apache.pulsar.broker.service.TransportCnx;
 import org.apache.pulsar.common.allocator.PulsarByteBufAllocator;
 import org.apache.pulsar.common.api.proto.PulsarApi;
 import org.apache.pulsar.common.compression.CompressionCodec;
@@ -51,17 +51,18 @@ import static org.apache.pulsar.common.protocol.Commands.serializeSingleMessageI
 import static org.apache.pulsar.protocols.grpc.Commands.convertCompressionType;
 import static org.apache.pulsar.protocols.grpc.Commands.convertSingleMessageMetadata;
 
-public class ProducerCnx implements ServerCnx {
+public class ProducerCnx implements TransportCnx {
     private final BrokerService service;
     private final SocketAddress remoteAddress;
     private final String authRole;
     private final AuthenticationDataSource authenticationData;
     private final CallStreamObserver<SendResult> responseObserver;
     private final EventLoop eventLoop;
+    private final boolean preciseDispatcherFlowControl;
 
     // Max number of pending requests per produce RPC
-    private static final int MaxPendingSendRequests = 1000;
-    private static final int ResumeReadsThreshold = MaxPendingSendRequests / 2;
+    private final int maxPendingSendRequests;
+    private final int resumeReadsThreshold;
     private int pendingSendRequest = 0;
     private int nonPersistentPendingMessages = 0;
     private final int MaxNonPersistentPendingMessages;
@@ -76,8 +77,11 @@ public class ProducerCnx implements ServerCnx {
         this.remoteAddress = remoteAddress;
         this.MaxNonPersistentPendingMessages = service.pulsar().getConfiguration()
                 .getMaxConcurrentNonPersistentMessagePerConnection();
+        this.maxPendingSendRequests = service.pulsar().getConfiguration().getMaxPendingPublishRequestsPerConnection();
+        this.resumeReadsThreshold = maxPendingSendRequests / 2;
         this.authRole = authRole;
         this.authenticationData = authenticationData;
+        this.preciseDispatcherFlowControl = service.pulsar().getConfiguration().isPreciseDispatcherFlowControl();
         this.responseObserver = (CallStreamObserver<SendResult>) responseObserver;
         this.responseObserver.disableAutoInboundFlowControl();
         this.responseObserver.setOnReadyHandler(onReadyHandler);
@@ -96,7 +100,7 @@ public class ProducerCnx implements ServerCnx {
     }
 
     @Override
-    public String getRole() {
+    public String getAuthRole() {
         return authRole;
     }
 
@@ -180,7 +184,11 @@ public class ProducerCnx implements ServerCnx {
                 if (!send.hasNumMessages() && metadata.hasNumMessagesInBatch()) {
                     numMessages = metadata.getNumMessagesInBatch();
                 }
-                ByteBuf payload = Unpooled.wrappedBuffer(metadataAndPayload.getPayload().asReadOnlyByteBuffer());
+                // Since https://github.com/apache/pulsar/pull/5390 Pulsar uses the airlift lib to compress which doesn't support
+                // ReadOnlyByteBuffer as input. So we have to make a copy here...
+                // ByteBuf payload = Unpooled.wrappedBuffer(metadataAndPayload.getPayload().asReadOnlyByteBuffer());
+                // TODO: check if JNI compression could be used instead of airlift ?
+                ByteBuf payload = Unpooled.wrappedBuffer(metadataAndPayload.getPayload().toByteArray());
                 if (metadataAndPayload.getCompress() && metadata.getCompression() != CompressionType.NONE) {
                     headersAndPayload = compressAndSerialize(metadata.toBuilder(), payload);
                 } else {
@@ -213,9 +221,9 @@ public class ProducerCnx implements ServerCnx {
         // Persist the message
         if (highestSequenceId != null && sequenceId <= highestSequenceId) {
             producer.publishMessage(producer.getProducerId(), sequenceId, highestSequenceId,
-                    headersAndPayload, numMessages);
+                    headersAndPayload, numMessages, false);
         } else {
-            producer.publishMessage(producer.getProducerId(), sequenceId, headersAndPayload, numMessages);
+            producer.publishMessage(producer.getProducerId(), sequenceId, headersAndPayload, numMessages, false);
         }
         onMessageHandled();
     }
@@ -242,7 +250,7 @@ public class ProducerCnx implements ServerCnx {
 
     private void startSendOperation(Producer producer) {
         boolean isPublishRateExceeded = producer.getTopic().isPublishRateExceeded();
-        if (++pendingSendRequest == MaxPendingSendRequests || isPublishRateExceeded) {
+        if (++pendingSendRequest == maxPendingSendRequests || isPublishRateExceeded) {
             // When the quota of pending send requests is reached, stop reading from channel to cause backpressure on
             // client connection
             isAutoRead = false;
@@ -251,8 +259,13 @@ public class ProducerCnx implements ServerCnx {
     }
 
     @Override
+    public boolean isPreciseDispatcherFlowControl() {
+        return preciseDispatcherFlowControl;
+    }
+
+    @Override
     public void completedSendOperation(boolean isNonPersistentTopic, int msgSize) {
-        if (--pendingSendRequest == ResumeReadsThreshold) {
+        if (--pendingSendRequest == resumeReadsThreshold) {
             // Resume producer
             isAutoRead = true;
             if (responseObserver.isReady()) {
@@ -266,7 +279,7 @@ public class ProducerCnx implements ServerCnx {
 
     @Override
     public void enableCnxAutoRead() {
-        // we can add check (&& pendingSendRequest < MaxPendingSendRequests) here but then it requires
+        // we can add check (&& pendingSendRequest < maxPendingSendRequests) here but then it requires
         // pendingSendRequest to be volatile and it can be expensive while writing. also this will be called on if
         // throttling is enable on the topic. so, avoid pendingSendRequest check will be fine.
         if (!isAutoRead && autoReadDisabledRateLimiting) {
@@ -287,7 +300,6 @@ public class ProducerCnx implements ServerCnx {
             onReadyHandler.wasReady = false;
         }
     }
-
     class AutoReadAwareOnReadyHandler implements Runnable {
         // Guard against spurious onReady() calls caused by a race between onNext() and onReady(). If the transport
         // toggles isReady() from false to true while onNext() is executing, but before onNext() checks isReady(),
@@ -304,6 +316,7 @@ public class ProducerCnx implements ServerCnx {
                 }
             }
         }
+
     }
 
     @Override
