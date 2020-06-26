@@ -28,6 +28,8 @@ import org.apache.pulsar.broker.service.Subscription;
 import org.apache.pulsar.client.api.KeySharedPolicy;
 import org.apache.pulsar.client.api.Range;
 import org.apache.pulsar.common.api.proto.PulsarApi;
+import org.apache.pulsar.common.compression.CompressionCodec;
+import org.apache.pulsar.common.compression.CompressionCodecProvider;
 import org.apache.pulsar.common.policies.data.ConsumerStats;
 import org.apache.pulsar.common.protocol.Commands.ChecksumType;
 import org.apache.pulsar.common.protocol.schema.SchemaVersion;
@@ -79,10 +81,15 @@ import org.apache.pulsar.protocols.grpc.api.CommandUnsubscribe;
 import org.apache.pulsar.protocols.grpc.api.CompressionType;
 import org.apache.pulsar.protocols.grpc.api.ConsumeInput;
 import org.apache.pulsar.protocols.grpc.api.ConsumeOutput;
+import org.apache.pulsar.protocols.grpc.api.EncryptionKeys;
 import org.apache.pulsar.protocols.grpc.api.IntRange;
 import org.apache.pulsar.protocols.grpc.api.KeySharedMeta;
 import org.apache.pulsar.protocols.grpc.api.KeySharedMode;
+import org.apache.pulsar.protocols.grpc.api.KeyValue;
 import org.apache.pulsar.protocols.grpc.api.MessageIdData;
+import org.apache.pulsar.protocols.grpc.api.MessageMetadata;
+import org.apache.pulsar.protocols.grpc.api.MetadataAndPayload;
+import org.apache.pulsar.protocols.grpc.api.PayloadType;
 import org.apache.pulsar.protocols.grpc.api.PulsarGrpc;
 import org.apache.pulsar.protocols.grpc.api.Schema;
 import org.apache.pulsar.protocols.grpc.api.SendResult;
@@ -90,11 +97,12 @@ import org.apache.pulsar.protocols.grpc.api.ServerError;
 import org.apache.pulsar.protocols.grpc.api.SingleMessageMetadata;
 import org.apache.pulsar.protocols.grpc.api.TxnAction;
 
+import java.io.IOException;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 
-import static com.google.protobuf.ByteString.copyFrom;
+import static org.apache.pulsar.common.protocol.Commands.parseMessageMetadata;
 import static org.apache.pulsar.common.protocol.Commands.serializeMetadataAndPayload;
 import static org.apache.pulsar.protocols.grpc.Constants.CONSUMER_PARAMS_METADATA_KEY;
 import static org.apache.pulsar.protocols.grpc.Constants.ERROR_CODE_METADATA_KEY;
@@ -129,7 +137,7 @@ public class Commands {
         CommandProducerSuccess.Builder producerSuccessBuilder = CommandProducerSuccess.newBuilder();
         producerSuccessBuilder.setProducerName(producerName);
         producerSuccessBuilder.setLastSequenceId(lastSequenceId);
-        producerSuccessBuilder.setSchemaVersion(copyFrom(schemaVersion.bytes()));
+        producerSuccessBuilder.setSchemaVersion(ByteString.copyFrom(schemaVersion.bytes()));
         CommandProducerSuccess producerSuccess = producerSuccessBuilder.build();
         return SendResult.newBuilder().setProducerSuccess(producerSuccess).build();
     }
@@ -154,7 +162,7 @@ public class Commands {
             sendBuilder.setNumMessages(numMessages);
         }
         ByteBuf headersAndPayloadByteBuf = serializeMetadataAndPayload(ChecksumType.Crc32c, messageData, payload);
-        ByteString headersAndPayload = copyFrom(headersAndPayloadByteBuf.nioBuffer());
+        ByteString headersAndPayload = ByteString.copyFrom(headersAndPayloadByteBuf.nioBuffer());
         headersAndPayloadByteBuf.release();
         sendBuilder.setBinaryMetadataAndPayload(headersAndPayload);
 
@@ -171,7 +179,7 @@ public class Commands {
             sendBuilder.setNumMessages(numMessages);
         }
         ByteBuf headersAndPayloadByteBuf = serializeMetadataAndPayload(ChecksumType.Crc32c, messageData, payload);
-        ByteString headersAndPayload = copyFrom(headersAndPayloadByteBuf.nioBuffer());
+        ByteString headersAndPayload = ByteString.copyFrom(headersAndPayloadByteBuf.nioBuffer());
         sendBuilder.setBinaryMetadataAndPayload(headersAndPayload);
 
         return sendBuilder.build();
@@ -235,7 +243,7 @@ public class Commands {
     private static Schema getSchema(SchemaInfo schemaInfo) {
         Schema.Builder builder = Schema.newBuilder()
                 .setName(schemaInfo.getName())
-                .setSchemaData(copyFrom(schemaInfo.getSchema()))
+                .setSchemaData(ByteString.copyFrom(schemaInfo.getSchema()))
                 .setType(getSchemaType(schemaInfo.getType()))
                 .putAllProperties(schemaInfo.getProperties());
         return builder.build();
@@ -325,29 +333,38 @@ public class Commands {
         return partitionMetadataResponseBuilder.build();
     }
 
-    public static CommandSubscribe newSubscribe(String topic, String subscription, 
+    public static CommandSubscribe newSubscribe(String topic, String subscription,
             SubType subType, int priorityLevel, String consumerName, long resetStartMessageBackInSeconds) {
         return newSubscribe(topic, subscription, subType, priorityLevel, consumerName,
                 true /* isDurable */, null /* startMessageId */, Collections.emptyMap(), false,
                 false /* isReplicated */, InitialPosition.Earliest, resetStartMessageBackInSeconds, null,
-                true /* createTopicIfDoesNotExist */);
+                true /* createTopicIfDoesNotExist */, null);
+    }
+
+    public static CommandSubscribe newSubscribe(String topic, String subscription, 
+            SubType subType, int priorityLevel, String consumerName, long resetStartMessageBackInSeconds,
+            PayloadType payloadType) {
+        return newSubscribe(topic, subscription, subType, priorityLevel, consumerName,
+                true /* isDurable */, null /* startMessageId */, Collections.emptyMap(), false,
+                false /* isReplicated */, InitialPosition.Earliest, resetStartMessageBackInSeconds, null,
+                true /* createTopicIfDoesNotExist */, payloadType);
     }
 
     public static CommandSubscribe newSubscribe(String topic, String subscription, 
             SubType subType, int priorityLevel, String consumerName, boolean isDurable, MessageIdData startMessageId,
             Map<String, String> metadata, boolean readCompacted, boolean isReplicated,
             InitialPosition subscriptionInitialPosition, long startMessageRollbackDurationInSec, SchemaInfo schemaInfo,
-            boolean createTopicIfDoesNotExist) {
+            boolean createTopicIfDoesNotExist, PayloadType payloadType) {
         return newSubscribe(topic, subscription, subType, priorityLevel, consumerName,
                 isDurable, startMessageId, metadata, readCompacted, isReplicated, subscriptionInitialPosition,
-                startMessageRollbackDurationInSec, schemaInfo, createTopicIfDoesNotExist, null);
+                startMessageRollbackDurationInSec, schemaInfo, createTopicIfDoesNotExist, null, payloadType);
     }
 
     public static CommandSubscribe newSubscribe(String topic, String subscription, 
             SubType subType, int priorityLevel, String consumerName, boolean isDurable, MessageIdData startMessageId,
             Map<String, String> metadata, boolean readCompacted, boolean isReplicated,
             InitialPosition subscriptionInitialPosition, long startMessageRollbackDurationInSec,
-            SchemaInfo schemaInfo, boolean createTopicIfDoesNotExist, KeySharedPolicy keySharedPolicy) {
+            SchemaInfo schemaInfo, boolean createTopicIfDoesNotExist, KeySharedPolicy keySharedPolicy, PayloadType payloadType) {
         CommandSubscribe.Builder subscribeBuilder = CommandSubscribe.newBuilder();
         subscribeBuilder.setTopic(topic);
         subscribeBuilder.setSubscription(subscription);
@@ -393,6 +410,10 @@ public class Commands {
         if (schemaInfo != null) {
             schema = getSchema(schemaInfo);
             subscribeBuilder.setSchema(schema);
+        }
+
+        if (payloadType != null) {
+            subscribeBuilder.setPreferedPayloadType(payloadType);
         }
 
         return subscribeBuilder.build();
@@ -473,15 +494,40 @@ public class Commands {
     }
 
     public static ConsumeOutput newMessage(MessageIdData.Builder messageIdBuilder, int redeliveryCount,
-            ByteBuf metadataAndPayload) {
+            ByteBuf metadataAndPayload, PayloadType preferedPayloadType) throws IOException {
         CommandMessage.Builder msgBuilder = CommandMessage.newBuilder();
         msgBuilder.setMessageId(messageIdBuilder);
         if (redeliveryCount > 0) {
             msgBuilder.setRedeliveryCount(redeliveryCount);
         }
-        ByteString headersAndPayload = copyFrom(metadataAndPayload.nioBuffer());
-        msgBuilder.setBinaryMetadataAndPayload(headersAndPayload);
-
+        switch (preferedPayloadType) {
+            case BINARY:
+                ByteString headersAndPayload = ByteString.copyFrom(metadataAndPayload.nioBuffer());
+                msgBuilder.setBinaryMetadataAndPayload(headersAndPayload);
+                break;
+            case METADATA_AND_PAYLOAD:
+            case METADATA_AND_PAYLOAD_UNCOMPRESSED:
+                ByteBuf uncompressedPayload = metadataAndPayload;
+                PulsarApi.MessageMetadata metadata = parseMessageMetadata(metadataAndPayload);
+                if (preferedPayloadType == PayloadType.METADATA_AND_PAYLOAD_UNCOMPRESSED
+                        && metadata.getCompression() != PulsarApi.CompressionType.NONE) {
+                    CompressionCodec compressor = CompressionCodecProvider.getCompressionCodec(metadata.getCompression());
+                    uncompressedPayload = compressor.decode(metadataAndPayload, metadata.getUncompressedSize());
+                }
+                MetadataAndPayload.Builder metadataBuilder = MetadataAndPayload.newBuilder()
+                        .setMetadata(convertMessageMetadata(metadata))
+                        .setPayload(ByteString.copyFrom(uncompressedPayload.nioBuffer()));
+                msgBuilder.setMetadataAndPayload(metadataBuilder);
+                break;
+            case MESSAGES:
+                uncompressedPayload = metadataAndPayload;
+                metadata = parseMessageMetadata(metadataAndPayload);
+                if (metadata.getCompression() != PulsarApi.CompressionType.NONE) {
+                    CompressionCodec compressor = CompressionCodecProvider.getCompressionCodec(metadata.getCompression());
+                    uncompressedPayload = compressor.decode(metadataAndPayload, metadata.getUncompressedSize());
+                }
+                break;
+        }
         return ConsumeOutput.newBuilder().setMessage(msgBuilder).build();
     }
 
@@ -870,6 +916,26 @@ public class Commands {
         }
     }
 
+    public static CompressionType convertCompressionType(PulsarApi.CompressionType type) {
+        if (type == null) {
+            return null;
+        }
+        switch (type) {
+            case NONE:
+                return CompressionType.NONE;
+            case LZ4:
+                return CompressionType.LZ4;
+            case ZLIB:
+                return CompressionType.ZLIB;
+            case ZSTD:
+                return CompressionType.ZSTD;
+            case SNAPPY:
+                return CompressionType.SNAPPY;
+            default:
+                throw new IllegalStateException("Unexpected compression type: " + type);
+        }
+    }
+
     public static PulsarApi.SingleMessageMetadata.Builder convertSingleMessageMetadata(SingleMessageMetadata messageMetadata) {
         PulsarApi.SingleMessageMetadata.Builder builder = PulsarApi.SingleMessageMetadata.newBuilder();
 
@@ -898,5 +964,86 @@ public class Commands {
                 (k,v) -> builder.addProperties(PulsarApi.KeyValue.newBuilder().setKey(k).setValue(v))
         );
         return builder;
+    }
+
+    public static KeyValue convertKeyValue(PulsarApi.KeyValue keyValue) {
+        return KeyValue.newBuilder()
+                .setKey(keyValue.getKey())
+                .setValue(keyValue.getValue())
+                .build();
+    }
+
+    public static EncryptionKeys convertEncryptionKeys(PulsarApi.EncryptionKeys keys) {
+        EncryptionKeys.Builder builder = EncryptionKeys.newBuilder()
+                .setKey(keys.getKey())
+                .setValue(ByteString.copyFrom(keys.getValue().asReadOnlyByteBuffer()));
+        keys.getMetadataList().forEach(keyValue -> builder.addMetadata(convertKeyValue(keyValue)));
+        return builder.build();
+    }
+
+    public static MessageMetadata convertMessageMetadata(PulsarApi.MessageMetadata metadata) {
+        MessageMetadata.Builder builder = MessageMetadata.newBuilder()
+                .setProducerName(metadata.getProducerName())
+                .setSequenceId(metadata.getSequenceId())
+                .setPublishTime(metadata.getPublishTime());
+        metadata.getPropertiesList().forEach(
+                property -> builder.addProperties(convertKeyValue(property))
+        );
+        if (metadata.hasReplicatedFrom()) {
+            builder.setReplicatedFrom(metadata.getReplicatedFrom());
+        }
+        if (metadata.hasPartitionKey()) {
+            builder.setPartitionKey(metadata.getPartitionKey());
+        }
+        metadata.getReplicateToList().forEach(builder::addReplicateTo);
+        if (metadata.hasCompression()) {
+            builder.setCompression(convertCompressionType(metadata.getCompression()));
+        }
+        if (metadata.hasUncompressedSize()) {
+            builder.setUncompressedSize(metadata.getUncompressedSize());
+        }
+        if (metadata.hasNumMessagesInBatch()) {
+            builder.setNumMessagesInBatch(metadata.getNumMessagesInBatch());
+        }
+        if (metadata.hasEventTime()) {
+            builder.setEventTime(metadata.getEventTime());
+        }
+        metadata.getEncryptionKeysList().forEach(
+                key -> builder.addEncryptionKeys(convertEncryptionKeys(key))
+        );
+        if (metadata.hasEncryptionAlgo()) {
+            builder.setEncryptionAlgo(metadata.getEncryptionAlgo());
+        }
+        if (metadata.hasEncryptionParam()) {
+            builder.setEncryptionParam(ByteString.copyFrom(metadata.getEncryptionParam().asReadOnlyByteBuffer()));
+        }
+        if (metadata.hasSchemaVersion()) {
+            builder.setSchemaVersion(ByteString.copyFrom(metadata.getSchemaVersion().asReadOnlyByteBuffer()));
+        }
+        if (metadata.hasPartitionKeyB64Encoded()) {
+            builder.setPartitionKeyB64Encoded(metadata.getPartitionKeyB64Encoded());
+        }
+        if (metadata.hasOrderingKey()) {
+            builder.setOrderingKey(ByteString.copyFrom(metadata.getOrderingKey().asReadOnlyByteBuffer()));
+        }
+        if (metadata.hasDeliverAtTime()) {
+            builder.setDeliverAtTime(metadata.getDeliverAtTime());
+        }
+        if (metadata.hasMarkerType()) {
+            builder.setMarkerType(metadata.getMarkerType());
+        }
+        if (metadata.hasTxnidLeastBits()) {
+            builder.setTxnidLeastBits(metadata.getTxnidLeastBits());
+        }
+        if (metadata.hasTxnidMostBits()) {
+            builder.setTxnidMostBits(metadata.getTxnidMostBits());
+        }
+        if (metadata.hasHighestSequenceId()) {
+            builder.setHighestSequenceId(metadata.getHighestSequenceId());
+        }
+        if (metadata.hasNullValue()) {
+            builder.setNullValue(metadata.getNullValue());
+        }
+        return builder.build();
     }
 }

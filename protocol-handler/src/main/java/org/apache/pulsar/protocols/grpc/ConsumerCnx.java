@@ -37,6 +37,7 @@ import org.apache.pulsar.protocols.grpc.api.PayloadType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.IOException;
 import java.net.SocketAddress;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
@@ -137,11 +138,10 @@ public class ConsumerCnx implements TransportCnx {
                 redeliveryCount = redeliveryTracker.incrementAndGetRedeliveryCount(position);
             }
 
-            switch (preferedPayloadType) {
-                case BINARY:
-                    responseObserver.onNext(Commands.newMessage(messageIdBuilder, redeliveryCount, metadataAndPayload));
-                default:
-                    responseObserver.onNext(Commands.newMessage(messageIdBuilder, redeliveryCount, metadataAndPayload));
+            try {
+                responseObserver.onNext(Commands.newMessage(messageIdBuilder, redeliveryCount, metadataAndPayload, preferedPayloadType));
+            } catch (IOException e) {
+                log.error("Couldn't send message", e);
             }
 
             entry.release();

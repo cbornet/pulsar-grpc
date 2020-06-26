@@ -42,6 +42,7 @@ import org.apache.pulsar.protocols.grpc.api.MessageIdData;
 import org.apache.pulsar.protocols.grpc.api.MessageMetadata;
 import org.apache.pulsar.protocols.grpc.api.Messages;
 import org.apache.pulsar.protocols.grpc.api.MetadataAndPayload;
+import org.apache.pulsar.protocols.grpc.api.PayloadType;
 import org.apache.pulsar.protocols.grpc.api.PulsarGrpc;
 import org.apache.pulsar.protocols.grpc.api.Schema;
 import org.apache.pulsar.protocols.grpc.api.SendResult;
@@ -108,7 +109,7 @@ public class ProducerConsumerCompatibilityTest extends ProducerConsumerBase {
     }
 
     @Test
-    public void testPulsarProducerAndGrpcConsumer() throws Exception {
+    public void testPulsarProducerAndGrpcBinaryConsumer() throws Exception {
         log.info("-- Starting {} test --", methodName);
 
         // Lookup
@@ -118,7 +119,7 @@ public class ProducerConsumerCompatibilityTest extends ProducerConsumerBase {
         // Subscribe
         CommandSubscribe subscribe = Commands.newSubscribe("persistent://my-property/my-ns/my-topic1",
                 "my-subscriber-name", CommandSubscribe.SubType.Exclusive, 0,
-                "test" , 0);
+                "test" , 0, PayloadType.BINARY);
         PulsarGrpc.PulsarStub consumerStub = Commands.attachConsumerParams(stub, subscribe);
 
         TestStreamObserver<ConsumeOutput> consumeOutput = TestStreamObserver.create();
@@ -131,6 +132,106 @@ public class ProducerConsumerCompatibilityTest extends ProducerConsumerBase {
 
         ProducerBuilder<byte[]> producerBuilder = pulsarClient.newProducer()
                 .enableBatching(false)
+                .topic("persistent://my-property/my-ns/my-topic1");
+
+        Producer<byte[]> producer = producerBuilder.create();
+        for (int i = 0; i < 10; i++) {
+            String message = "my-message-" + i;
+            producer.send(message.getBytes());
+        }
+
+        CommandMessage message = null;
+        Set<String> messageSet = Sets.newHashSet();
+        for (int i = 0; i < 10; i++) {
+            message = consumeOutput.takeOneMessage().getMessage();
+            ByteBuf headersAndPayload = Unpooled.wrappedBuffer(message.getBinaryMetadataAndPayload().toByteArray());
+            parseMessageMetadata(headersAndPayload);
+            ByteBuf payload = Unpooled.copiedBuffer(headersAndPayload);
+            String receivedMessage = new String(payload.array());
+            String expectedMessage = "my-message-" + i;
+            testMessageOrderAndDuplicates(messageSet, receivedMessage, expectedMessage);
+        }
+        // Acknowledge the consumption of all messages at once
+        consumeInput.onNext(Commands.newAck(message.getMessageId(), AckType.Cumulative));
+        Thread.sleep(100);
+        consumeInput.onCompleted();
+        consumeOutput.waitForCompletion();
+        log.info("-- Exiting {} test --", methodName);
+    }
+
+    @Test
+    public void testPulsarProducerAndGrpcMetadataAndPayloadConsumer() throws Exception {
+        log.info("-- Starting {} test --", methodName);
+
+        // Lookup
+        PulsarGrpc.PulsarBlockingStub blockingStub = PulsarGrpc.newBlockingStub(channel);
+        blockingStub.lookupTopic(Commands.newLookup("persistent://my-property/my-ns/my-topic1", false));
+
+        // Subscribe
+        CommandSubscribe subscribe = Commands.newSubscribe("persistent://my-property/my-ns/my-topic1",
+                "my-subscriber-name", CommandSubscribe.SubType.Exclusive, 0,
+                "test" , 0, PayloadType.METADATA_AND_PAYLOAD);
+        PulsarGrpc.PulsarStub consumerStub = Commands.attachConsumerParams(stub, subscribe);
+
+        TestStreamObserver<ConsumeOutput> consumeOutput = TestStreamObserver.create();
+        StreamObserver<ConsumeInput> consumeInput = consumerStub.consume(consumeOutput);
+
+        assertTrue(consumeOutput.takeOneMessage().hasSubscribeSuccess());
+
+        // Send flow permits
+        consumeInput.onNext(Commands.newFlow(100));
+
+        ProducerBuilder<byte[]> producerBuilder = pulsarClient.newProducer()
+                .enableBatching(false)
+                .topic("persistent://my-property/my-ns/my-topic1");
+
+        Producer<byte[]> producer = producerBuilder.create();
+        for (int i = 0; i < 10; i++) {
+            String message = "my-message-" + i;
+            producer.send(message.getBytes());
+        }
+
+        CommandMessage message = null;
+        Set<String> messageSet = Sets.newHashSet();
+        for (int i = 0; i < 10; i++) {
+            message = consumeOutput.takeOneMessage().getMessage();
+            String receivedMessage = getPayload(message);
+            String expectedMessage = "my-message-" + i;
+            testMessageOrderAndDuplicates(messageSet, receivedMessage, expectedMessage);
+        }
+        // Acknowledge the consumption of all messages at once
+        consumeInput.onNext(Commands.newAck(message.getMessageId(), AckType.Cumulative));
+        Thread.sleep(100);
+        consumeInput.onCompleted();
+        consumeOutput.waitForCompletion();
+        log.info("-- Exiting {} test --", methodName);
+    }
+
+    @Test
+    public void testPulsarProducerAndGrpcMetadataAndPayloadUncompressedConsumer() throws Exception {
+        log.info("-- Starting {} test --", methodName);
+
+        // Lookup
+        PulsarGrpc.PulsarBlockingStub blockingStub = PulsarGrpc.newBlockingStub(channel);
+        blockingStub.lookupTopic(Commands.newLookup("persistent://my-property/my-ns/my-topic1", false));
+
+        // Subscribe
+        CommandSubscribe subscribe = Commands.newSubscribe("persistent://my-property/my-ns/my-topic1",
+                "my-subscriber-name", CommandSubscribe.SubType.Exclusive, 0,
+                "test" , 0, PayloadType.METADATA_AND_PAYLOAD_UNCOMPRESSED);
+        PulsarGrpc.PulsarStub consumerStub = Commands.attachConsumerParams(stub, subscribe);
+
+        TestStreamObserver<ConsumeOutput> consumeOutput = TestStreamObserver.create();
+        StreamObserver<ConsumeInput> consumeInput = consumerStub.consume(consumeOutput);
+
+        assertTrue(consumeOutput.takeOneMessage().hasSubscribeSuccess());
+
+        // Send flow permits
+        consumeInput.onNext(Commands.newFlow(100));
+
+        ProducerBuilder<byte[]> producerBuilder = pulsarClient.newProducer()
+                .enableBatching(false)
+                .compressionType(org.apache.pulsar.client.api.CompressionType.LZ4)
                 .topic("persistent://my-property/my-ns/my-topic1");
 
         Producer<byte[]> producer = producerBuilder.create();
@@ -938,10 +1039,7 @@ public class ProducerConsumerCompatibilityTest extends ProducerConsumerBase {
     }
 
     private static String getPayload(CommandMessage message) {
-        ByteBuf headersAndPayload = Unpooled.wrappedBuffer(message.getBinaryMetadataAndPayload().toByteArray());
-        parseMessageMetadata(headersAndPayload);
-        ByteBuf payload = Unpooled.copiedBuffer(headersAndPayload);
-        String receivedMessage = new String(payload.array());
+        String receivedMessage = new String(message.getMetadataAndPayload().getPayload().toByteArray());
         log.info("Received message: [{}]", receivedMessage);
         return receivedMessage;
     }
