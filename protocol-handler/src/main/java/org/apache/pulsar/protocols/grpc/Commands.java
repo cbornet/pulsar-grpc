@@ -24,6 +24,7 @@ import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import io.grpc.stub.MetadataUtils;
 import io.netty.buffer.ByteBuf;
+import io.netty.buffer.ByteBufInputStream;
 import org.apache.pulsar.broker.service.Subscription;
 import org.apache.pulsar.client.api.KeySharedPolicy;
 import org.apache.pulsar.client.api.Range;
@@ -35,6 +36,7 @@ import org.apache.pulsar.common.protocol.Commands.ChecksumType;
 import org.apache.pulsar.common.protocol.schema.SchemaVersion;
 import org.apache.pulsar.common.schema.SchemaInfo;
 import org.apache.pulsar.common.schema.SchemaType;
+import org.apache.pulsar.common.util.protobuf.ByteBufCodedInputStream;
 import org.apache.pulsar.protocols.grpc.api.AuthData;
 import org.apache.pulsar.protocols.grpc.api.CommandAck;
 import org.apache.pulsar.protocols.grpc.api.CommandAck.AckType;
@@ -88,12 +90,14 @@ import org.apache.pulsar.protocols.grpc.api.KeySharedMode;
 import org.apache.pulsar.protocols.grpc.api.KeyValue;
 import org.apache.pulsar.protocols.grpc.api.MessageIdData;
 import org.apache.pulsar.protocols.grpc.api.MessageMetadata;
+import org.apache.pulsar.protocols.grpc.api.Messages;
 import org.apache.pulsar.protocols.grpc.api.MetadataAndPayload;
 import org.apache.pulsar.protocols.grpc.api.PayloadType;
 import org.apache.pulsar.protocols.grpc.api.PulsarGrpc;
 import org.apache.pulsar.protocols.grpc.api.Schema;
 import org.apache.pulsar.protocols.grpc.api.SendResult;
 import org.apache.pulsar.protocols.grpc.api.ServerError;
+import org.apache.pulsar.protocols.grpc.api.SingleMessage;
 import org.apache.pulsar.protocols.grpc.api.SingleMessageMetadata;
 import org.apache.pulsar.protocols.grpc.api.TxnAction;
 
@@ -102,13 +106,14 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 
-import static org.apache.pulsar.common.protocol.Commands.parseMessageMetadata;
 import static org.apache.pulsar.common.protocol.Commands.serializeMetadataAndPayload;
 import static org.apache.pulsar.protocols.grpc.Constants.CONSUMER_PARAMS_METADATA_KEY;
 import static org.apache.pulsar.protocols.grpc.Constants.ERROR_CODE_METADATA_KEY;
 import static org.apache.pulsar.protocols.grpc.Constants.PRODUCER_PARAMS_METADATA_KEY;
 
 public class Commands {
+
+    public static final short MAGIC_CRC_32_C = 0x0e01;
 
     public static StatusRuntimeException newStatusException(Status status, String message, Throwable exception, ServerError code) {
         Metadata metadata  = new Metadata();
@@ -500,35 +505,121 @@ public class Commands {
         if (redeliveryCount > 0) {
             msgBuilder.setRedeliveryCount(redeliveryCount);
         }
-        switch (preferedPayloadType) {
-            case BINARY:
-                ByteString headersAndPayload = ByteString.copyFrom(metadataAndPayload.nioBuffer());
-                msgBuilder.setBinaryMetadataAndPayload(headersAndPayload);
-                break;
-            case METADATA_AND_PAYLOAD:
-            case METADATA_AND_PAYLOAD_UNCOMPRESSED:
-                ByteBuf uncompressedPayload = metadataAndPayload;
-                PulsarApi.MessageMetadata metadata = parseMessageMetadata(metadataAndPayload);
-                if (preferedPayloadType == PayloadType.METADATA_AND_PAYLOAD_UNCOMPRESSED
-                        && metadata.getCompression() != PulsarApi.CompressionType.NONE) {
-                    CompressionCodec compressor = CompressionCodecProvider.getCompressionCodec(metadata.getCompression());
-                    uncompressedPayload = compressor.decode(metadataAndPayload, metadata.getUncompressedSize());
+        if (preferedPayloadType == PayloadType.BINARY) {
+            ByteString headersAndPayload = ByteString.copyFrom(metadataAndPayload.nioBuffer());
+            msgBuilder.setBinaryMetadataAndPayload(headersAndPayload);
+        } else {
+            // TODO: parse directly to gRPC's MessageMetadata (see SingleMessageMetadata for reference)
+            MessageMetadata metadata = parseMessageMetadata(metadataAndPayload);
+            ByteBuf uncompressedPayload = metadataAndPayload;
+            if (preferedPayloadType != PayloadType.METADATA_AND_PAYLOAD
+                    && metadata.getCompression() != CompressionType.NONE
+                    && metadata.getEncryptionKeysCount() == 0) {
+                CompressionCodec compressor = CompressionCodecProvider.getCompressionCodec(convertCompressionType(metadata.getCompression()));
+                uncompressedPayload = compressor.decode(metadataAndPayload, metadata.getUncompressedSize());
+            }
+            if (preferedPayloadType == PayloadType.MESSAGES && metadata.getEncryptionKeysCount() == 0) {
+                int batchSize = metadata.getNumMessagesInBatch();
+                Messages.Builder messagesBuilder = Messages.newBuilder()
+                        .setMetadata(metadata);
+                for (int i = 0; i < batchSize; ++i) {
+                    //if (log.isDebugEnabled()) {
+                    //    log.debug("[{}] [{}] processing message num - {} in batch", subscription, consumerName, i);
+                    //}
+                    SingleMessageMetadata.Builder singleMessageMetadataBuilder = SingleMessageMetadata
+                            .newBuilder();
+                    ByteString singleMessagePayload;
+                    if (metadata.hasNumMessagesInBatch()) {
+                        singleMessagePayload = deSerializeSingleMessageInBatch(uncompressedPayload,
+                                singleMessageMetadataBuilder, i, batchSize);
+                    } else {
+                        singleMessagePayload = ByteString.copyFrom(uncompressedPayload.nioBuffer());
+                    }
+                    if (!singleMessageMetadataBuilder.getCompactedOut()) {
+                        SingleMessage.Builder singleMessageBuilder = SingleMessage.newBuilder()
+                                .setMetadata(singleMessageMetadataBuilder)
+                                .setPayload(singleMessagePayload);
+                        messagesBuilder.addMessages(singleMessageBuilder);
+                    }
                 }
+                msgBuilder.setMessages(messagesBuilder);
+            } else {
                 MetadataAndPayload.Builder metadataBuilder = MetadataAndPayload.newBuilder()
-                        .setMetadata(convertMessageMetadata(metadata))
+                        .setMetadata(metadata)
                         .setPayload(ByteString.copyFrom(uncompressedPayload.nioBuffer()));
                 msgBuilder.setMetadataAndPayload(metadataBuilder);
-                break;
-            case MESSAGES:
-                uncompressedPayload = metadataAndPayload;
-                metadata = parseMessageMetadata(metadataAndPayload);
-                if (metadata.getCompression() != PulsarApi.CompressionType.NONE) {
-                    CompressionCodec compressor = CompressionCodecProvider.getCompressionCodec(metadata.getCompression());
-                    uncompressedPayload = compressor.decode(metadataAndPayload, metadata.getUncompressedSize());
-                }
-                break;
+            }
+            //metadata.recycle();
         }
         return ConsumeOutput.newBuilder().setMessage(msgBuilder).build();
+    }
+
+    public static boolean hasChecksum(ByteBuf buffer) {
+        return buffer.getShort(buffer.readerIndex()) == MAGIC_CRC_32_C;
+    }
+
+    /**
+     * Read the checksum and advance the reader index in the buffer.
+     *
+     * <p>Note: This method assume the checksum presence was already verified before.
+     */
+    public static int readChecksum(ByteBuf buffer) {
+        buffer.skipBytes(2); //skip magic bytes
+        return buffer.readInt();
+    }
+
+    public static void skipChecksumIfPresent(ByteBuf buffer) {
+        if (hasChecksum(buffer)) {
+            readChecksum(buffer);
+        }
+    }
+
+    private static MessageMetadata parseMessageMetadata(ByteBuf buffer) {
+        try {
+            // initially reader-index may point to start_of_checksum : increment reader-index to start_of_metadata
+            // to parse metadata
+            skipChecksumIfPresent(buffer);
+            int metadataSize = (int) buffer.readUnsignedInt();
+
+            int writerIndex = buffer.writerIndex();
+            buffer.writerIndex(buffer.readerIndex() + metadataSize);
+
+            ByteBufInputStream stream = new ByteBufInputStream(buffer);
+            MessageMetadata res = MessageMetadata.parseFrom(stream);
+
+            buffer.writerIndex(writerIndex);
+            stream.close();
+            return res;
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    public static ByteString deSerializeSingleMessageInBatch(ByteBuf uncompressedPayload,
+            SingleMessageMetadata.Builder singleMessageMetadataBuilder, int index, int batchSize)
+            throws IOException {
+        int singleMetaSize = (int) uncompressedPayload.readUnsignedInt();
+        int writerIndex = uncompressedPayload.writerIndex();
+        int beginIndex = uncompressedPayload.readerIndex() + singleMetaSize;
+        uncompressedPayload.writerIndex(beginIndex);
+
+        ByteBufInputStream byteBufInputStream = new ByteBufInputStream(uncompressedPayload);
+        singleMessageMetadataBuilder.mergeFrom(byteBufInputStream);
+        byteBufInputStream.close();
+
+        int singleMessagePayloadSize = singleMessageMetadataBuilder.getPayloadSize();
+
+        int readerIndex = uncompressedPayload.readerIndex();
+        //ByteBuf singleMessagePayload = uncompressedPayload.retainedSlice(readerIndex, singleMessagePayloadSize);
+        ByteString singleMessagePayload = ByteString.copyFrom(uncompressedPayload.nioBuffer(readerIndex, singleMessagePayloadSize));
+        uncompressedPayload.writerIndex(writerIndex);
+
+        // reader now points to beginning of payload read; so move it past message payload just read
+        if (index < batchSize) {
+            uncompressedPayload.readerIndex(readerIndex + singleMessagePayloadSize);
+        }
+
+        return singleMessagePayload;
     }
 
     public static ConsumeInput newConsumerStats(long requestId) {
