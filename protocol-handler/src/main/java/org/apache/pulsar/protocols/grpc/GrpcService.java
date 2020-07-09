@@ -92,7 +92,7 @@ public class GrpcService implements ProtocolHandler {
                 interceptors.add(new AuthenticationInterceptor(service));
             }
 
-            Optional<Integer> grpcServicePort = Optional.ofNullable(configuration.getProperties().getProperty("grpcServicePort"))
+            Optional<Integer> grpcServicePort = Optional.ofNullable(configuration.getProperties().getProperty(GRPC_SERVICE_PORT_PROPERTY_NAME))
                     .map(Integer::parseInt);
 
             if (grpcServicePort.isPresent()) {
@@ -104,7 +104,7 @@ public class GrpcService implements ProtocolHandler {
                 log.info("gRPC Service started, listening on " + server.getPort());
             }
 
-            Optional<Integer> grpcServicePortTls = Optional.ofNullable(configuration.getProperties().getProperty("grpcServicePortTls"))
+            Optional<Integer> grpcServicePortTls = Optional.ofNullable(configuration.getProperties().getProperty(GRPC_SERVICE_PORT_TLS_PROPERTY_NAME))
                     .map(Integer::parseInt);
 
             if (grpcServicePortTls.isPresent()) {

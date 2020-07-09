@@ -509,7 +509,6 @@ public class Commands {
             ByteString headersAndPayload = ByteString.copyFrom(metadataAndPayload.nioBuffer());
             msgBuilder.setBinaryMetadataAndPayload(headersAndPayload);
         } else {
-            // TODO: parse directly to gRPC's MessageMetadata (see SingleMessageMetadata for reference)
             MessageMetadata metadata = parseMessageMetadata(metadataAndPayload);
             ByteBuf uncompressedPayload = metadataAndPayload;
             if (preferedPayloadType != PayloadType.METADATA_AND_PAYLOAD
@@ -549,7 +548,6 @@ public class Commands {
                         .setPayload(ByteString.copyFrom(uncompressedPayload.nioBuffer()));
                 msgBuilder.setMetadataAndPayload(metadataBuilder);
             }
-            //metadata.recycle();
         }
         return ConsumeOutput.newBuilder().setMessage(msgBuilder).build();
     }

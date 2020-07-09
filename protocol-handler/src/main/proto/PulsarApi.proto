@@ -425,7 +425,6 @@ message CommandSend {
         // Messages batched and compressed on broker
         Messages messages                       = 6;
     }
-
 }
 
 message CommandSendReceipt {
@@ -457,7 +456,7 @@ message CommandMessage {
     required MessageIdData message_id  = 1;
     optional uint32 redelivery_count   = 2 [default = 0];
 
-    oneof send_oneof {
+    oneof message_oneof {
         // Metatada and payload as raw bytes encoded with the Pulsar protocol
         bytes binary_metadata_and_payload       = 3;
         // Metatada and payload in protobuf
