@@ -74,6 +74,8 @@ import org.apache.pulsar.protocols.grpc.api.CommandConsumerStatsResponse;
 import org.apache.pulsar.protocols.grpc.api.CommandError;
 import org.apache.pulsar.protocols.grpc.api.CommandGetTopicsOfNamespace;
 import org.apache.pulsar.protocols.grpc.api.CommandGetTopicsOfNamespaceResponse;
+import org.apache.pulsar.protocols.grpc.api.CommandLookupTopic;
+import org.apache.pulsar.protocols.grpc.api.CommandLookupTopicResponse;
 import org.apache.pulsar.protocols.grpc.api.CommandNewTxn;
 import org.apache.pulsar.protocols.grpc.api.CommandNewTxnResponse;
 import org.apache.pulsar.protocols.grpc.api.CommandProduceSingle;
@@ -997,6 +999,25 @@ public class PulsarGrpcServiceTest {
     }
 
     @Test
+    public void testUnauthorizedTopicOnLookup() throws Exception {
+        AuthorizationService authorizationService = mock(AuthorizationService.class);
+        doReturn(CompletableFuture.completedFuture(false)).when(authorizationService).allowTopicOperationAsync(Mockito.any(),
+                Mockito.any(), Mockito.any(), Mockito.any());
+        doReturn(authorizationService).when(brokerService).getAuthorizationService();
+        doReturn(true).when(brokerService).isAuthenticationEnabled();
+        doReturn(true).when(brokerService).isAuthorizationEnabled();
+
+        try {
+            blockingStub.lookupTopic(Commands.newLookup(successTopicName, false));
+            fail("StatusRuntimeException should have been thrown");
+        } catch (StatusRuntimeException e) {
+            assertErrorIsStatusExceptionWithServerError(e, Status.PERMISSION_DENIED,
+                    ServerError.AuthorizationError);
+        }
+
+    }
+
+    @Test
     public void testInvalidTopicOnLookup() throws Exception {
         String invalidTopicName = "xx/ass/aa/aaa";
         try {
@@ -1007,6 +1028,24 @@ public class PulsarGrpcServiceTest {
                     ServerError.InvalidTopicName);
         }
 
+    }
+
+    @Test
+    public void testUnauthorizedTopicOnGetPartitionMetadata() throws Exception {
+        AuthorizationService authorizationService = mock(AuthorizationService.class);
+        doReturn(CompletableFuture.completedFuture(false)).when(authorizationService).allowTopicOperationAsync(Mockito.any(),
+                Mockito.any(), Mockito.any(), Mockito.any());
+        doReturn(authorizationService).when(brokerService).getAuthorizationService();
+        doReturn(true).when(brokerService).isAuthenticationEnabled();
+        doReturn(true).when(brokerService).isAuthorizationEnabled();
+
+        try {
+            blockingStub.getPartitionMetadata(Commands.newPartitionMetadataRequest(successTopicName));
+            fail("StatusRuntimeException should have been sent");
+        } catch (StatusRuntimeException e) {
+            assertErrorIsStatusExceptionWithServerError(e, Status.PERMISSION_DENIED,
+                    ServerError.AuthorizationError);
+        }
     }
 
     @Test

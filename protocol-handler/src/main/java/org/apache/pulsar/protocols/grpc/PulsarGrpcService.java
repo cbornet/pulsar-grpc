@@ -112,6 +112,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 
 import static org.apache.pulsar.broker.admin.impl.PersistentTopicsBase.getPartitionedTopicMetadata;
+import static org.apache.pulsar.broker.admin.impl.PersistentTopicsBase.unsafeGetPartitionedTopicMetadataAsync;
 import static org.apache.pulsar.common.protocol.Commands.parseMessageMetadata;
 import static org.apache.pulsar.protocols.grpc.Commands.convertCommandAck;
 import static org.apache.pulsar.protocols.grpc.Commands.convertGetTopicsOfNamespaceMode;
@@ -134,7 +135,6 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
     private final BrokerService service;
     private final SchemaRegistryService schemaService;
     private final EventLoopGroup eventLoopGroup;
-    private String originalPrincipal = null;
     private final ServiceConfiguration configuration;
 
     public PulsarGrpcService(BrokerService service, ServiceConfiguration configuration, EventLoopGroup eventLoopGroup) {
@@ -143,6 +143,48 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
         this.eventLoopGroup = eventLoopGroup;
         this.configuration = configuration;
     }
+
+    private CompletableFuture<Boolean> isTopicOperationAllowed(TopicName topicName, TopicOperation operation,
+            String authRole, AuthenticationDataSource authenticationData) {
+        CompletableFuture<Boolean> isAuthorizedFuture;
+        if (service.isAuthorizationEnabled()) {
+            isAuthorizedFuture = service.getAuthorizationService().allowTopicOperationAsync(
+                    topicName, operation, authRole, authenticationData);
+        } else {
+            isAuthorizedFuture = CompletableFuture.completedFuture(true);
+        }
+        return isAuthorizedFuture.thenApply(isAuthorized -> {
+            if (!isAuthorized) {
+                log.error("Role {} is not authorized to perform operation {} on topic {}",
+                        authRole, operation, topicName);
+            }
+            return isAuthorized;
+        });
+    }
+
+    private CompletableFuture<Boolean> isTopicOperationAllowed(TopicName topicName, String subscriptionName,
+            TopicOperation operation, String authRole, AuthenticationDataSource authenticationData) {
+        CompletableFuture<Boolean> isAuthorizedFuture;
+        if (service.isAuthorizationEnabled()) {
+            if (authenticationData == null) {
+                authenticationData = new AuthenticationDataCommand("", subscriptionName);
+            } else {
+                authenticationData.setSubscription(subscriptionName);
+            }
+            return isTopicOperationAllowed(topicName, operation, authRole, authenticationData);
+        } else {
+            isAuthorizedFuture = CompletableFuture.completedFuture(true);
+        }
+        return isAuthorizedFuture.thenApply(isAuthorized -> {
+            if (!isAuthorized) {
+                log.error("Role {} is not authorized to perform operation {} on topic {}, subscription {}",
+                        authRole, operation, topicName, subscriptionName);
+            }
+            return isAuthorized;
+        });
+    }
+
+
 
     @Override
     public void lookupTopic(CommandLookupTopic lookup, StreamObserver<CommandLookupTopicResponse> responseObserver) {
@@ -170,17 +212,33 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
 
         final Semaphore lookupSemaphore = service.getLookupRequestSemaphore();
         if (lookupSemaphore.tryAcquire()) {
-            lookupTopicAsync(service.pulsar(), topicName, authoritative, authRole, authenticationData, advertisedListenerName)
-                    .handle((lookupResponse, ex) -> {
-                        if (ex == null) {
-                            responseObserver.onNext(lookupResponse);
-                            responseObserver.onCompleted();
-                        } else {
-                            responseObserver.onError(ex);
-                        }
-                        lookupSemaphore.release();
-                        return null;
-                    });
+            isTopicOperationAllowed(topicName, TopicOperation.LOOKUP, authRole, authenticationData).thenApply(isAuthorized -> {
+                if (isAuthorized) {
+                    lookupTopicAsync(service.pulsar(), topicName, authoritative, authRole, authenticationData, advertisedListenerName)
+                            .handle((lookupResponse, ex) -> {
+                                if (ex == null) {
+                                    responseObserver.onNext(lookupResponse);
+                                    responseObserver.onCompleted();
+                                } else {
+                                    responseObserver.onError(ex);
+                                }
+                                lookupSemaphore.release();
+                                return null;
+                            });
+                } else {
+                    final String msg = "Client is not authorized to Lookup";
+                    log.warn("[{}] {} with role {} on topic {}", remoteAddress, msg, authRole, topicName);
+                    responseObserver.onError(newStatusException(Status.PERMISSION_DENIED, msg, null, ServerError.AuthorizationError));
+                    lookupSemaphore.release();
+                }
+                return null;
+            }).exceptionally(ex -> {
+                final String msg = "Exception occured while trying to authorize lookup";
+                log.warn("[{}] {} with role {} on topic {}", remoteAddress, msg, authRole, topicName, ex);
+                responseObserver.onError(newStatusException(Status.PERMISSION_DENIED, msg, ex, ServerError.AuthorizationError));
+                lookupSemaphore.release();
+                return null;
+            });
         } else {
             if (log.isDebugEnabled()) {
                 log.debug("[{}] Failed lookup due to too many lookup-requests {}", remoteAddress, topicName);
@@ -285,29 +343,44 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
 
         final Semaphore lookupSemaphore = service.getLookupRequestSemaphore();
         if (lookupSemaphore.tryAcquire()) {
-            getPartitionedTopicMetadata(service.pulsar(),
-                    authRole, null, authenticationData,
-                    topicName).handle((metadata, ex) -> {
-                if (ex == null) {
-                    int partitions = metadata.partitions;
-                    responseObserver.onNext(Commands.newPartitionMetadataResponse(partitions));
-                    responseObserver.onCompleted();
+            isTopicOperationAllowed(topicName, TopicOperation.LOOKUP, authRole, authenticationData).thenApply(isAuthorized -> {
+                if (isAuthorized) {
+                    unsafeGetPartitionedTopicMetadataAsync(service.pulsar(), topicName)
+                            .handle((metadata, ex) -> {
+                                if (ex == null) {
+                                    int partitions = metadata.partitions;
+                                    responseObserver.onNext(Commands.newPartitionMetadataResponse(partitions));
+                                    responseObserver.onCompleted();
+                                } else {
+                                    if (ex instanceof PulsarClientException) {
+                                        log.warn("Failed to authorize {} at [{}] on topic {} : {}", authRole,
+                                                remoteAddress, topicName, ex.getMessage());
+                                        responseObserver.onError(Commands.newStatusException(Status.PERMISSION_DENIED, ex,
+                                                ServerError.AuthorizationError));
+                                    } else {
+                                        log.warn("Failed to get Partitioned Metadata [{}] {}: {}", remoteAddress,
+                                                topicName, ex.getMessage(), ex);
+                                        ServerError error = (ex instanceof RestException)
+                                                && ((RestException) ex).getResponse().getStatus() < 500
+                                                ? ServerError.MetadataError
+                                                : ServerError.ServiceNotReady;
+                                        responseObserver.onError(Commands.newStatusException(Status.FAILED_PRECONDITION, ex, error));
+                                    }
+                                }
+                                lookupSemaphore.release();
+                                return null;
+                            });
                 } else {
-                    if (ex instanceof PulsarClientException) {
-                        log.warn("Failed to authorize {} at [{}] on topic {} : {}", authRole,
-                                remoteAddress, topicName, ex.getMessage());
-                        responseObserver.onError(Commands.newStatusException(Status.PERMISSION_DENIED, ex,
-                                ServerError.AuthorizationError));
-                    } else {
-                        log.warn("Failed to get Partitioned Metadata [{}] {}: {}", remoteAddress,
-                                topicName, ex.getMessage(), ex);
-                        ServerError error = (ex instanceof RestException)
-                                && ((RestException) ex).getResponse().getStatus() < 500
-                                ? ServerError.MetadataError
-                                : ServerError.ServiceNotReady;
-                        responseObserver.onError(Commands.newStatusException(Status.FAILED_PRECONDITION, ex, error));
-                    }
+                    final String msg = "Client is not authorized to Get Partition Metadata";
+                    log.warn("[{}] {} with role {} on topic {}", remoteAddress, msg, authRole, topicName);
+                    responseObserver.onError(newStatusException(Status.PERMISSION_DENIED, msg, null, ServerError.AuthorizationError));
+                    lookupSemaphore.release();
                 }
+                return null;
+            }).exceptionally(ex -> {
+                final String msg = "Exception occured while trying to authorize get Partition Metadata";
+                log.warn("[{}] {} with role {} on topic {}", remoteAddress, msg, authRole, topicName);
+                responseObserver.onError(newStatusException(Status.PERMISSION_DENIED, msg, ex, ServerError.AuthorizationError));
                 lookupSemaphore.release();
                 return null;
             });
@@ -528,16 +601,11 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
             return NoOpStreamObserver.create();
         }
 
-        CompletableFuture<Boolean> authorizationFuture;
-        if (service.isAuthorizationEnabled()) {
-            authorizationFuture = service.getAuthorizationService().allowTopicOperationAsync(topicName,
-                    TopicOperation.PRODUCE, authRole, authenticationData);
-        } else {
-            authorizationFuture = CompletableFuture.completedFuture(true);
-        }
-
+        CompletableFuture<Boolean> isAuthorizedFuture = isTopicOperationAllowed(
+                topicName, TopicOperation.PRODUCE, authRole, authenticationData
+        );
         CompletableFuture<Producer> producerFuture = new CompletableFuture<>();
-        authorizationFuture.thenApply(isAuthorized -> {
+        isAuthorizedFuture.thenApply(isAuthorized -> {
             if (isAuthorized) {
                 if (log.isDebugEnabled()) {
                     log.debug("[{}] Client is authorized to Produce with role {}", remoteAddress, authRole);
@@ -620,7 +688,7 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
                     return null;
                 });
             } else {
-                final String msg = "Proxy Client is not authorized to Produce";
+                final String msg = "Client is not authorized to Produce";
                 log.warn("[{}] {} with role {} on topic {}", remoteAddress, msg, authRole, topicName);
                 responseObserver.onError(newStatusException(Status.PERMISSION_DENIED, msg, null,
                         ServerError.AuthorizationError));
@@ -705,21 +773,15 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
         ConsumerCnx cnx = new ConsumerCnx(service, remoteAddress, authRole, authenticationData, responseObserver,
                 subscribe.getPreferedPayloadType());
 
-        CompletableFuture<Boolean> authorizationFuture;
-        if (service.isAuthorizationEnabled()) {
-            if (authenticationData == null) {
-                authenticationData = new AuthenticationDataCommand("", subscriptionName);
-            } else {
-                authenticationData.setSubscription(subscriptionName);
-            }
-            authorizationFuture = service.getAuthorizationService().allowTopicOperationAsync(topicName,
-                    TopicOperation.CONSUME, authRole, authenticationData);
-        } else {
-            authorizationFuture = CompletableFuture.completedFuture(true);
-        }
-
+        CompletableFuture<Boolean> isAuthorizedFuture = isTopicOperationAllowed(
+                topicName,
+                subscriptionName,
+                TopicOperation.CONSUME,
+                authRole,
+                authenticationData
+        );
         CompletableFuture<Consumer> consumerFuture = new CompletableFuture<>();
-        authorizationFuture.thenApply(isAuthorized -> {
+        isAuthorizedFuture.thenApply(isAuthorized -> {
             if (isAuthorized) {
                 if (log.isDebugEnabled()) {
                     log.debug("[{}] Client is authorized to subscribe with role {}", remoteAddress, authRole);
@@ -1073,7 +1135,8 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
                 .data(protocolSchema.getSchemaData().toByteArray())
                 .isDeleted(false)
                 .timestamp(System.currentTimeMillis())
-                .user(Strings.nullToEmpty(originalPrincipal))
+                //.user(Strings.nullToEmpty(originalPrincipal))
+                .user("")
                 .type(Commands.getSchemaType(protocolSchema.getType()))
                 .props(protocolSchema.getPropertiesMap())
                 .build();
