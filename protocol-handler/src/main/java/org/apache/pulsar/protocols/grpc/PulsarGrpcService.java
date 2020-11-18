@@ -18,7 +18,6 @@
  */
 package org.apache.pulsar.protocols.grpc;
 
-import com.google.common.base.Strings;
 import io.grpc.Context;
 import io.grpc.Status;
 import io.grpc.stub.CallStreamObserver;
@@ -111,7 +110,6 @@ import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 
-import static org.apache.pulsar.broker.admin.impl.PersistentTopicsBase.getPartitionedTopicMetadata;
 import static org.apache.pulsar.broker.admin.impl.PersistentTopicsBase.unsafeGetPartitionedTopicMetadataAsync;
 import static org.apache.pulsar.common.protocol.Commands.parseMessageMetadata;
 import static org.apache.pulsar.protocols.grpc.Commands.convertCommandAck;
@@ -155,7 +153,7 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
         }
         return isAuthorizedFuture.thenApply(isAuthorized -> {
             if (!isAuthorized) {
-                log.error("Role {} is not authorized to perform operation {} on topic {}",
+                log.warn("Role {} is not authorized to perform operation {} on topic {}",
                         authRole, operation, topicName);
             }
             return isAuthorized;
@@ -177,7 +175,7 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
         }
         return isAuthorizedFuture.thenApply(isAuthorized -> {
             if (!isAuthorized) {
-                log.error("Role {} is not authorized to perform operation {} on topic {}, subscription {}",
+                log.warn("Role {} is not authorized to perform operation {} on topic {}, subscription {}",
                         authRole, operation, topicName, subscriptionName);
             }
             return isAuthorized;
