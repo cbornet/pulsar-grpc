@@ -161,6 +161,9 @@ message MessageMetadata {
 
     // Indicate if the message payload value is set
     optional bool null_value = 25 [ default = false ];
+
+    // Indicate if the message partition key is set
+    optional bool null_partition_key = 30 [default = false];
 }
 
 message SingleMessageMetadata {

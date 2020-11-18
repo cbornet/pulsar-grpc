@@ -1047,6 +1047,9 @@ public class Commands {
         if (messageMetadata.hasNullValue()) {
             builder.setNullValue(messageMetadata.getNullValue());
         }
+        if (messageMetadata.hasNullPartitionKey()) {
+            builder.setNullPartitionKey(messageMetadata.hasNullPartitionKey());
+        }
         messageMetadata.getPropertiesMap().forEach(
                 (k, v) -> builder.addProperties(PulsarApi.KeyValue.newBuilder().setKey(k).setValue(v))
         );
@@ -1130,6 +1133,9 @@ public class Commands {
         }
         if (metadata.hasNullValue()) {
             builder.setNullValue(metadata.getNullValue());
+        }
+        if (metadata.hasNullPartitionKey()) {
+            builder.setNullPartitionKey(metadata.getNullPartitionKey());
         }
         return builder.build();
     }
