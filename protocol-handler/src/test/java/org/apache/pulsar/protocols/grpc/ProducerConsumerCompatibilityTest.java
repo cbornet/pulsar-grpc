@@ -1,3 +1,21 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ * <p>
+ * http://www.apache.org/licenses/LICENSE-2.0
+ * <p>
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
 package org.apache.pulsar.protocols.grpc;
 
 import com.google.common.collect.Sets;
@@ -16,11 +34,9 @@ import org.apache.pulsar.client.api.Consumer;
 import org.apache.pulsar.client.api.CryptoKeyReader;
 import org.apache.pulsar.client.api.EncryptionKeyInfo;
 import org.apache.pulsar.client.api.Message;
-import org.apache.pulsar.client.api.MessageCrypto;
 import org.apache.pulsar.client.api.Producer;
 import org.apache.pulsar.client.api.ProducerBuilder;
 import org.apache.pulsar.client.api.ProducerConsumerBase;
-import org.apache.pulsar.client.impl.crypto.MessageCryptoBc;
 import org.apache.pulsar.common.api.proto.PulsarApi;
 import org.apache.pulsar.common.protocol.schema.SchemaVersion;
 import org.apache.pulsar.common.schema.LongSchemaVersion;
@@ -130,7 +146,7 @@ public class ProducerConsumerCompatibilityTest extends ProducerConsumerBase {
         // Subscribe
         CommandSubscribe subscribe = Commands.newSubscribe("persistent://my-property/my-ns/my-topic1",
                 "my-subscriber-name", CommandSubscribe.SubType.Exclusive, 0,
-                "test" , 0, PayloadType.BINARY);
+                "test", 0, PayloadType.BINARY);
         PulsarGrpc.PulsarStub consumerStub = Commands.attachConsumerParams(stub, subscribe);
 
         TestStreamObserver<ConsumeOutput> consumeOutput = TestStreamObserver.create();
@@ -181,7 +197,7 @@ public class ProducerConsumerCompatibilityTest extends ProducerConsumerBase {
         // Subscribe
         CommandSubscribe subscribe = Commands.newSubscribe("persistent://my-property/my-ns/my-topic1",
                 "my-subscriber-name", CommandSubscribe.SubType.Exclusive, 0,
-                "test" , 0, PayloadType.METADATA_AND_PAYLOAD);
+                "test", 0, PayloadType.METADATA_AND_PAYLOAD);
         PulsarGrpc.PulsarStub consumerStub = Commands.attachConsumerParams(stub, subscribe);
 
         TestStreamObserver<ConsumeOutput> consumeOutput = TestStreamObserver.create();
@@ -229,7 +245,7 @@ public class ProducerConsumerCompatibilityTest extends ProducerConsumerBase {
         // Subscribe
         CommandSubscribe subscribe = Commands.newSubscribe("persistent://my-property/my-ns/my-topic1",
                 "my-subscriber-name", CommandSubscribe.SubType.Exclusive, 0,
-                "test" , 0, PayloadType.METADATA_AND_PAYLOAD_UNCOMPRESSED);
+                "test", 0, PayloadType.METADATA_AND_PAYLOAD_UNCOMPRESSED);
         PulsarGrpc.PulsarStub consumerStub = Commands.attachConsumerParams(stub, subscribe);
 
         TestStreamObserver<ConsumeOutput> consumeOutput = TestStreamObserver.create();
@@ -278,7 +294,7 @@ public class ProducerConsumerCompatibilityTest extends ProducerConsumerBase {
         // Subscribe
         CommandSubscribe subscribe = Commands.newSubscribe("persistent://my-property/my-ns/my-topic1",
                 "my-subscriber-name", CommandSubscribe.SubType.Exclusive, 0,
-                "test" , 0, PayloadType.MESSAGES);
+                "test", 0, PayloadType.MESSAGES);
         PulsarGrpc.PulsarStub consumerStub = Commands.attachConsumerParams(stub, subscribe);
 
         TestStreamObserver<ConsumeOutput> consumeOutput = TestStreamObserver.create();
@@ -326,7 +342,7 @@ public class ProducerConsumerCompatibilityTest extends ProducerConsumerBase {
         // Subscribe
         CommandSubscribe subscribe = Commands.newSubscribe("persistent://my-property/my-ns/my-topic1",
                 "my-subscriber-name", CommandSubscribe.SubType.Exclusive, 0,
-                "test" , 0, PayloadType.MESSAGES);
+                "test", 0, PayloadType.MESSAGES);
         PulsarGrpc.PulsarStub consumerStub = Commands.attachConsumerParams(stub, subscribe);
 
         TestStreamObserver<ConsumeOutput> consumeOutput = TestStreamObserver.create();
@@ -382,7 +398,7 @@ public class ProducerConsumerCompatibilityTest extends ProducerConsumerBase {
         // Subscribe
         CommandSubscribe subscribe = Commands.newSubscribe("persistent://my-property/my-ns/my-topic1",
                 "my-subscriber-name", CommandSubscribe.SubType.Exclusive, 0,
-                "test" , 0, PayloadType.MESSAGES);
+                "test", 0, PayloadType.MESSAGES);
         PulsarGrpc.PulsarStub consumerStub = Commands.attachConsumerParams(stub, subscribe);
 
         TestStreamObserver<ConsumeOutput> consumeOutput = TestStreamObserver.create();
@@ -726,7 +742,7 @@ public class ProducerConsumerCompatibilityTest extends ProducerConsumerBase {
         // Subscribe
         CommandSubscribe subscribe = Commands.newSubscribe("persistent://my-property/my-ns/my-topic1",
                 "my-subscriber-name", CommandSubscribe.SubType.Exclusive, 0,
-                "test" , 0);
+                "test", 0);
         PulsarGrpc.PulsarStub consumerStub = Commands.attachConsumerParams(stub, subscribe);
 
         TestStreamObserver<ConsumeOutput> consumeOutput = TestStreamObserver.create();
@@ -785,7 +801,7 @@ public class ProducerConsumerCompatibilityTest extends ProducerConsumerBase {
         // Subscribe
         CommandSubscribe subscribe = Commands.newSubscribe("persistent://my-property/my-ns/my-topic1",
                 "my-subscriber-name", CommandSubscribe.SubType.Shared, 0,
-                "test" , 0);
+                "test", 0);
         PulsarGrpc.PulsarStub consumerStub = Commands.attachConsumerParams(stub, subscribe);
 
         TestStreamObserver<ConsumeOutput> consumeOutput = TestStreamObserver.create();
@@ -841,7 +857,7 @@ public class ProducerConsumerCompatibilityTest extends ProducerConsumerBase {
         // Subscribe
         CommandSubscribe subscribe = Commands.newSubscribe("persistent://my-property/my-ns/my-topic1",
                 "my-subscriber-name", CommandSubscribe.SubType.Exclusive, 0,
-                "test" , 0);
+                "test", 0);
         PulsarGrpc.PulsarStub consumerStub = Commands.attachConsumerParams(stub, subscribe);
 
         TestStreamObserver<ConsumeOutput> consumeOutput = TestStreamObserver.create();
@@ -906,7 +922,7 @@ public class ProducerConsumerCompatibilityTest extends ProducerConsumerBase {
         // Subscribe
         CommandSubscribe subscribe = Commands.newSubscribe("persistent://my-property/my-ns/my-topic1",
                 "my-subscriber-name", CommandSubscribe.SubType.Exclusive, 0,
-                "test" , 0);
+                "test", 0);
         PulsarGrpc.PulsarStub consumerStub = Commands.attachConsumerParams(stub, subscribe);
 
         TestStreamObserver<ConsumeOutput> consumeOutput = TestStreamObserver.create();
@@ -960,7 +976,7 @@ public class ProducerConsumerCompatibilityTest extends ProducerConsumerBase {
         // Subscribe
         CommandSubscribe subscribe = Commands.newSubscribe("persistent://my-property/my-ns/my-topic1",
                 "my-subscriber-name", CommandSubscribe.SubType.Exclusive, 0,
-                "test" , 0);
+                "test", 0);
         PulsarGrpc.PulsarStub consumerStub = Commands.attachConsumerParams(stub, subscribe);
 
         TestStreamObserver<ConsumeOutput> consumeOutput = TestStreamObserver.create();
@@ -994,7 +1010,7 @@ public class ProducerConsumerCompatibilityTest extends ProducerConsumerBase {
         // Subscribe
         CommandSubscribe subscribe = Commands.newSubscribe("persistent://my-property/my-ns/my-topic1",
                 "my-subscriber-name", CommandSubscribe.SubType.Exclusive, 0,
-                "test" , 0);
+                "test", 0);
         PulsarGrpc.PulsarStub consumerStub = Commands.attachConsumerParams(stub, subscribe);
 
         TestStreamObserver<ConsumeOutput> consumeOutput = TestStreamObserver.create();
@@ -1071,7 +1087,7 @@ public class ProducerConsumerCompatibilityTest extends ProducerConsumerBase {
         // Subscribe
         CommandSubscribe subscribe = Commands.newSubscribe("persistent://my-property/my-ns/my-topic1",
                 "my-subscriber-name", CommandSubscribe.SubType.Exclusive, 0,
-                "test" , 0);
+                "test", 0);
         PulsarGrpc.PulsarStub consumerStub = Commands.attachConsumerParams(stub, subscribe);
 
         TestStreamObserver<ConsumeOutput> consumeOutput = TestStreamObserver.create();
@@ -1154,7 +1170,7 @@ public class ProducerConsumerCompatibilityTest extends ProducerConsumerBase {
 
         CommandLookupTopicResponse topicResponse = response.takeOneMessage();
         assertEquals(topicResponse.getGrpcServiceHost(), "localhost");
-        assertEquals(topicResponse.getGrpcServicePort(), (int)grpcService.getListenPort().orElse(null));
+        assertEquals(topicResponse.getGrpcServicePort(), (int) grpcService.getListenPort().orElse(null));
         assertEquals(topicResponse.getResponse(), LookupType.Connect);
 
         response.waitForCompletion();

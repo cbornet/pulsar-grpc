@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -24,8 +24,11 @@ import io.netty.handler.ssl.SslContext;
 import io.netty.handler.ssl.SslContextBuilder;
 import io.netty.handler.ssl.util.InsecureTrustManagerFactory;
 
-import javax.net.ssl.SSLException;
-import java.io.*;
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileReader;
+import java.io.IOException;
 import java.security.GeneralSecurityException;
 import java.security.KeyFactory;
 import java.security.KeyManagementException;
@@ -50,14 +53,14 @@ public class SecurityUtility {
     }
 
     public static SslContext createNettySslContextForClient(boolean allowInsecureConnection, String trustCertsFilePath)
-            throws GeneralSecurityException, SSLException, FileNotFoundException, IOException {
-        return createNettySslContextForClient(allowInsecureConnection, trustCertsFilePath, (Certificate[]) null,
+            throws IOException {
+        return createNettySslContextForClient(allowInsecureConnection, trustCertsFilePath, null,
                 (PrivateKey) null);
     }
 
     public static SslContext createNettySslContextForClient(boolean allowInsecureConnection, String trustCertsFilePath,
             String certFilePath, String keyFilePath)
-            throws GeneralSecurityException, SSLException, FileNotFoundException, IOException {
+            throws GeneralSecurityException, IOException {
         X509Certificate[] certificates = loadCertificatesFromPemFile(certFilePath);
         PrivateKey privateKey = loadPrivateKeyFromPemFile(keyFilePath);
         return createNettySslContextForClient(allowInsecureConnection, trustCertsFilePath, certificates, privateKey);
@@ -65,7 +68,7 @@ public class SecurityUtility {
 
     public static SslContext createNettySslContextForClient(boolean allowInsecureConnection, String trustCertsFilePath,
             Certificate[] certificates, PrivateKey privateKey)
-            throws GeneralSecurityException, SSLException, FileNotFoundException, IOException {
+            throws IOException {
         SslContextBuilder builder = GrpcSslContexts.forClient();
         setupTrustCerts(builder, allowInsecureConnection, trustCertsFilePath);
         setupKeyManager(builder, privateKey, (X509Certificate[]) certificates);
@@ -75,7 +78,7 @@ public class SecurityUtility {
     public static SslContext createNettySslContextForServer(boolean allowInsecureConnection, String trustCertsFilePath,
             String certFilePath, String keyFilePath, Set<String> ciphers, Set<String> protocols,
             boolean requireTrustedClientCertOnConnect)
-            throws GeneralSecurityException, SSLException, FileNotFoundException, IOException {
+            throws GeneralSecurityException, IOException {
         X509Certificate[] certificates = loadCertificatesFromPemFile(certFilePath);
         PrivateKey privateKey = loadPrivateKeyFromPemFile(keyFilePath);
 
@@ -116,7 +119,7 @@ public class SecurityUtility {
         try (BufferedReader reader = new BufferedReader(new FileReader(keyFilePath))) {
             StringBuilder sb = new StringBuilder();
             String previousLine = "";
-            String currentLine = null;
+            String currentLine;
 
             // Skip the first line (-----BEGIN RSA PRIVATE KEY-----)
             reader.readLine();
@@ -137,7 +140,7 @@ public class SecurityUtility {
     }
 
     private static void setupTrustCerts(SslContextBuilder builder, boolean allowInsecureConnection,
-            String trustCertsFilePath) throws IOException, FileNotFoundException {
+            String trustCertsFilePath) throws IOException {
         if (allowInsecureConnection) {
             builder.trustManager(InsecureTrustManagerFactory.INSTANCE);
         } else {

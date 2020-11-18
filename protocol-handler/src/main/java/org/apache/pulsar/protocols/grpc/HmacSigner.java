@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -27,7 +27,7 @@ import java.security.SecureRandom;
 public class HmacSigner {
 
     private static final String HMAC_SHA256 = "HmacSHA256";
-    private SecretKeySpec key;
+    private final SecretKeySpec key;
 
     /**
      * Creates a {@link HmacSigner} instance using a randomly generated key.

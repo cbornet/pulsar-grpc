@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -36,7 +36,6 @@ import org.apache.pulsar.common.protocol.Commands.ChecksumType;
 import org.apache.pulsar.common.protocol.schema.SchemaVersion;
 import org.apache.pulsar.common.schema.SchemaInfo;
 import org.apache.pulsar.common.schema.SchemaType;
-import org.apache.pulsar.common.util.protobuf.ByteBufCodedInputStream;
 import org.apache.pulsar.protocols.grpc.api.AuthData;
 import org.apache.pulsar.protocols.grpc.api.CommandAck;
 import org.apache.pulsar.protocols.grpc.api.CommandAck.AckType;
@@ -116,7 +115,7 @@ public class Commands {
     public static final short MAGIC_CRC_32_C = 0x0e01;
 
     public static StatusRuntimeException newStatusException(Status status, String message, Throwable exception, ServerError code) {
-        Metadata metadata  = new Metadata();
+        Metadata metadata = new Metadata();
         metadata.put(ERROR_CODE_METADATA_KEY, String.valueOf(code.getNumber()));
         return status.withDescription(message)
                 .withCause(exception)
@@ -346,7 +345,7 @@ public class Commands {
                 true /* createTopicIfDoesNotExist */, null);
     }
 
-    public static CommandSubscribe newSubscribe(String topic, String subscription, 
+    public static CommandSubscribe newSubscribe(String topic, String subscription,
             SubType subType, int priorityLevel, String consumerName, long resetStartMessageBackInSeconds,
             PayloadType payloadType) {
         return newSubscribe(topic, subscription, subType, priorityLevel, consumerName,
@@ -355,7 +354,7 @@ public class Commands {
                 true /* createTopicIfDoesNotExist */, payloadType);
     }
 
-    public static CommandSubscribe newSubscribe(String topic, String subscription, 
+    public static CommandSubscribe newSubscribe(String topic, String subscription,
             SubType subType, int priorityLevel, String consumerName, boolean isDurable, MessageIdData startMessageId,
             Map<String, String> metadata, boolean readCompacted, boolean isReplicated,
             InitialPosition subscriptionInitialPosition, long startMessageRollbackDurationInSec, SchemaInfo schemaInfo,
@@ -365,7 +364,7 @@ public class Commands {
                 startMessageRollbackDurationInSec, schemaInfo, createTopicIfDoesNotExist, null, payloadType);
     }
 
-    public static CommandSubscribe newSubscribe(String topic, String subscription, 
+    public static CommandSubscribe newSubscribe(String topic, String subscription,
             SubType subType, int priorityLevel, String consumerName, boolean isDurable, MessageIdData startMessageId,
             Map<String, String> metadata, boolean readCompacted, boolean isReplicated,
             InitialPosition subscriptionInitialPosition, long startMessageRollbackDurationInSec,
@@ -411,7 +410,7 @@ public class Commands {
         }
         subscribeBuilder.putAllMetadata(metadata);
 
-        Schema schema = null;
+        Schema schema;
         if (schemaInfo != null) {
             schema = getSchema(schemaInfo);
             subscribeBuilder.setSchema(schema);
@@ -658,7 +657,6 @@ public class Commands {
         CommandRedeliverUnacknowledgedMessages.Builder redeliverBuilder = CommandRedeliverUnacknowledgedMessages
                 .newBuilder();
         redeliverBuilder.addAllMessageIds(messageIds);
-        CommandRedeliverUnacknowledgedMessages redeliver = redeliverBuilder.build();
         return ConsumeInput.newBuilder().setRedeliverUnacknowledgedMessages(redeliverBuilder).build();
     }
 
@@ -723,14 +721,14 @@ public class Commands {
 
     public static CommandNewTxnResponse newTxnResponse(long leastSigBits, long mostSigBits) {
         return CommandNewTxnResponse.newBuilder()
-          .setTxnidLeastBits(leastSigBits)
-          .setTxnidMostBits(mostSigBits)
-          .build();
+                .setTxnidLeastBits(leastSigBits)
+                .setTxnidMostBits(mostSigBits)
+                .build();
     }
 
     public static CommandAddPartitionToTxn newAddPartitionToTxn(long txnIdLeastBits, long txnIdMostBits,
             Iterable<String> partitions) {
-        return  CommandAddPartitionToTxn.newBuilder()
+        return CommandAddPartitionToTxn.newBuilder()
                 .setTxnidLeastBits(txnIdLeastBits)
                 .setTxnidMostBits(txnIdMostBits)
                 .addAllPartitions(partitions)
@@ -769,10 +767,10 @@ public class Commands {
     }
 
     public static ServerError convertServerError(PulsarApi.ServerError serverError) {
-        if(serverError == null) {
+        if (serverError == null) {
             return null;
         }
-        switch(serverError) {
+        switch (serverError) {
             case MetadataError:
                 return ServerError.MetadataError;
             case PersistenceError:
@@ -822,7 +820,7 @@ public class Commands {
     }
 
     public static PulsarApi.CommandSubscribe.SubType convertSubscribeSubType(SubType subType) {
-        if(subType == null) {
+        if (subType == null) {
             return null;
         }
         switch (subType) {
@@ -840,7 +838,7 @@ public class Commands {
     }
 
     public static PulsarApi.CommandSubscribe.InitialPosition convertSubscribeInitialPosition(InitialPosition initialPosition) {
-        if(initialPosition == null) {
+        if (initialPosition == null) {
             return null;
         }
         switch (initialPosition) {
@@ -854,7 +852,7 @@ public class Commands {
     }
 
     public static PulsarApi.KeySharedMode convertKeySharedMode(KeySharedMode mode) {
-        if(mode == null) {
+        if (mode == null) {
             return null;
         }
         switch (mode) {
@@ -953,7 +951,7 @@ public class Commands {
         if (ack.hasTxnidMostBits()) {
             builder.setTxnidMostBits(ack.getTxnidMostBits());
         }
-        ack.getPropertiesMap().forEach((k,v) -> {
+        ack.getPropertiesMap().forEach((k, v) -> {
             PulsarApi.KeyLongValue.Builder keyLongValue = PulsarApi.KeyLongValue.newBuilder()
                     .setKey(k)
                     .setValue(v);
@@ -1050,7 +1048,7 @@ public class Commands {
             builder.setNullValue(messageMetadata.getNullValue());
         }
         messageMetadata.getPropertiesMap().forEach(
-                (k,v) -> builder.addProperties(PulsarApi.KeyValue.newBuilder().setKey(k).setValue(v))
+                (k, v) -> builder.addProperties(PulsarApi.KeyValue.newBuilder().setKey(k).setValue(v))
         );
         return builder;
     }

@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -29,7 +29,7 @@ import org.apache.bookkeeper.mledger.util.SafeRun;
 import org.apache.pulsar.broker.authentication.AuthenticationDataSource;
 import org.apache.pulsar.broker.service.BrokerService;
 import org.apache.pulsar.broker.service.Producer;
-import org.apache.pulsar.broker.service.TransportCnx;
+import org.apache.pulsar.broker.service.PulsarCommandSender;
 import org.apache.pulsar.common.allocator.PulsarByteBufAllocator;
 import org.apache.pulsar.common.api.proto.PulsarApi;
 import org.apache.pulsar.common.compression.CompressionCodec;
@@ -51,12 +51,9 @@ import static org.apache.pulsar.common.protocol.Commands.serializeSingleMessageI
 import static org.apache.pulsar.protocols.grpc.Commands.convertCompressionType;
 import static org.apache.pulsar.protocols.grpc.Commands.convertSingleMessageMetadata;
 
-public class ProducerCnx implements TransportCnx {
-    private final BrokerService service;
-    private final SocketAddress remoteAddress;
-    private final String authRole;
-    private final AuthenticationDataSource authenticationData;
+public class ProducerCnx extends AbstractGrpcCnx {
     private final CallStreamObserver<SendResult> responseObserver;
+    private final ProducerCommandSender producerCommandSender;
     private final EventLoop eventLoop;
     private final boolean preciseDispatcherFlowControl;
 
@@ -73,40 +70,23 @@ public class ProducerCnx implements TransportCnx {
     public ProducerCnx(BrokerService service, SocketAddress remoteAddress, String authRole,
             AuthenticationDataSource authenticationData, StreamObserver<SendResult> responseObserver,
             EventLoop eventLoop) {
-        this.service = service;
-        this.remoteAddress = remoteAddress;
+        super(service, remoteAddress, authRole, authenticationData);
         this.MaxNonPersistentPendingMessages = service.pulsar().getConfiguration()
                 .getMaxConcurrentNonPersistentMessagePerConnection();
         this.maxPendingSendRequests = service.pulsar().getConfiguration().getMaxPendingPublishRequestsPerConnection();
         this.resumeReadsThreshold = maxPendingSendRequests / 2;
-        this.authRole = authRole;
-        this.authenticationData = authenticationData;
         this.preciseDispatcherFlowControl = service.pulsar().getConfiguration().isPreciseDispatcherFlowControl();
         this.responseObserver = (CallStreamObserver<SendResult>) responseObserver;
         this.responseObserver.disableAutoInboundFlowControl();
         this.responseObserver.setOnReadyHandler(onReadyHandler);
 
+        this.producerCommandSender = new ProducerCommandSender(responseObserver);
         this.eventLoop = eventLoop;
     }
 
     @Override
-    public SocketAddress clientAddress() {
-        return remoteAddress;
-    }
-
-    @Override
-    public BrokerService getBrokerService() {
-        return service;
-    }
-
-    @Override
-    public String getAuthRole() {
-        return authRole;
-    }
-
-    @Override
-    public AuthenticationDataSource getAuthenticationData() {
-        return authenticationData;
+    public PulsarCommandSender getCommandSender() {
+        return producerCommandSender;
     }
 
     @Override
@@ -320,18 +300,8 @@ public class ProducerCnx implements TransportCnx {
     }
 
     @Override
-    public void sendProducerError(long producerId, long sequenceId, org.apache.pulsar.common.api.proto.PulsarApi.ServerError serverError, String message) {
-        responseObserver.onNext(Commands.newSendError(sequenceId, Commands.convertServerError(serverError), message));
-    }
-
-    @Override
     public void execute(Runnable runnable) {
         eventLoop.execute(runnable);
-    }
-
-    @Override
-    public void sendProducerReceipt(long producerId, long sequenceId, long highestSequenceId, long ledgerId, long entryId) {
-        responseObserver.onNext(Commands.newSendReceipt(sequenceId, highestSequenceId, ledgerId, entryId));
     }
 
     private static ByteBuf serializeMetadataAndPayload(MessageMetadata msgMetadata, ByteBuf payload) {

@@ -66,3 +66,19 @@ add configurations in Pulsar's configuration file, such as `broker.conf` or `sta
 ### Restart Pulsar brokers to load the gRPC protocol handler
 
 After you have installed the gRPC protocol handler to Pulsar broker, you can restart the Pulsar brokers to load it.
+
+## Use the gRPC API
+
+The API is specified in the file [PulsarApi.proto]( protocol-handler/src/main/proto/PulsarApi.proto) and can be used to generate
+Pulsar gRPC clients in the chosen language.
+
+### Topic Lookup
+
+**gRPC definition**
+```protobuf
+rpc lookup_topic(CommandLookupTopic) returns (CommandLookupTopicResponse) {}
+```
+Topic lookup works similarly to the binary protocol except that it returns the `grpcServiceHost`, `grpcServicePort` and
+`grpcServicePortTls` owning the given topic in the response.
+
+### Produce a single message

@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -44,6 +44,7 @@ import org.apache.pulsar.broker.service.schema.SchemaRegistryService;
 import org.apache.pulsar.broker.service.schema.exceptions.IncompatibleSchemaException;
 import org.apache.pulsar.broker.web.RestException;
 import org.apache.pulsar.client.api.PulsarClientException;
+import org.apache.pulsar.client.api.transaction.TxnID;
 import org.apache.pulsar.client.impl.BatchMessageIdImpl;
 import org.apache.pulsar.client.impl.MessageIdImpl;
 import org.apache.pulsar.common.api.proto.PulsarApi;
@@ -96,7 +97,6 @@ import org.apache.pulsar.protocols.grpc.api.Schema;
 import org.apache.pulsar.protocols.grpc.api.SendResult;
 import org.apache.pulsar.protocols.grpc.api.ServerError;
 import org.apache.pulsar.transaction.coordinator.TransactionCoordinatorID;
-import org.apache.pulsar.transaction.impl.common.TxnID;
 import org.apache.pulsar.transaction.impl.common.TxnStatus;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -149,6 +149,9 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
         final String authRole = AUTH_ROLE_CTX_KEY.get();
         final AuthenticationDataSource authenticationData = AUTH_DATA_CTX_KEY.get();
         final boolean authoritative = lookup.getAuthoritative();
+        // TODO: support lookup advertisedListenerName
+        //final String advertisedListenerName = lookup.getAdvertisedListenerName();
+        final String advertisedListenerName = null;
 
         if (log.isDebugEnabled()) {
             log.debug("[{}] Received Lookup from {}", lookup.getTopic(), remoteAddress);
@@ -168,7 +171,7 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
 
         final Semaphore lookupSemaphore = service.getLookupRequestSemaphore();
         if (lookupSemaphore.tryAcquire()) {
-            lookupTopicAsync(service.pulsar(), topicName, authoritative, authRole, authenticationData)
+            lookupTopicAsync(service.pulsar(), topicName, authoritative, authRole, authenticationData, advertisedListenerName)
                     .handle((lookupResponse, ex) -> {
                         if (ex == null) {
                             responseObserver.onNext(lookupResponse);
@@ -529,7 +532,7 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
         CompletableFuture<Boolean> authorizationFuture;
         if (service.isAuthorizationEnabled()) {
             authorizationFuture = service.getAuthorizationService().allowTopicOperationAsync(topicName,
-                    TopicOperation.PRODUCE, originalPrincipal, authRole, authenticationData);
+                    TopicOperation.PRODUCE, authRole, authenticationData);
         } else {
             authorizationFuture = CompletableFuture.completedFuture(true);
         }
@@ -711,7 +714,7 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
                 authenticationData.setSubscription(subscriptionName);
             }
             authorizationFuture = service.getAuthorizationService().allowTopicOperationAsync(topicName,
-                    TopicOperation.CONSUME, originalPrincipal, authRole, authenticationData);
+                    TopicOperation.CONSUME, authRole, authenticationData);
         } else {
             authorizationFuture = CompletableFuture.completedFuture(true);
         }
@@ -1128,7 +1131,7 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
     private static class NoOpStreamObserver<T> implements StreamObserver<T> {
 
         public static <T> NoOpStreamObserver<T> create() {
-            return new NoOpStreamObserver<T>();
+            return new NoOpStreamObserver<>();
         }
 
         private NoOpStreamObserver() {

@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -20,13 +20,24 @@ package org.apache.pulsar.protocols.grpc;
 
 import com.google.protobuf.ByteString;
 import com.google.protobuf.InvalidProtocolBufferException;
-import io.grpc.*;
+import io.grpc.Context;
+import io.grpc.Contexts;
+import io.grpc.Grpc;
+import io.grpc.Metadata;
+import io.grpc.ServerCall;
+import io.grpc.ServerCallHandler;
+import io.grpc.ServerInterceptor;
+import io.grpc.Status;
 import org.apache.pulsar.broker.authentication.AuthenticationDataCommand;
 import org.apache.pulsar.broker.authentication.AuthenticationProvider;
 import org.apache.pulsar.broker.authentication.AuthenticationState;
 import org.apache.pulsar.broker.service.BrokerService;
 import org.apache.pulsar.common.api.AuthData;
-import org.apache.pulsar.protocols.grpc.api.*;
+import org.apache.pulsar.protocols.grpc.api.AuthRoleToken;
+import org.apache.pulsar.protocols.grpc.api.AuthRoleTokenInfo;
+import org.apache.pulsar.protocols.grpc.api.CommandAuth;
+import org.apache.pulsar.protocols.grpc.api.CommandAuthChallenge;
+import org.apache.pulsar.protocols.grpc.api.CommandAuthResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -37,7 +48,12 @@ import java.util.Arrays;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
-import static org.apache.pulsar.protocols.grpc.Constants.*;
+import static org.apache.pulsar.protocols.grpc.Constants.AUTHCHALLENGE_METADATA_KEY;
+import static org.apache.pulsar.protocols.grpc.Constants.AUTHRESPONSE_METADATA_KEY;
+import static org.apache.pulsar.protocols.grpc.Constants.AUTH_DATA_CTX_KEY;
+import static org.apache.pulsar.protocols.grpc.Constants.AUTH_METADATA_KEY;
+import static org.apache.pulsar.protocols.grpc.Constants.AUTH_ROLE_CTX_KEY;
+import static org.apache.pulsar.protocols.grpc.Constants.AUTH_ROLE_TOKEN_METADATA_KEY;
 
 public class AuthenticationInterceptor implements ServerInterceptor {
 
@@ -45,7 +61,7 @@ public class AuthenticationInterceptor implements ServerInterceptor {
 
     private final BrokerService service;
     private final HmacSigner signer;
-    private Map<String, Map<Long, AuthenticationState>> authStates = new ConcurrentHashMap<>();
+    private final Map<String, Map<Long, AuthenticationState>> authStates = new ConcurrentHashMap<>();
 
     private static final long SASL_ROLE_TOKEN_LIVE_SECONDS = 3600;
     // A signer for role token, with random secret.

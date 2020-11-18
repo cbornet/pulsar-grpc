@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -24,6 +24,7 @@ import org.apache.commons.lang3.StringUtils;
 import org.apache.pulsar.broker.PulsarService;
 import org.apache.pulsar.broker.authentication.AuthenticationDataSource;
 import org.apache.pulsar.broker.loadbalance.LoadManager;
+import org.apache.pulsar.broker.namespace.LookupOptions;
 import org.apache.pulsar.broker.web.PulsarWebResource;
 import org.apache.pulsar.broker.web.RestException;
 import org.apache.pulsar.common.lookup.data.LookupData;
@@ -60,7 +61,7 @@ public class TopicLookup extends PulsarWebResource {
      *
      */
     public static CompletableFuture<CommandLookupTopicResponse> lookupTopicAsync(PulsarService pulsarService, TopicName topicName,
-            boolean authoritative, String clientAppId, AuthenticationDataSource authenticationData) {
+            boolean authoritative, String clientAppId, AuthenticationDataSource authenticationData, final String advertisedListenerName) {
 
         final CompletableFuture<CommandLookupTopicResponse> validationFuture = new CompletableFuture<>();
         final CompletableFuture<CommandLookupTopicResponse> lookupfuture = new CompletableFuture<>();
@@ -131,7 +132,12 @@ public class TopicLookup extends PulsarWebResource {
             if (validationFailureResponse != null) {
                 lookupfuture.complete(validationFailureResponse);
             } else {
-                pulsarService.getNamespaceService().getBrokerServiceUrlAsync(topicName, authoritative)
+                LookupOptions options = LookupOptions.builder()
+                        .authoritative(authoritative)
+                        .advertisedListenerName(advertisedListenerName)
+                        .loadTopicsInBundle(true)
+                        .build();
+                pulsarService.getNamespaceService().getBrokerServiceUrlAsync(topicName, options)
                         .thenAccept(lookupResult -> {
 
                             if (log.isDebugEnabled()) {
