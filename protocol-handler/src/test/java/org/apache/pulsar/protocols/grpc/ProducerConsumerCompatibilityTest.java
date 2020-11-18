@@ -1047,7 +1047,7 @@ public class ProducerConsumerCompatibilityTest extends ProducerConsumerBase {
         consumeInput.onNext(Commands.newAck(message.getMessageId(), AckType.Cumulative));
 
         MessageIdData messageId = seekMessage.getMessageId();
-        consumeInput.onNext(Commands.newSeek(1, messageId.getLedgerId(), messageId.getEntryId()));
+        consumeInput.onNext(Commands.newSeek(1, messageId.getLedgerId(), messageId.getEntryId(), new long[0]));
 
         // At the moment the consumer is disconnected during a seek. So we reconnect
         // See https://github.com/apache/pulsar/issues/5073

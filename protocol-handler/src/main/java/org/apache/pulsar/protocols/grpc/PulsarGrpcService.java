@@ -58,6 +58,7 @@ import org.apache.pulsar.common.protocol.schema.SchemaInfoUtil;
 import org.apache.pulsar.common.protocol.schema.SchemaVersion;
 import org.apache.pulsar.common.schema.SchemaType;
 import org.apache.pulsar.common.util.FutureUtil;
+import org.apache.pulsar.common.util.SafeCollectionUtils;
 import org.apache.pulsar.protocols.grpc.api.CommandAddPartitionToTxn;
 import org.apache.pulsar.protocols.grpc.api.CommandAddPartitionToTxnResponse;
 import org.apache.pulsar.protocols.grpc.api.CommandConsumerStats;
@@ -936,7 +937,13 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
                             Subscription subscription = consumer.getSubscription();
                             MessageIdData msgIdData = seek.getMessageId();
 
-                            Position position = new PositionImpl(msgIdData.getLedgerId(), msgIdData.getEntryId());
+                            long[] ackSet = null;
+                            if (msgIdData.getAckSetCount() > 0) {
+                                ackSet = SafeCollectionUtils.longListToArray(msgIdData.getAckSetList());
+                            }
+
+                            Position position = new PositionImpl(msgIdData.getLedgerId(),
+                                    msgIdData.getEntryId(), ackSet);
 
                             subscription.resetCursor(position).thenRun(() -> {
                                 log.info("[{}] [{}][{}] Reset subscription to message id {}", remoteAddress,

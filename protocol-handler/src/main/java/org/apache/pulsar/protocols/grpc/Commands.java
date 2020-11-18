@@ -690,13 +690,14 @@ public class Commands {
         return ConsumeOutput.newBuilder().setGetLastMessageIdResponse(response).build();
     }
 
-    public static ConsumeInput newSeek(long requestId, long ledgerId, long entryId) {
+    public static ConsumeInput newSeek(long requestId, long ledgerId, long entryId, long[] ackSet) {
         CommandSeek.Builder seekBuilder = CommandSeek.newBuilder();
         seekBuilder.setRequestId(requestId);
 
         MessageIdData.Builder messageIdBuilder = MessageIdData.newBuilder();
         messageIdBuilder.setLedgerId(ledgerId);
         messageIdBuilder.setEntryId(entryId);
+        messageIdBuilder.addAllAckSet(SafeCollectionUtils.longArrayToList(ackSet));
         MessageIdData messageId = messageIdBuilder.build();
         seekBuilder.setMessageId(messageId);
 
