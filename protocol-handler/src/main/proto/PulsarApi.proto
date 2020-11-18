@@ -297,8 +297,9 @@ enum KeySharedMode {
 }
 
 message KeySharedMeta {
-    required KeySharedMode keySharedMode = 1;
-    repeated IntRange hashRanges         = 2;
+    required KeySharedMode keySharedMode  = 1;
+    repeated IntRange hashRanges          = 2;
+    optional bool allowOutOfOrderDelivery = 3 [default = false];
 }
 
 enum PayloadType {

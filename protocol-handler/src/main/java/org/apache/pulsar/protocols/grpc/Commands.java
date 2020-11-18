@@ -384,24 +384,21 @@ public class Commands {
         subscribeBuilder.setForceTopicCreation(createTopicIfDoesNotExist);
 
         if (keySharedPolicy != null) {
-            switch (keySharedPolicy.getKeySharedMode()) {
-                case AUTO_SPLIT:
-                    subscribeBuilder.setKeySharedMeta(KeySharedMeta.newBuilder()
-                            .setKeySharedMode(KeySharedMode.AUTO_SPLIT));
-                    break;
-                case STICKY:
-                    KeySharedMeta.Builder builder = KeySharedMeta.newBuilder()
-                            .setKeySharedMode(KeySharedMode.STICKY);
-                    List<Range> ranges = ((KeySharedPolicy.KeySharedPolicySticky) keySharedPolicy)
-                            .getRanges();
-                    for (Range range : ranges) {
-                        builder.addHashRanges(IntRange.newBuilder()
-                                .setStart(range.getStart())
-                                .setEnd(range.getEnd()));
-                    }
-                    subscribeBuilder.setKeySharedMeta(builder);
-                    break;
+            KeySharedMeta.Builder keySharedMetaBuilder = KeySharedMeta.newBuilder();
+            keySharedMetaBuilder.setAllowOutOfOrderDelivery(keySharedPolicy.isAllowOutOfOrderDelivery());
+            keySharedMetaBuilder.setKeySharedMode(internalConvertKeySharedMode(keySharedPolicy.getKeySharedMode()));
+
+            if (keySharedPolicy instanceof KeySharedPolicy.KeySharedPolicySticky) {
+                List<Range> ranges = ((KeySharedPolicy.KeySharedPolicySticky) keySharedPolicy)
+                        .getRanges();
+                for (Range range : ranges) {
+                    keySharedMetaBuilder.addHashRanges(IntRange.newBuilder()
+                            .setStart(range.getStart())
+                            .setEnd(range.getEnd()));
+                }
             }
+
+            subscribeBuilder.setKeySharedMeta(keySharedMetaBuilder.build());
         }
 
         if (startMessageId != null) {
@@ -423,6 +420,15 @@ public class Commands {
         }
 
         return subscribeBuilder.build();
+    }
+
+    private static KeySharedMode internalConvertKeySharedMode(org.apache.pulsar.client.api.KeySharedMode mode) {
+        switch (mode) {
+            case AUTO_SPLIT: return KeySharedMode.AUTO_SPLIT;
+            case STICKY: return KeySharedMode.STICKY;
+            default:
+                throw new IllegalArgumentException("Unexpected key shared mode: " + mode);
+        }
     }
 
     public static ConsumeOutput newSubscriptionSuccess() {
