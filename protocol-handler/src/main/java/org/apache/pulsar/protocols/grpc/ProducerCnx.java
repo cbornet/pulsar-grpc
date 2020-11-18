@@ -201,9 +201,10 @@ public class ProducerCnx extends AbstractGrpcCnx {
         // Persist the message
         if (highestSequenceId != null && sequenceId <= highestSequenceId) {
             producer.publishMessage(producer.getProducerId(), sequenceId, highestSequenceId,
-                    headersAndPayload, numMessages, false);
+                    headersAndPayload, numMessages, send.getIsChunk());
         } else {
-            producer.publishMessage(producer.getProducerId(), sequenceId, headersAndPayload, numMessages, false);
+            producer.publishMessage(producer.getProducerId(), sequenceId, headersAndPayload,
+                    numMessages, send.getIsChunk());
         }
         onMessageHandled();
     }

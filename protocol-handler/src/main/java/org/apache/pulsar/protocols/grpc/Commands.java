@@ -168,6 +168,9 @@ public class Commands {
         if (numMessages > 1) {
             sendBuilder.setNumMessages(numMessages);
         }
+        if (messageData.hasTotalChunkMsgSize() && messageData.getTotalChunkMsgSize() > 1) {
+            sendBuilder.setIsChunk(true);
+        }
         ByteBuf headersAndPayloadByteBuf = serializeMetadataAndPayload(ChecksumType.Crc32c, messageData, payload);
         ByteString headersAndPayload = ByteString.copyFrom(headersAndPayloadByteBuf.nioBuffer());
         headersAndPayloadByteBuf.release();
@@ -184,6 +187,9 @@ public class Commands {
         sendBuilder.setHighestSequenceId(highestSequenceId);
         if (numMessages > 1) {
             sendBuilder.setNumMessages(numMessages);
+        }
+        if (messageData.hasTotalChunkMsgSize() && messageData.getTotalChunkMsgSize() > 1) {
+            sendBuilder.setIsChunk(true);
         }
         ByteBuf headersAndPayloadByteBuf = serializeMetadataAndPayload(ChecksumType.Crc32c, messageData, payload);
         ByteString headersAndPayload = ByteString.copyFrom(headersAndPayloadByteBuf.nioBuffer());
@@ -1175,6 +1181,18 @@ public class Commands {
         }
         if (metadata.hasNullValue()) {
             builder.setNullValue(metadata.getNullValue());
+        }
+        if (metadata.hasUuid()) {
+            builder.setUuid(metadata.getUuid());
+        }
+        if (metadata.hasNumChunksFromMsg()) {
+            builder.setNumChunksFromMsg(metadata.getNumChunksFromMsg());
+        }
+        if (metadata.hasTotalChunkMsgSize()) {
+            builder.setTotalChunkMsgSize(metadata.getTotalChunkMsgSize());
+        }
+        if (metadata.hasChunkId()) {
+            builder.setChunkId(metadata.getChunkId());
         }
         if (metadata.hasNullPartitionKey()) {
             builder.setNullPartitionKey(metadata.getNullPartitionKey());
