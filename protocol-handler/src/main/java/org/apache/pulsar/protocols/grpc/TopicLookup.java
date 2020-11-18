@@ -153,7 +153,7 @@ public class TopicLookup extends PulsarWebResource {
 
                             LookupData lookupData = lookupResult.get().getLookupData();
                             if (lookupResult.get().isRedirect()) {
-                                boolean newAuthoritative = isLeaderBroker(pulsarService);
+                                boolean newAuthoritative = lookupResult.get().isAuthoritativeRedirect();
                                 lookupTopicGrpcData(pulsarService, lookupfuture, lookupData.getHttpUrl(),
                                         lookupData.getHttpUrlTls(), newAuthoritative, LookupType.Redirect,
                                         false);
