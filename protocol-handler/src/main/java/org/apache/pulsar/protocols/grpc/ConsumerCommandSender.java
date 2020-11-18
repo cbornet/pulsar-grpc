@@ -74,7 +74,8 @@ public class ConsumerCommandSender extends DefaultGrpcCommandSender {
     public Future<Void> sendMessagesToConsumer(long consumerId, String topicName, Subscription subscription,
             int partitionIdx, List<Entry> entries, EntryBatchSizes batchSizes, EntryBatchIndexesAcks batchIndexesAcks,
             RedeliveryTracker redeliveryTracker) {
-        for (Entry entry : entries) {
+        for (int i = 0; i < entries.size(); i++) {
+            Entry entry = entries.get(i);
             if (entry == null) {
                 // Entry was filtered out
                 continue;
@@ -99,7 +100,8 @@ public class ConsumerCommandSender extends DefaultGrpcCommandSender {
             }
 
             try {
-                responseObserver.onNext(Commands.newMessage(messageIdBuilder, redeliveryCount, metadataAndPayload, preferedPayloadType));
+                responseObserver.onNext(Commands.newMessage(messageIdBuilder, redeliveryCount, metadataAndPayload,
+                        batchIndexesAcks == null ? null : batchIndexesAcks.getAckSet(i), preferedPayloadType));
             } catch (IOException e) {
                 log.error("Couldn't send message", e);
             }

@@ -36,6 +36,8 @@ import org.apache.pulsar.common.protocol.Commands.ChecksumType;
 import org.apache.pulsar.common.protocol.schema.SchemaVersion;
 import org.apache.pulsar.common.schema.SchemaInfo;
 import org.apache.pulsar.common.schema.SchemaType;
+import org.apache.pulsar.common.util.SafeCollectionUtils;
+import org.apache.pulsar.common.util.collections.BitSetRecyclable;
 import org.apache.pulsar.protocols.grpc.api.AuthData;
 import org.apache.pulsar.protocols.grpc.api.CommandAck;
 import org.apache.pulsar.protocols.grpc.api.CommandAck.AckType;
@@ -448,16 +450,16 @@ public class Commands {
     }
 
     public static ConsumeInput newAck(MessageIdData messageIdData, CommandAck.AckType ackType) {
-        return newAck(messageIdData.getLedgerId(), messageIdData.getEntryId(), ackType, null,
+        return newAck(messageIdData.getLedgerId(), messageIdData.getEntryId(), null, ackType, null,
                 Collections.emptyMap(), 0, 0);
     }
 
     public static ConsumeInput newAck(long ledgerId, long entryId, CommandAck.AckType ackType,
             CommandAck.ValidationError validationError, Map<String, Long> properties) {
-        return newAck(ledgerId, entryId, ackType, validationError, properties, 0, 0);
+        return newAck(ledgerId, entryId, null, ackType, validationError, properties, 0, 0);
     }
 
-    public static ConsumeInput newAck(long ledgerId, long entryId, CommandAck.AckType ackType,
+    public static ConsumeInput newAck(long ledgerId, long entryId, BitSetRecyclable ackSet, CommandAck.AckType ackType,
             CommandAck.ValidationError validationError, Map<String, Long> properties, long txnIdLeastBits,
             long txnIdMostBits) {
         CommandAck.Builder ackBuilder = CommandAck.newBuilder();
@@ -465,6 +467,9 @@ public class Commands {
         MessageIdData.Builder messageIdDataBuilder = MessageIdData.newBuilder();
         messageIdDataBuilder.setLedgerId(ledgerId);
         messageIdDataBuilder.setEntryId(entryId);
+        if (ackSet != null) {
+            messageIdDataBuilder.addAllAckSet(SafeCollectionUtils.longArrayToList(ackSet.toLongArray()));
+        }
         MessageIdData messageIdData = messageIdDataBuilder.build();
         ackBuilder.addMessageId(messageIdData);
         if (validationError != null) {
@@ -498,11 +503,14 @@ public class Commands {
     }
 
     public static ConsumeOutput newMessage(MessageIdData.Builder messageIdBuilder, int redeliveryCount,
-            ByteBuf metadataAndPayload, PayloadType preferedPayloadType) throws IOException {
+            ByteBuf metadataAndPayload, long[] ackSet, PayloadType preferedPayloadType) throws IOException {
         CommandMessage.Builder msgBuilder = CommandMessage.newBuilder();
         msgBuilder.setMessageId(messageIdBuilder);
         if (redeliveryCount > 0) {
             msgBuilder.setRedeliveryCount(redeliveryCount);
+        }
+        if (ackSet != null) {
+            msgBuilder.addAllAckSet(SafeCollectionUtils.longArrayToList(ackSet));
         }
         if (preferedPayloadType == PayloadType.BINARY) {
             ByteString headersAndPayload = ByteString.copyFrom(metadataAndPayload.nioBuffer());
@@ -930,6 +938,7 @@ public class Commands {
         if (messageIdData.hasBatchIndex()) {
             builder.setBatchIndex(messageIdData.getBatchIndex());
         }
+        builder.addAllAckSet(messageIdData.getAckSetList());
         PulsarApi.MessageIdData messageIdData_ = builder.build();
         builder.recycle();
         return messageIdData_;
