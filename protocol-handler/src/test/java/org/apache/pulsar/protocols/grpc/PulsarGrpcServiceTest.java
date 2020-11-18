@@ -887,6 +887,30 @@ public class PulsarGrpcServiceTest {
     }
 
     @Test
+    public void testProducerFailureOnEncryptionRequiredOnBroker() throws Exception {
+        // (a) Set encryption-required at broker level
+        svcConfig.setEncryptionRequireOnProducer(true);
+
+        // (b) Set encryption_required to false on policy
+        ZooKeeperDataCache<Policies> zkDataCache = mock(ZooKeeperDataCache.class);
+        Policies policies = mock(Policies.class);
+        policies.encryption_required = false;
+        policies.topicDispatchRate = Maps.newHashMap();
+        policies.clusterDispatchRate = Maps.newHashMap();
+        doReturn(Optional.of(policies)).when(zkDataCache).get(AdminResource.path(POLICIES, TopicName.get(encryptionRequiredTopicName).getNamespace()));
+        doReturn(CompletableFuture.completedFuture(Optional.of(policies))).when(zkDataCache).getAsync(AdminResource.path(POLICIES, TopicName.get(encryptionRequiredTopicName).getNamespace()));
+        doReturn(zkDataCache).when(configCacheService).policiesCache();
+
+        // test success case: encrypted producer can connect
+        CommandProducer producerParams = Commands.newProducer(encryptionRequiredTopicName,
+                "unencrypted-producer", false, null);
+        verifyProduceFails(producerParams, Status.INVALID_ARGUMENT, ServerError.MetadataError);
+        PersistentTopic topicRef = (PersistentTopic) brokerService.getTopicReference(encryptionRequiredTopicName).get();
+        assertNotNull(topicRef);
+        assertEquals(topicRef.getProducers().size(), 0);
+    }
+
+    @Test
     public void testSendSuccessOnEncryptionRequiredTopic() throws Exception {
         // Set encryption_required to true
         ZooKeeperDataCache<Policies> zkDataCache = mock(ZooKeeperDataCache.class);

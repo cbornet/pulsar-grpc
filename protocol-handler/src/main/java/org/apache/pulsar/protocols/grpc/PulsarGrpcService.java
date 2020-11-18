@@ -133,14 +133,14 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
     private final BrokerService service;
     private final SchemaRegistryService schemaService;
     private final EventLoopGroup eventLoopGroup;
-    private final boolean schemaValidationEnforced;
     private String originalPrincipal = null;
+    private final ServiceConfiguration configuration;
 
     public PulsarGrpcService(BrokerService service, ServiceConfiguration configuration, EventLoopGroup eventLoopGroup) {
         this.service = service;
         this.schemaService = service.pulsar().getSchemaRegistryService();
         this.eventLoopGroup = eventLoopGroup;
-        this.schemaValidationEnforced = configuration.isSchemaValidationEnforced();
+        this.configuration = configuration;
     }
 
     @Override
@@ -561,7 +561,7 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
                     }
 
                     // Check whether the producer will publish encrypted messages or not
-                    if (topic.isEncryptionRequired() && !isEncrypted) {
+                    if ((topic.isEncryptionRequired() || configuration.isEncryptionRequireOnProducer()) && !isEncrypted) {
                         String msg = String.format("Encryption is required in %s", topicName);
                         log.warn("[{}] {}", remoteAddress, msg);
                         responseObserver.onError(newStatusException(Status.INVALID_ARGUMENT, msg, null,
@@ -1004,6 +1004,7 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
                     .setPartition(partitionIndex).build();
 
             responseObserver.onNext(Commands.newGetLastMessageIdResponse(requestId, messageId));
+            return;
         }
 
         // For a valid position, we read the entry out and parse the batch size from its metadata.
@@ -1069,7 +1070,7 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
                 log.info("[{}] {} configured with schema {}",
                         remoteAddress, topic.getName(), hasSchema);
                 CompletableFuture<SchemaVersion> result = new CompletableFuture<>();
-                if (hasSchema && (schemaValidationEnforced || topic.getSchemaValidationEnforced())) {
+                if (hasSchema && (configuration.isSchemaValidationEnforced() || topic.getSchemaValidationEnforced())) {
                     result.completeExceptionally(new IncompatibleSchemaException(
                             "Producers cannot connect or send message without a schema to topics with a schema"));
                 } else {
