@@ -69,6 +69,7 @@ import org.apache.pulsar.common.schema.LongSchemaVersion;
 import org.apache.pulsar.common.schema.SchemaInfo;
 import org.apache.pulsar.common.schema.SchemaType;
 import org.apache.pulsar.protocols.grpc.api.CommandAck.AckType;
+import org.apache.pulsar.protocols.grpc.api.CommandAckResponse;
 import org.apache.pulsar.protocols.grpc.api.CommandConsumerStatsResponse;
 import org.apache.pulsar.protocols.grpc.api.CommandError;
 import org.apache.pulsar.protocols.grpc.api.CommandGetTopicsOfNamespace;
@@ -805,12 +806,14 @@ public class PulsarGrpcServiceTest {
         StreamObserver<ConsumeInput> consumeInput = consumerStub.consume(observer);
         assertTrue(observer.takeOneMessage().hasSubscribeSuccess());
 
-        consumeInput.onNext(Commands.newAck(pos.getLedgerId(), pos.getEntryId(), AckType.Individual,
-                null, Collections.emptyMap()));
+        consumeInput.onNext(Commands.newAck(pos.getLedgerId(), pos.getEntryId(), null, AckType.Individual,
+                null, Collections.emptyMap(), -1, -1, 1));
 
-        // verify nothing is sent out on the wire after ack
-        Thread.sleep(100);
-        assertNull(observer.pollOneMessage());
+        ConsumeOutput consumeOutput = observer.takeOneMessage();
+        assertTrue(consumeOutput.hasAckResponse());
+        CommandAckResponse ackResponse = consumeOutput.getAckResponse();
+        assertFalse(ackResponse.hasError());
+        assertFalse(ackResponse.hasMessage());
         consumeInput.onCompleted();
         observer.waitForCompletion();
     }

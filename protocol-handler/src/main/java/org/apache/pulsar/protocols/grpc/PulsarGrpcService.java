@@ -839,7 +839,19 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
                     case ACK:
                         if (consumer != null) {
                             PulsarApi.CommandAck ack = convertCommandAck(consumeInput.getAck());
-                            consumer.messageAcked(ack);
+                            consumer.messageAcked(ack).thenRun(() -> {
+                                if (ack.hasRequestId()) {
+                                    responseObserver.onNext(Commands.newAckResponse(
+                                            ack.getRequestId(), null, null));
+                                }
+                            }).exceptionally(e -> {
+                                if (ack.hasRequestId()) {
+                                    responseObserver.onNext(Commands.newAckResponse(ack.getRequestId(),
+                                            convertServerError(BrokerServiceException.getClientErrorCode(e)),
+                                            e.getMessage()));
+                                }
+                                return null;
+                            });
                             ack.getMessageIdList().forEach(PulsarApi.MessageIdData::recycle);
                             ack.recycle();
                         }

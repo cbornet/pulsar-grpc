@@ -42,6 +42,7 @@ import org.apache.pulsar.protocols.grpc.api.AuthData;
 import org.apache.pulsar.protocols.grpc.api.CommandAck;
 import org.apache.pulsar.protocols.grpc.api.CommandAck.AckType;
 import org.apache.pulsar.protocols.grpc.api.CommandAck.ValidationError;
+import org.apache.pulsar.protocols.grpc.api.CommandAckResponse;
 import org.apache.pulsar.protocols.grpc.api.CommandActiveConsumerChange;
 import org.apache.pulsar.protocols.grpc.api.CommandAddPartitionToTxn;
 import org.apache.pulsar.protocols.grpc.api.CommandAddPartitionToTxnResponse;
@@ -457,17 +458,17 @@ public class Commands {
 
     public static ConsumeInput newAck(MessageIdData messageIdData, CommandAck.AckType ackType) {
         return newAck(messageIdData.getLedgerId(), messageIdData.getEntryId(), null, ackType, null,
-                Collections.emptyMap(), 0, 0);
+                Collections.emptyMap(), -1, -1, -1);
     }
 
     public static ConsumeInput newAck(long ledgerId, long entryId, CommandAck.AckType ackType,
             CommandAck.ValidationError validationError, Map<String, Long> properties) {
-        return newAck(ledgerId, entryId, null, ackType, validationError, properties, 0, 0);
+        return newAck(ledgerId, entryId, null, ackType, validationError, properties, -1, -1, -1);
     }
 
     public static ConsumeInput newAck(long ledgerId, long entryId, BitSetRecyclable ackSet, CommandAck.AckType ackType,
             CommandAck.ValidationError validationError, Map<String, Long> properties, long txnIdLeastBits,
-            long txnIdMostBits) {
+            long txnIdMostBits, long requestId) {
         CommandAck.Builder ackBuilder = CommandAck.newBuilder();
         ackBuilder.setAckType(ackType);
         MessageIdData.Builder messageIdDataBuilder = MessageIdData.newBuilder();
@@ -487,8 +488,26 @@ public class Commands {
         if (txnIdLeastBits > 0) {
             ackBuilder.setTxnidLeastBits(txnIdLeastBits);
         }
+        if (requestId >= 0) {
+            ackBuilder.setRequestId(requestId);
+        }
         ackBuilder.putAllProperties(properties);
         return ConsumeInput.newBuilder().setAck(ackBuilder).build();
+    }
+
+    public static ConsumeOutput newAckResponse(long requestId, ServerError error, String errorMsg) {
+        CommandAckResponse.Builder commandAckResponseBuilder = CommandAckResponse.newBuilder();
+        commandAckResponseBuilder.setRequestId(requestId);
+
+        if (error != null) {
+            commandAckResponseBuilder.setError(error);
+        }
+
+        if (errorMsg != null) {
+            commandAckResponseBuilder.setMessage(errorMsg);
+        }
+
+        return ConsumeOutput.newBuilder().setAckResponse(commandAckResponseBuilder).build();
     }
 
     public static ConsumeInput newFlow(int messagePermits) {
@@ -830,6 +849,8 @@ public class Commands {
                 return ServerError.InvalidTxnStatus;
             case NotAllowedError:
                 return ServerError.NotAllowedError;
+            case TransactionConflict:
+                return ServerError.TransactionConflict;
             case UnknownError:
             default:
                 return ServerError.UnknownError;
@@ -968,6 +989,9 @@ public class Commands {
         }
         if (ack.hasTxnidMostBits()) {
             builder.setTxnidMostBits(ack.getTxnidMostBits());
+        }
+        if (ack.hasRequestId()) {
+            builder.setRequestId(ack.getRequestId());
         }
         ack.getPropertiesMap().forEach((k, v) -> {
             PulsarApi.KeyLongValue.Builder keyLongValue = PulsarApi.KeyLongValue.newBuilder()
