@@ -821,6 +821,8 @@ public class Commands {
                 return ServerError.TransactionCoordinatorNotFound;
             case InvalidTxnStatus:
                 return ServerError.InvalidTxnStatus;
+            case NotAllowedError:
+                return ServerError.NotAllowedError;
             case UnknownError:
             default:
                 return ServerError.UnknownError;

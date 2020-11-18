@@ -53,22 +53,27 @@ service Pulsar {
 
 message Schema {
     enum Type {
-        None      = 0;
-        String    = 1;
-        Json      = 2;
-        Protobuf  = 3;
-        Avro      = 4;
-        Bool      = 5;
-        Int8      = 6;
-        Int16     = 7;
-        Int32     = 8;
-        Int64     = 9;
-        Float     = 10;
-        Double    = 11;
-        Date      = 12;
-        Time      = 13;
-        Timestamp = 14;
-        KeyValue  = 15;
+        None           = 0;
+        String         = 1;
+        Json           = 2;
+        Protobuf       = 3;
+        Avro           = 4;
+        Bool           = 5;
+        Int8           = 6;
+        Int16          = 7;
+        Int32          = 8;
+        Int64          = 9;
+        Float          = 10;
+        Double         = 11;
+        Date           = 12;
+        Time           = 13;
+        Timestamp      = 14;
+        KeyValue       = 15;
+        Instant        = 16;
+        LocalDate      = 17;
+        LocalTime      = 18;
+        LocalDateTime  = 19;
+        ProtobufNative = 20;
     }
 
     required string name           = 1;
@@ -227,6 +232,7 @@ enum ServerError {
     ConsumerAssignError                   = 19; // Dispatcher assign consumer error
     TransactionCoordinatorNotFound        = 20; // Transaction coordinator not found error
     InvalidTxnStatus                      = 21; // Invalid txn status error
+    NotAllowedError                       = 22; // Not allowed error
 }
 
 message CommandConnect {
