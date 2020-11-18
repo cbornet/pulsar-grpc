@@ -384,6 +384,8 @@ message CommandPartitionedTopicMetadataResponse {
 message CommandLookupTopic {
     required string topic       = 1;
     optional bool authoritative = 2 [default = false];
+
+    optional string advertised_listener_name = 7;
 }
 
 message CommandLookupTopicResponse {

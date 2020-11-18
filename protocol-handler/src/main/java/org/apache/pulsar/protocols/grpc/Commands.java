@@ -25,6 +25,7 @@ import io.grpc.StatusRuntimeException;
 import io.grpc.stub.MetadataUtils;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufInputStream;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.pulsar.broker.service.Subscription;
 import org.apache.pulsar.client.api.KeySharedPolicy;
 import org.apache.pulsar.client.api.Range;
@@ -309,9 +310,16 @@ public class Commands {
     }
 
     public static CommandLookupTopic newLookup(String topic, boolean authoritative) {
+        return newLookup(topic, null, authoritative);
+    }
+
+    public static CommandLookupTopic newLookup(String topic, String listenerName, boolean authoritative) {
         CommandLookupTopic.Builder lookupTopicBuilder = CommandLookupTopic.newBuilder();
         lookupTopicBuilder.setTopic(topic);
         lookupTopicBuilder.setAuthoritative(authoritative);
+        if (StringUtils.isNotBlank(listenerName)) {
+            lookupTopicBuilder.setAdvertisedListenerName(listenerName);
+        }
         return lookupTopicBuilder.build();
     }
 
@@ -1096,107 +1104,11 @@ public class Commands {
             builder.setNullValue(messageMetadata.getNullValue());
         }
         if (messageMetadata.hasNullPartitionKey()) {
-            builder.setNullPartitionKey(messageMetadata.hasNullPartitionKey());
+            builder.setNullPartitionKey(messageMetadata.getNullPartitionKey());
         }
         messageMetadata.getPropertiesMap().forEach(
                 (k, v) -> builder.addProperties(PulsarApi.KeyValue.newBuilder().setKey(k).setValue(v))
         );
         return builder;
-    }
-
-    public static KeyValue convertKeyValue(PulsarApi.KeyValue keyValue) {
-        return KeyValue.newBuilder()
-                .setKey(keyValue.getKey())
-                .setValue(keyValue.getValue())
-                .build();
-    }
-
-    public static EncryptionKeys convertEncryptionKeys(PulsarApi.EncryptionKeys keys) {
-        EncryptionKeys.Builder builder = EncryptionKeys.newBuilder()
-                .setKey(keys.getKey())
-                .setValue(ByteString.copyFrom(keys.getValue().asReadOnlyByteBuffer()));
-        keys.getMetadataList().forEach(keyValue -> builder.addMetadata(convertKeyValue(keyValue)));
-        return builder.build();
-    }
-
-    public static MessageMetadata convertMessageMetadata(PulsarApi.MessageMetadata metadata) {
-        MessageMetadata.Builder builder = MessageMetadata.newBuilder()
-                .setProducerName(metadata.getProducerName())
-                .setSequenceId(metadata.getSequenceId())
-                .setPublishTime(metadata.getPublishTime());
-        metadata.getPropertiesList().forEach(
-                property -> builder.addProperties(convertKeyValue(property))
-        );
-        if (metadata.hasReplicatedFrom()) {
-            builder.setReplicatedFrom(metadata.getReplicatedFrom());
-        }
-        if (metadata.hasPartitionKey()) {
-            builder.setPartitionKey(metadata.getPartitionKey());
-        }
-        metadata.getReplicateToList().forEach(builder::addReplicateTo);
-        if (metadata.hasCompression()) {
-            builder.setCompression(convertCompressionType(metadata.getCompression()));
-        }
-        if (metadata.hasUncompressedSize()) {
-            builder.setUncompressedSize(metadata.getUncompressedSize());
-        }
-        if (metadata.hasNumMessagesInBatch()) {
-            builder.setNumMessagesInBatch(metadata.getNumMessagesInBatch());
-        }
-        if (metadata.hasEventTime()) {
-            builder.setEventTime(metadata.getEventTime());
-        }
-        metadata.getEncryptionKeysList().forEach(
-                key -> builder.addEncryptionKeys(convertEncryptionKeys(key))
-        );
-        if (metadata.hasEncryptionAlgo()) {
-            builder.setEncryptionAlgo(metadata.getEncryptionAlgo());
-        }
-        if (metadata.hasEncryptionParam()) {
-            builder.setEncryptionParam(ByteString.copyFrom(metadata.getEncryptionParam().asReadOnlyByteBuffer()));
-        }
-        if (metadata.hasSchemaVersion()) {
-            builder.setSchemaVersion(ByteString.copyFrom(metadata.getSchemaVersion().asReadOnlyByteBuffer()));
-        }
-        if (metadata.hasPartitionKeyB64Encoded()) {
-            builder.setPartitionKeyB64Encoded(metadata.getPartitionKeyB64Encoded());
-        }
-        if (metadata.hasOrderingKey()) {
-            builder.setOrderingKey(ByteString.copyFrom(metadata.getOrderingKey().asReadOnlyByteBuffer()));
-        }
-        if (metadata.hasDeliverAtTime()) {
-            builder.setDeliverAtTime(metadata.getDeliverAtTime());
-        }
-        if (metadata.hasMarkerType()) {
-            builder.setMarkerType(metadata.getMarkerType());
-        }
-        if (metadata.hasTxnidLeastBits()) {
-            builder.setTxnidLeastBits(metadata.getTxnidLeastBits());
-        }
-        if (metadata.hasTxnidMostBits()) {
-            builder.setTxnidMostBits(metadata.getTxnidMostBits());
-        }
-        if (metadata.hasHighestSequenceId()) {
-            builder.setHighestSequenceId(metadata.getHighestSequenceId());
-        }
-        if (metadata.hasNullValue()) {
-            builder.setNullValue(metadata.getNullValue());
-        }
-        if (metadata.hasUuid()) {
-            builder.setUuid(metadata.getUuid());
-        }
-        if (metadata.hasNumChunksFromMsg()) {
-            builder.setNumChunksFromMsg(metadata.getNumChunksFromMsg());
-        }
-        if (metadata.hasTotalChunkMsgSize()) {
-            builder.setTotalChunkMsgSize(metadata.getTotalChunkMsgSize());
-        }
-        if (metadata.hasChunkId()) {
-            builder.setChunkId(metadata.getChunkId());
-        }
-        if (metadata.hasNullPartitionKey()) {
-            builder.setNullPartitionKey(metadata.getNullPartitionKey());
-        }
-        return builder.build();
     }
 }

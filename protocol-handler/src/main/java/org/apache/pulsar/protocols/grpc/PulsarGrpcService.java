@@ -150,9 +150,7 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
         final String authRole = AUTH_ROLE_CTX_KEY.get();
         final AuthenticationDataSource authenticationData = AUTH_DATA_CTX_KEY.get();
         final boolean authoritative = lookup.getAuthoritative();
-        // TODO: support lookup advertisedListenerName
-        //final String advertisedListenerName = lookup.getAdvertisedListenerName();
-        final String advertisedListenerName = null;
+        final String advertisedListenerName = lookup.getAdvertisedListenerName();
 
         if (log.isDebugEnabled()) {
             log.debug("[{}] Received Lookup from {}", lookup.getTopic(), remoteAddress);
