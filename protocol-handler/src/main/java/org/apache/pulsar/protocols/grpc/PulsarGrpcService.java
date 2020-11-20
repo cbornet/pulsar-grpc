@@ -931,6 +931,7 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
             @Override
             public void onNext(ConsumeInput consumeInput) {
                 Consumer consumer = null;
+
                 if (consumerFuture.isDone() && !consumerFuture.isCompletedExceptionally()) {
                     consumer = consumerFuture.getNow(null);
                 }
