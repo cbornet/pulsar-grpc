@@ -159,7 +159,7 @@ public class ProducerConsumerCompatibilityTest extends ProducerConsumerBase {
         assertTrue(consumeOutput.takeOneMessage().hasSubscribeSuccess());
 
         // Send flow permits
-        consumeInput.onNext(Commands.newFlow(100));
+        //consumeInput.onNext(Commands.newFlow(100));
 
         ProducerBuilder<byte[]> producerBuilder = pulsarClient.newProducer()
                 .enableBatching(false)
@@ -210,7 +210,7 @@ public class ProducerConsumerCompatibilityTest extends ProducerConsumerBase {
         assertTrue(consumeOutput.takeOneMessage().hasSubscribeSuccess());
 
         // Send flow permits
-        consumeInput.onNext(Commands.newFlow(100));
+        //consumeInput.onNext(Commands.newFlow(100));
 
         ProducerBuilder<byte[]> producerBuilder = pulsarClient.newProducer()
                 .enableBatching(false)
@@ -258,7 +258,7 @@ public class ProducerConsumerCompatibilityTest extends ProducerConsumerBase {
         assertTrue(consumeOutput.takeOneMessage().hasSubscribeSuccess());
 
         // Send flow permits
-        consumeInput.onNext(Commands.newFlow(100));
+        //consumeInput.onNext(Commands.newFlow(100));
 
         ProducerBuilder<byte[]> producerBuilder = pulsarClient.newProducer()
                 .enableBatching(false)
@@ -307,7 +307,7 @@ public class ProducerConsumerCompatibilityTest extends ProducerConsumerBase {
         assertTrue(consumeOutput.takeOneMessage().hasSubscribeSuccess());
 
         // Send flow permits
-        consumeInput.onNext(Commands.newFlow(100));
+        //consumeInput.onNext(Commands.newFlow(100));
 
         ProducerBuilder<byte[]> producerBuilder = pulsarClient.newProducer()
                 .enableBatching(false)
@@ -355,7 +355,7 @@ public class ProducerConsumerCompatibilityTest extends ProducerConsumerBase {
         assertTrue(consumeOutput.takeOneMessage().hasSubscribeSuccess());
 
         // Send flow permits
-        consumeInput.onNext(Commands.newFlow(100));
+        //consumeInput.onNext(Commands.newFlow(100));
 
         ProducerBuilder<byte[]> producerBuilder = pulsarClient.newProducer()
                 .enableBatching(true)
@@ -411,7 +411,7 @@ public class ProducerConsumerCompatibilityTest extends ProducerConsumerBase {
         assertTrue(consumeOutput.takeOneMessage().hasSubscribeSuccess());
 
         // Send flow permits
-        consumeInput.onNext(Commands.newFlow(100));
+        //consumeInput.onNext(Commands.newFlow(100));
 
         EncKeyReader reader = new EncKeyReader();
 
@@ -755,7 +755,7 @@ public class ProducerConsumerCompatibilityTest extends ProducerConsumerBase {
         assertTrue(consumeOutput.takeOneMessage().hasSubscribeSuccess());
 
         // Send flow permits
-        consumeInput.onNext(Commands.newFlow(100));
+        //consumeInput.onNext(Commands.newFlow(100));
 
         ProducerBuilder<byte[]> producerBuilder = pulsarClient.newProducer()
                 .enableBatching(false)
@@ -814,7 +814,7 @@ public class ProducerConsumerCompatibilityTest extends ProducerConsumerBase {
         assertTrue(consumeOutput.takeOneMessage().hasSubscribeSuccess());
 
         // Send flow permits
-        consumeInput.onNext(Commands.newFlow(100));
+        //consumeInput.onNext(Commands.newFlow(100));
 
         ProducerBuilder<byte[]> producerBuilder = pulsarClient.newProducer()
                 .enableBatching(false)
@@ -870,7 +870,7 @@ public class ProducerConsumerCompatibilityTest extends ProducerConsumerBase {
         assertTrue(consumeOutput.takeOneMessage().hasSubscribeSuccess());
 
         // Send flow permits
-        consumeInput.onNext(Commands.newFlow(100));
+        //consumeInput.onNext(Commands.newFlow(100));
 
         ProducerBuilder<byte[]> producerBuilder = pulsarClient.newProducer()
                 .enableBatching(false)
@@ -935,7 +935,7 @@ public class ProducerConsumerCompatibilityTest extends ProducerConsumerBase {
         assertTrue(consumeOutput.takeOneMessage().hasSubscribeSuccess());
 
         // Send flow permits
-        consumeInput.onNext(Commands.newFlow(100));
+        //consumeInput.onNext(Commands.newFlow(100));
 
         ProducerBuilder<byte[]> producerBuilder = pulsarClient.newProducer()
                 .enableBatching(false)
@@ -1023,7 +1023,7 @@ public class ProducerConsumerCompatibilityTest extends ProducerConsumerBase {
         assertTrue(consumeOutput.takeOneMessage().hasSubscribeSuccess());
 
         // Send flow permits
-        consumeInput.onNext(Commands.newFlow(100));
+        //consumeInput.onNext(Commands.newFlow(100));
 
         ProducerBuilder<byte[]> producerBuilder = pulsarClient.newProducer()
                 .enableBatching(false)
@@ -1061,7 +1061,7 @@ public class ProducerConsumerCompatibilityTest extends ProducerConsumerBase {
         assertTrue(consumeOutput.takeOneMessage().hasSubscribeSuccess());
 
         // Send flow permits
-        consumeInput.onNext(Commands.newFlow(100));
+        //consumeInput.onNext(Commands.newFlow(100));
 
         messageSet = Sets.newHashSet();
         for (int i = 5; i < 10; i++) {
@@ -1100,7 +1100,7 @@ public class ProducerConsumerCompatibilityTest extends ProducerConsumerBase {
         assertTrue(consumeOutput.takeOneMessage().hasSubscribeSuccess());
 
         // Send flow permits
-        consumeInput.onNext(Commands.newFlow(100));
+        //consumeInput.onNext(Commands.newFlow(100));
 
         ProducerBuilder<byte[]> producerBuilder = pulsarClient.newProducer()
                 .enableBatching(false)
@@ -1143,7 +1143,7 @@ public class ProducerConsumerCompatibilityTest extends ProducerConsumerBase {
         assertTrue(consumeOutput.takeOneMessage().hasSubscribeSuccess());
 
         // Send flow permits
-        consumeInput.onNext(Commands.newFlow(100));
+        //consumeInput.onNext(Commands.newFlow(100));
 
         messageSet = Sets.newHashSet();
         for (int i = 5; i < 10; i++) {

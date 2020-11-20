@@ -18,6 +18,7 @@
  */
 package org.apache.pulsar.protocols.grpc;
 
+import io.grpc.stub.CallStreamObserver;
 import io.grpc.stub.StreamObserver;
 import org.apache.pulsar.broker.authentication.AuthenticationDataSource;
 import org.apache.pulsar.broker.service.BrokerService;
@@ -34,10 +35,11 @@ public class ConsumerCnx extends AbstractGrpcCnx {
     private final ConsumerCommandSender consumerCommandSender;
 
     public ConsumerCnx(BrokerService service, SocketAddress remoteAddress, String authRole,
-            AuthenticationDataSource authenticationData, StreamObserver<ConsumeOutput> responseObserver, PayloadType preferedPayloadType) {
+            AuthenticationDataSource authenticationData, StreamObserver<ConsumeOutput> responseObserver,
+            PayloadType preferedPayloadType, java.util.function.Consumer<Integer> cb) {
         super(service, remoteAddress, authRole, authenticationData);
         this.responseObserver = responseObserver;
-        this.consumerCommandSender = new ConsumerCommandSender(responseObserver, preferedPayloadType);
+        this.consumerCommandSender = new ConsumerCommandSender(responseObserver, preferedPayloadType, cb);
     }
 
     @Override

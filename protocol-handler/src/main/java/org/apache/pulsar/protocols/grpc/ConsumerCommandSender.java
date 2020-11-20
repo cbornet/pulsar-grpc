@@ -18,6 +18,7 @@
  */
 package org.apache.pulsar.protocols.grpc;
 
+import io.grpc.stub.CallStreamObserver;
 import io.grpc.stub.StreamObserver;
 import io.netty.buffer.ByteBuf;
 import io.netty.util.concurrent.Future;
@@ -37,6 +38,8 @@ import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.util.List;
+import java.util.function.Consumer;
+import java.util.function.Function;
 
 public class ConsumerCommandSender extends DefaultGrpcCommandSender {
 
@@ -44,10 +47,13 @@ public class ConsumerCommandSender extends DefaultGrpcCommandSender {
 
     private final StreamObserver<ConsumeOutput> responseObserver;
     private final PayloadType preferedPayloadType;
+    private final Consumer<Integer> cb;
 
-    public ConsumerCommandSender(StreamObserver<ConsumeOutput> responseObserver, PayloadType preferedPayloadType) {
+    public ConsumerCommandSender(StreamObserver<ConsumeOutput> responseObserver, PayloadType preferedPayloadType,
+            Consumer<Integer> cb) {
         this.responseObserver = responseObserver;
         this.preferedPayloadType = preferedPayloadType;
+        this.cb = cb;
     }
 
     @Override
@@ -102,6 +108,8 @@ public class ConsumerCommandSender extends DefaultGrpcCommandSender {
             try {
                 responseObserver.onNext(Commands.newMessage(messageIdBuilder, redeliveryCount, metadataAndPayload,
                         batchIndexesAcks == null ? null : batchIndexesAcks.getAckSet(i), preferedPayloadType));
+
+                cb.accept(1);
             } catch (IOException e) {
                 log.error("Couldn't send message", e);
             }

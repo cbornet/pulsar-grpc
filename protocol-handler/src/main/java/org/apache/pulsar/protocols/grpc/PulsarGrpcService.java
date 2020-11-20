@@ -768,8 +768,50 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
         final boolean forceTopicCreation = subscribe.getForceTopicCreation();
         final KeySharedMeta keySharedMeta = subscribe.hasKeySharedMeta() ? subscribe.getKeySharedMeta() : null;
 
-        ConsumerCnx cnx = new ConsumerCnx(service, remoteAddress, authRole, authenticationData, responseObserver,
-                subscribe.getPreferedPayloadType());
+        CompletableFuture<Consumer> consumerFuture = new CompletableFuture<>();
+        consumerFuture.thenAccept(consumer -> {
+            //consumer.flowPermits(1);
+        });
+
+        CallStreamObserver<ConsumeOutput> consumerResponseObserver = (CallStreamObserver<ConsumeOutput>) responseObserver;
+        consumerResponseObserver.disableAutoInboundFlowControl();
+
+        class OnReadyHandler implements Runnable {
+            // Guard against spurious onReady() calls caused by a race between onNext() and onReady(). If the transport
+            // toggles isReady() from false to true while onNext() is executing, but before onNext() checks isReady(),
+            // request(1) would be called twice - once by onNext() and once by the onReady() scheduled during onNext()'s
+            // execution.
+            private boolean wasReady = false;
+
+            @Override
+            public void run() {
+                if (consumerResponseObserver.isReady() && !wasReady) {
+                    wasReady = true;
+                    consumerFuture.thenAccept(consumer -> {
+                        consumer.flowPermits(1);
+                    });
+                    consumerResponseObserver.request(1);
+                }
+            }
+        }
+
+        final OnReadyHandler onReadyHandler = new OnReadyHandler();
+        consumerResponseObserver.setOnReadyHandler(onReadyHandler);
+
+        java.util.function.Consumer<Integer> cb = numMessages -> {
+            if (consumerResponseObserver.isReady()) {
+                consumerFuture.thenAccept(consumer -> {
+                    consumer.flowPermits(numMessages);
+                });
+                consumerResponseObserver.request(numMessages);
+            } else {
+                // Back-pressure has begun.
+                onReadyHandler.wasReady = false;
+            }
+        };
+
+        ConsumerCnx cnx = new ConsumerCnx(service, remoteAddress, authRole, authenticationData, consumerResponseObserver,
+                subscribe.getPreferedPayloadType(), cb);
 
         CompletableFuture<Boolean> isAuthorizedFuture = isTopicOperationAllowed(
                 topicName,
@@ -778,7 +820,7 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
                 authRole,
                 authenticationData
         );
-        CompletableFuture<Consumer> consumerFuture = new CompletableFuture<>();
+
         isAuthorizedFuture.thenApply(isAuthorized -> {
             if (isAuthorized) {
                 if (log.isDebugEnabled()) {
