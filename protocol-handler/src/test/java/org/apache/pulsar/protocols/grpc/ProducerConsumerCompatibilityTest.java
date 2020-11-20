@@ -30,6 +30,8 @@ import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+import org.apache.pulsar.broker.service.PublishRateLimiter;
+import org.apache.pulsar.broker.service.persistent.PersistentTopic;
 import org.apache.pulsar.client.api.Consumer;
 import org.apache.pulsar.client.api.CryptoKeyReader;
 import org.apache.pulsar.client.api.EncryptionKeyInfo;
@@ -37,7 +39,9 @@ import org.apache.pulsar.client.api.Message;
 import org.apache.pulsar.client.api.Producer;
 import org.apache.pulsar.client.api.ProducerBuilder;
 import org.apache.pulsar.client.api.ProducerConsumerBase;
+import org.apache.pulsar.client.impl.ProducerImpl;
 import org.apache.pulsar.common.api.proto.PulsarApi;
+import org.apache.pulsar.common.policies.data.PublishRate;
 import org.apache.pulsar.common.protocol.schema.SchemaVersion;
 import org.apache.pulsar.common.schema.LongSchemaVersion;
 import org.apache.pulsar.protocols.grpc.api.CommandAck.AckType;
@@ -1280,7 +1284,7 @@ public class ProducerConsumerCompatibilityTest extends ProducerConsumerBase {
 
     private static class TestStreamObserver<T> implements StreamObserver<T> {
 
-        public static final int TIMEOUT = 10000;
+        public static final int TIMEOUT = 10;
 
         public static <T> TestStreamObserver<T> create() {
             return new TestStreamObserver<>();

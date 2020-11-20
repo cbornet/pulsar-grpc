@@ -18,6 +18,7 @@
  */
 package org.apache.pulsar.protocols.grpc;
 
+import com.google.common.annotations.VisibleForTesting;
 import com.google.protobuf.CodedOutputStream;
 import com.scurrilous.circe.checksum.Crc32cIntChecksum;
 import io.grpc.stub.CallStreamObserver;
@@ -46,6 +47,7 @@ import java.io.IOException;
 import java.net.SocketAddress;
 import java.nio.ByteBuffer;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicLongFieldUpdater;
 
 import static org.apache.pulsar.common.protocol.Commands.serializeSingleMessageInBatchWithPayload;
 import static org.apache.pulsar.protocols.grpc.Commands.convertCompressionType;
@@ -56,6 +58,7 @@ public class ProducerCnx extends AbstractGrpcCnx {
     private final ProducerCommandSender producerCommandSender;
     private final EventLoop eventLoop;
     private final boolean preciseDispatcherFlowControl;
+    private boolean preciseTopicPublishRateLimitingEnable;
 
     // Max number of pending requests per produce RPC
     private final int maxPendingSendRequests;
@@ -66,6 +69,11 @@ public class ProducerCnx extends AbstractGrpcCnx {
     private volatile boolean isAutoRead = true;
     private volatile boolean autoReadDisabledRateLimiting = false;
     private final AutoReadAwareOnReadyHandler onReadyHandler = new AutoReadAwareOnReadyHandler();
+    // Flag to manage throttling-publish-buffer by atomically enable/disable read-channel.
+    private volatile boolean autoReadDisabledPublishBufferLimiting = false;
+    private static final AtomicLongFieldUpdater<ProducerCnx> MSG_PUBLISH_BUFFER_SIZE_UPDATER =
+            AtomicLongFieldUpdater.newUpdater(ProducerCnx.class, "messagePublishBufferSize");
+    private volatile long messagePublishBufferSize = 0;
 
     public ProducerCnx(BrokerService service, SocketAddress remoteAddress, String authRole,
             AuthenticationDataSource authenticationData, StreamObserver<SendResult> responseObserver,
@@ -76,6 +84,7 @@ public class ProducerCnx extends AbstractGrpcCnx {
         this.maxPendingSendRequests = service.pulsar().getConfiguration().getMaxPendingPublishRequestsPerConnection();
         this.resumeReadsThreshold = maxPendingSendRequests / 2;
         this.preciseDispatcherFlowControl = service.pulsar().getConfiguration().isPreciseDispatcherFlowControl();
+        this.preciseTopicPublishRateLimitingEnable = service.pulsar().getConfiguration().isPreciseTopicPublishRateLimiterEnable();
         this.responseObserver = (CallStreamObserver<SendResult>) responseObserver;
         this.responseObserver.disableAutoInboundFlowControl();
         this.responseObserver.setOnReadyHandler(onReadyHandler);
@@ -95,24 +104,8 @@ public class ProducerCnx extends AbstractGrpcCnx {
     }
 
     @Override
-    public long getMessagePublishBufferSize() {
-        // TODO: implement
-        return Long.MAX_VALUE;
-    }
-
-    @Override
-    public void cancelPublishRateLimiting() {
-        // TODO: implement
-    }
-
-    @Override
-    public void cancelPublishBufferLimiting() {
-        // TODO: implement
-    }
-
-    @Override
     public void disableCnxAutoRead() {
-        // TODO: implement
+        isAutoRead = false;
     }
 
     public void handleSend(CommandSend send, Producer producer) {
@@ -196,7 +189,7 @@ public class ProducerCnx extends AbstractGrpcCnx {
             }
         }
 
-        startSendOperation(producer);
+        startSendOperation(producer, headersAndPayload.readableBytes(), send.getNumMessages());
 
         // Persist the message
         if (highestSequenceId != null && sequenceId <= highestSequenceId) {
@@ -229,13 +222,30 @@ public class ProducerCnx extends AbstractGrpcCnx {
         return headersAndPayload;
     }
 
-    private void startSendOperation(Producer producer) {
-        boolean isPublishRateExceeded = producer.getTopic().isPublishRateExceeded();
+    private void startSendOperation(Producer producer, int msgSize, int numMessages) {
+        MSG_PUBLISH_BUFFER_SIZE_UPDATER.getAndAdd(this, msgSize);
+        boolean isPublishRateExceeded = false;
+        if (preciseTopicPublishRateLimitingEnable) {
+            boolean isPreciseTopicPublishRateExceeded = producer.getTopic().isTopicPublishRateExceeded(numMessages, msgSize);
+            if (isPreciseTopicPublishRateExceeded) {
+                producer.getTopic().disableCnxAutoRead();
+                return;
+            }
+            isPublishRateExceeded = producer.getTopic().isBrokerPublishRateExceeded();
+        } else {
+            isPublishRateExceeded = producer.getTopic().isPublishRateExceeded();
+        }
+
         if (++pendingSendRequest == maxPendingSendRequests || isPublishRateExceeded) {
             // When the quota of pending send requests is reached, stop reading from channel to cause backpressure on
             // client connection
             isAutoRead = false;
             autoReadDisabledRateLimiting = isPublishRateExceeded;
+        }
+
+        if (getBrokerService().isReachMessagePublishBufferThreshold()) {
+            isAutoRead = false;
+            autoReadDisabledPublishBufferLimiting = true;
         }
     }
 
@@ -246,6 +256,7 @@ public class ProducerCnx extends AbstractGrpcCnx {
 
     @Override
     public void completedSendOperation(boolean isNonPersistentTopic, int msgSize) {
+        MSG_PUBLISH_BUFFER_SIZE_UPDATER.getAndAdd(this, -msgSize);
         if (--pendingSendRequest == resumeReadsThreshold) {
             // Resume producer
             isAutoRead = true;
@@ -263,15 +274,45 @@ public class ProducerCnx extends AbstractGrpcCnx {
         // we can add check (&& pendingSendRequest < maxPendingSendRequests) here but then it requires
         // pendingSendRequest to be volatile and it can be expensive while writing. also this will be called on if
         // throttling is enable on the topic. so, avoid pendingSendRequest check will be fine.
-        if (!isAutoRead && autoReadDisabledRateLimiting) {
+        if (!isAutoRead && !autoReadDisabledRateLimiting && !autoReadDisabledPublishBufferLimiting) {
             // Resume reading from socket if pending-request is not reached to threshold
             isAutoRead = true;
             // triggers channel read
             if (responseObserver.isReady()) {
                 responseObserver.request(1);
             }
+        }
+    }
+
+    @VisibleForTesting
+    @Override
+    public void cancelPublishRateLimiting() {
+        if (autoReadDisabledRateLimiting) {
             autoReadDisabledRateLimiting = false;
         }
+    }
+
+    @VisibleForTesting
+    @Override
+    public void cancelPublishBufferLimiting() {
+        if (autoReadDisabledPublishBufferLimiting) {
+            autoReadDisabledPublishBufferLimiting = false;
+        }
+    }
+
+    @Override
+    public long getMessagePublishBufferSize() {
+        return this.messagePublishBufferSize;
+    }
+
+    @VisibleForTesting
+    void setMessagePublishBufferSize(long bufferSize) {
+        this.messagePublishBufferSize = bufferSize;
+    }
+
+    @VisibleForTesting
+    void setAutoReadDisabledRateLimiting(boolean isLimiting) {
+        this.autoReadDisabledRateLimiting = isLimiting;
     }
 
     public void onMessageHandled() {
@@ -281,6 +322,7 @@ public class ProducerCnx extends AbstractGrpcCnx {
             onReadyHandler.wasReady = false;
         }
     }
+
     class AutoReadAwareOnReadyHandler implements Runnable {
         // Guard against spurious onReady() calls caused by a race between onNext() and onReady(). If the transport
         // toggles isReady() from false to true while onNext() is executing, but before onNext() checks isReady(),
