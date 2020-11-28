@@ -138,7 +138,7 @@ public class MessagePublishThrottlingTest extends ProducerConsumerBase {
         stub = PulsarGrpc.newStub(channel);
     }
 
-    @AfterMethod
+    @AfterMethod(alwaysRun = true)
     @Override
     protected void cleanup() throws Exception {
         grpcService.close();

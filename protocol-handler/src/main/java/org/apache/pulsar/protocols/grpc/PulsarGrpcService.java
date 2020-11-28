@@ -97,7 +97,7 @@ import org.apache.pulsar.protocols.grpc.api.Schema;
 import org.apache.pulsar.protocols.grpc.api.SendResult;
 import org.apache.pulsar.protocols.grpc.api.ServerError;
 import org.apache.pulsar.transaction.coordinator.TransactionCoordinatorID;
-import org.apache.pulsar.transaction.impl.common.TxnStatus;
+import org.apache.pulsar.transaction.coordinator.proto.PulsarTransactionMetadata.TxnStatus;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -419,7 +419,7 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
                 });
     }
 
-    @Override
+    /*@Override
     public void createTransaction(CommandNewTxn command, StreamObserver<CommandNewTxnResponse> responseObserver) {
         SocketAddress remoteAddress = REMOTE_ADDRESS_CTX_KEY.get();
         if (log.isDebugEnabled()) {
@@ -442,7 +442,7 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
                                 convertServerError(BrokerServiceException.getClientErrorCode(ex))));
                     }
                 }));
-    }
+    }*/
 
     @Override
     public void addPartitionsToTransaction(CommandAddPartitionToTxn command, StreamObserver<CommandAddPartitionToTxnResponse> responseObserver) {
@@ -787,9 +787,7 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
             public void run() {
                 if (consumerResponseObserver.isReady() && !wasReady) {
                     wasReady = true;
-                    consumerFuture.thenAccept(consumer -> {
-                        consumer.flowPermits(1);
-                    });
+                    consumerFuture.thenAccept(consumer -> consumer.flowPermits(1));
                     consumerResponseObserver.request(1);
                 }
             }
@@ -800,9 +798,7 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
 
         java.util.function.Consumer<Integer> cb = numMessages -> {
             if (consumerResponseObserver.isReady()) {
-                consumerFuture.thenAccept(consumer -> {
-                    consumer.flowPermits(numMessages);
-                });
+                consumerFuture.thenAccept(consumer -> consumer.flowPermits(numMessages));
                 consumerResponseObserver.request(numMessages);
             } else {
                 // Back-pressure has begun.
@@ -1046,8 +1042,8 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
                                             "Message id and message publish time were not present"));
                             return;
                         }
+                        Subscription subscription = consumer.getSubscription();
                         if (seek.hasMessageId()) {
-                            Subscription subscription = consumer.getSubscription();
                             MessageIdData msgIdData = seek.getMessageId();
 
                             long[] ackSet = null;
@@ -1071,7 +1067,6 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
                                 return null;
                             });
                         } else {
-                            Subscription subscription = consumer.getSubscription();
                             long timestamp = seek.getMessagePublishTime();
 
                             subscription.resetCursor(timestamp).thenRun(() -> {
