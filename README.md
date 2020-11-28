@@ -2,8 +2,7 @@
 
 The gRPC protocol handler for Pulsar provides a gRPC interface as an alternative to the Pulsar binary protocol.
 
-The goal of this handler is to provide an API easier to integrate than the binary TCP protocol when there is no 
-existing Pulsar driver for a given language but there exists a gRPC implementation.
+The goal of this handler is to provide an API easier to integrate than the binary TCP protocol when there is no existing Pulsar driver for a given language but there exists a gRPC implementation.
 
 ## Enable the gRPC protocol handler on your existing Apache Pulsar clusters
 
@@ -29,8 +28,7 @@ mvn clean package -DskipTests
 
 As mentioned previously, the gPRC protocol handler is a plugin that can be installed to the Pulsar brokers.
 
-You need to configure the Pulsar broker to run the gRPC protocol handler as a plugin, that is,
-add configurations in Pulsar's configuration file, such as `broker.conf` or `standalone.conf`.
+You need to configure the Pulsar broker to run the gRPC protocol handler as a plugin, that is, add configurations in Pulsar's configuration file, such as `broker.conf` or `standalone.conf`.
 
 1. Set the configuration of the gRPC protocol handler.
 
@@ -53,8 +51,7 @@ add configurations in Pulsar's configuration file, such as `broker.conf` or `sta
     Set the `grpcServicePort` property to start a plaintext gRPC server.
     
     Set the `grpcServiceTlsPort` property to start a TLS secured gRPC server.
-    The gRPC protocol handler uses the same configuration properties as the Pulsar broker 
-    (see [Transport Encryption using TLS](https://pulsar.apache.org/docs/en/security-tls-transport/) for details).
+    The gRPC protocol handler uses the same configuration properties as the Pulsar broker (see [Transport Encryption using TLS](https://pulsar.apache.org/docs/en/security-tls-transport/) for details).
 
     **Example**
 
@@ -69,8 +66,8 @@ After you have installed the gRPC protocol handler to Pulsar broker, you can res
 
 ## Use the gRPC API
 
-The API is specified in the file [PulsarApi.proto]( protocol-handler/src/main/proto/PulsarApi.proto) and can be used to generate
-Pulsar gRPC clients in the chosen language.
+The API is specified in the file [PulsarApi.proto]( protocol-handler/src/main/proto/PulsarApi.proto) and can be used to generate Pulsar gRPC clients in the chosen language.
+The gRPC API has a lot in common with the [Pulsar binary protocol](https://pulsar.apache.org/docs/en/develop-binary-protocol/): the protobufs exchanged are almost the same. The following documentation will then take the binary protocol definitions of the protos as reference and only highlight the differences.
 
 ### Topic Lookup
 
@@ -78,7 +75,39 @@ Pulsar gRPC clients in the chosen language.
 ```protobuf
 rpc lookup_topic(CommandLookupTopic) returns (CommandLookupTopicResponse) {}
 ```
-Topic lookup works similarly to the binary protocol except that it returns the `grpcServiceHost`, `grpcServicePort` and
-`grpcServicePortTls` owning the given topic in the response.
+Topic lookup works similarly to the [binary protocol](https://pulsar.apache.org/docs/en/develop-binary-protocol/#topic-lookup) except that it returns the `grpcServiceHost`, `grpcServicePort` and `grpcServicePortTls` owning the given topic in the response.
 
-### Produce a single message
+### Producing messages
+
+One essential difference with the binary protocol is that the message metadata and payload are embedded inside the `CommandSend` proto (the performance optimization of the binary protocol cannot be done with standard gRPC).
+In `CommandSend`, there are 3 possible modes to encode the message and payload:
+
+1. `bytes` : this format is the closest from the binary protocol. The client will have to encode the metadata and payload with the binary framing. It's the only mode possible if the message is encrypted.
+2. `MetadataAndPayload` : in this format the metadata and payload are sent in distinct fields with the protobuf framing instead of the Pulsar one. If the `compress` field is set, the message will be compressed by the broker using compressions settings of the metadata. It's also possible to compress on the client.
+3. `Messages` : this format allows to send multiple messages in batch using protobuf instead of the binary framing. The compression settings of the `metadata` field are used to compress the message server-side.
+
+#### Producing a single message
+
+**gRPC definition**
+```
+rpc produceSingle(CommandProduceSingle) returns (CommandSendReceipt) {}
+```
+This is a simplified interface to send one messages one at a time. Note that authentication/authorization will occur at each call so prefer the streaming interface if you have a lot of messages to send.
+`CommandProduceSingle` assembles a `CommandProducer` used to create a producer and a `CommandSend` containing the message to send.
+The producer is automatically closed at the end of the rpc call so there's no `CloseProducer` command needed.
+
+#### Producing a stream of messages
+
+**gRPC definition**
+```
+rpc produce(stream CommandSend) returns (stream SendResult) {}
+```
+This allows to send messages continuously and receive acknowledgments asynchronuously.
+The `CommandProducer` used to create the producer must be passed as [gRPC call metadata](https://grpc.io/docs/what-is-grpc/core-concepts/#metadata) with the key `pulsar-producer-params-bin` and encoded in protobuf.
+
+`SendResult` can be one of :
+* `CommandProducerSuccess` : indicating the producer was opened successfully. No `CommandSend` should be sent before receiving this message.
+* `CommandSendReceipt`
+* `CommandSendError`
+
+The producer is automatically closed at the end of the rpc call so there's no `CloseProducer` command needed.
