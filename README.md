@@ -2,7 +2,7 @@
 
 The gRPC protocol handler for Pulsar provides a gRPC interface as an alternative to the Pulsar binary protocol.
 
-The goal of this handler is to provide an API easier to integrate than the binary TCP protocol when there is no existing Pulsar driver for a given language but there exists a gRPC implementation.
+The goal of this handler is to provide an API easier to integrate than the binary TCP protocol when there is no existing Pulsar driver for a given language or when a wanted feature is not yet implemented in a Pulsar driver but there exists a gRPC implementation.
 
 ## Enable the gRPC protocol handler on your existing Apache Pulsar clusters
 
@@ -76,6 +76,10 @@ In `CommandSend`/`CommandMessage`, there are 3 possible modes to encode the mess
 2. `MetadataAndPayload` : in this format the metadata and payload are sent/received in distinct protobuf fields instead of the Pulsar framing. In a `CommanSend`, if the `compress` field is set, the message will be compressed by the broker using the compressions settings of the metadata. It's also possible to compress on the client.
 3. `Messages` : this format allows to send/receive multiple messages in batch using protobuf format instead of the binary framing. The compression settings contained in the `metadata` field are used by the broker to compress/uncompress the message.
 
+Other difference with the binary protocol is that gRPC has its own keep-alive and reconnection management so you don't have to implement it on the client.
+
+For producers/consumers, the gRPC flow control is used so you don't have to handle rate limit sending errors or consumer flow messages.
+
 ### Topic Lookup
 
 **gRPC definition**
@@ -139,3 +143,6 @@ If the message is encrypted, the BINARY mode will be used as the broker cannot d
 The gRPC flow control is used to automatically backpressure the arrival of new messages. So there's no need to send `CommandFlow` messages to ask for new messages. `CommandFlow` shall be called once to buffer some messages on the broker for throughput tuning.
 
 The consumer is automatically closed at the end of the rpc call so there's no `CloseConsumer` command needed.
+
+### Authenticating
+
