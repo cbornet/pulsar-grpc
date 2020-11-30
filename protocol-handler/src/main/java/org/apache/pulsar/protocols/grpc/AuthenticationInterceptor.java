@@ -105,8 +105,8 @@ public class AuthenticationInterceptor implements ServerInterceptor {
                     AuthenticationProvider authenticationProvider = service.getAuthenticationService()
                             .getAuthenticationProvider(authMethod);
 
-                    // Not find provider named authMethod. Most used for tests.
-                    // In AuthenticationDisabled, it will set authMethod "none".
+                    // No provider named authMethod found. Mostly used for tests.
+                    // In AuthenticationDisabled, it will set authMethod to "none".
                     if (authenticationProvider == null) {
                         String authRole = service.getAuthenticationService().getAnonymousUserRole()
                                 .orElseThrow(() ->

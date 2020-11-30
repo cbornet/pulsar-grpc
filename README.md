@@ -28,6 +28,8 @@ mvn clean package -DskipTests
 
 As mentioned previously, the gPRC protocol handler is a plugin that can be installed to the Pulsar brokers.
 
+Version 2.7+ of Apache Pulsar brokers is required for this plugin to work.
+
 You need to configure the Pulsar broker to run the gRPC protocol handler as a plugin, that is, add configurations in Pulsar's configuration file, such as `broker.conf` or `standalone.conf`.
 
 1. Set the configuration of the gRPC protocol handler.
@@ -80,6 +82,7 @@ Other difference with the binary protocol is that gRPC has its own keep-alive an
 
 For producers/consumers, the gRPC flow control is used so you don't have to handle rate limit sending errors or consumer flow messages.
 
+
 ### Topic Lookup
 
 **gRPC definition**
@@ -89,6 +92,7 @@ rpc lookup_topic(CommandLookupTopic) returns (CommandLookupTopicResponse) {}
 Topic lookup works similarly to the [binary protocol](https://pulsar.apache.org/docs/en/develop-binary-protocol/#topic-lookup) except that it returns the `grpcServiceHost`, `grpcServicePort` and `grpcServicePortTls` owning the given topic in the response.
 
 > It's also possible to lookup the broker by REST or binary protocol and then making a call to the topic's broker `/admin/v2/broker-stats/load-report` endpoint to get the info in the `protocols.grpc` field in the form `grpcServiceHost=xxx;grpcServicePort=xxx;grpcServicePortTls=xxx`.
+
 
 ### Producing messages
 
@@ -101,6 +105,7 @@ rpc produceSingle(CommandProduceSingle) returns (CommandSendReceipt) {}
 This is a simplified interface to send one messages one at a time. Note that authentication/authorization will occur at each call so prefer the streaming interface if you have a lot of messages to send.
 `CommandProduceSingle` assembles a `CommandProducer` used to create a producer and a `CommandSend` containing the message to send.
 The producer is automatically closed at the end of the rpc call so there's no `CloseProducer` command needed.
+
 
 #### Producing a stream of messages
 
@@ -144,5 +149,21 @@ The gRPC flow control is used to automatically backpressure the arrival of new m
 
 The consumer is automatically closed at the end of the rpc call so there's no `CloseConsumer` command needed.
 
+
 ### Authenticating
+
+All [Pulsar modes of authentication](https://pulsar.apache.org/docs/en/security-overview/) are supported (TLS, Athenz, JWT, Kerberos).
+
+Authentication is done by attaching a `CommandAuth` as a binary metadata header with key `pulsar-auth-bin` that contain the same `auth_method` and `auth_data` fields as the Pulsar binary `CommandConnect` message.
+
+For Kerberos/SASL the flow is similar to the one for the REST interface:
+* The client sends a `CommandAuth` message in a call, the broker will immediately close the call with a `CommandAuthChallenge` as a binary metadata header with key `pulsar-authchallenge-bin`.
+* The client must verify and solve the challenge then send the result in a call with `CommandAuthResponse` as a binary metadata header with key `pulsar-authresponse-bin`.
+* The broker will verify the challenge response and if successful will close the call with an `AuthRoleToken` as a binary metadata header with key `pulsar-authroletoken-bin`.
+* The `AuthRoleToken` shall then be used to authentify subsequent calls by passing it as a binary metadata header with key `pulsar-authroletoken-bin`.
+
+
+### Transactions
+
+Coming soon.
 
