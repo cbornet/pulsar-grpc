@@ -72,9 +72,9 @@ The gRPC API has a lot in common with the [Pulsar binary protocol](https://pulsa
 One difference with the binary protocol is that the message metadata and payload are embedded inside the `CommandSend`/`CommandMessage` proto (the performance optimization of the binary protocol cannot be done with standard gRPC).
 In `CommandSend`/`CommandMessage`, there are 3 possible modes to encode the message and payload:
 
-1. `bytes` : this format is the closest from the binary protocol. The client will have to encode the metadata and payload with the binary framing. It's the only mode possible if the message is encrypted.
-2. `MetadataAndPayload` : in this format the metadata and payload are sent in distinct fields with the protobuf framing instead of the Pulsar one. In a `CommanSend`, if the `compress` field is set, the message will be compressed by the broker using the compressions settings of the metadata. It's also possible to compress on the client.
-3. `Messages` : this format allows to send multiple messages in batch using protobuf instead of the binary framing. The compression settings contained in the `metadata` field are used by the broker to compress/uncompress the message.
+1. `bytes` : this format is the closest from the binary protocol. The client will have to encode/decode the metadata and payload with the binary framing. It's the only mode possible if the message is encrypted.
+2. `MetadataAndPayload` : in this format the metadata and payload are sent/received in distinct protobuf fields instead of the Pulsar framing. In a `CommanSend`, if the `compress` field is set, the message will be compressed by the broker using the compressions settings of the metadata. It's also possible to compress on the client.
+3. `Messages` : this format allows to send/receive multiple messages in batch using protobuf format instead of the binary framing. The compression settings contained in the `metadata` field are used by the broker to compress/uncompress the message.
 
 ### Topic Lookup
 
@@ -109,6 +109,8 @@ The `CommandProducer` used to create the producer must be passed as [gRPC call m
 
 `SendResult` can be one of `CommandProducerSuccess`, `CommandSendReceipt`, `CommandSendError`.
 
+If producer/broker/topic rate limit is reached, the gRPC flow control will be triggered. So you don't have to worry about rate limiting sending errors.
+
 The producer is automatically closed at the end of the rpc call so there's no `CloseProducer` command needed.
 
 
@@ -123,15 +125,17 @@ This call creates a consumer to receive messages continuously and send acknowled
 The `CommandSubscribe` used to create the producer must be passed as [gRPC call metadata](https://grpc.io/docs/what-is-grpc/core-concepts/#metadata) with the key `pulsar-consumer-params-bin` and encoded in protobuf.
 
 Compared to the binary protocol, `CommandSubscribe` has an additional `preferedPayloadType` field to indicate how the `CommandMessage` should be sent preferably. It can take the values:
-* MESSAGES (default): batch messages exposed in protobuf
-* BINARY: raw metadata and payload encoded with the binary framing 
-* METADATA_AND_PAYLOAD: metadata and payload in separate protobuf fields
-* METADATA_AND_PAYLOAD_UNCOMPRESSED: metadata and payload in separate protobuf fields with payload uncompressed on the broker.
+* `MESSAGES` (default): batch messages exposed in protobuf
+* `BINARY`: raw metadata and payload encoded with the binary framing 
+* `METADATA_AND_PAYLOAD`: metadata and payload in separate protobuf fields
+* `METADATA_AND_PAYLOAD_UNCOMPRESSED`: metadata and payload in separate protobuf fields with payload uncompressed on the broker.
 
 If the message is encrypted, the BINARY mode will be used as the broker cannot decrypt it.
 
 `ConsumeInput` can be one of `CommandAck`, `CommandFlow`, `CommandUnsubscribe`, `CommandRedeliverUnacknowledgedMessages`,`CommandConsumerStats`,`CommandGetLastMessageId`,`CommandSeek`.
 
-`ConsumeOutput` can be one of `CommandSubscribeSuccess`, `CommandMessage`, `CommandAckResponse`, `CommandActiveConsumerChange`, `CommandReachedEndOfTopic`, `CommandConsumerStatsResponse`, `CommandGetLastMessageIdResponse`, `CommandSuccess`, `CommandError`. 
+`ConsumeOutput` can be one of `CommandSubscribeSuccess`, `CommandMessage`, `CommandAckResponse`, `CommandActiveConsumerChange`, `CommandReachedEndOfTopic`, `CommandConsumerStatsResponse`, `CommandGetLastMessageIdResponse`, `CommandSuccess`, `CommandError`.
+
+The gRPC flow control is used to automatically backpressure the arrival of new messages. So there's no need to send `CommandFlow` messages to ask for new messages. `CommandFlow` shall be called once to buffer some messages on the broker for throughput tuning.
 
 The consumer is automatically closed at the end of the rpc call so there's no `CloseConsumer` command needed.
