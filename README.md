@@ -89,6 +89,7 @@ For producers/consumers, the gRPC flow control is used so you don't have to hand
 rpc lookup_topic(CommandLookupTopic) returns (CommandLookupTopicResponse) {}
 ```
 [Example in Java](https://github.com/cbornet/pulsar-grpc/blob/ade0b5af65c3f139ae23e7dc694b1871ad6a7072/protocol-handler/src/test/java/org/apache/pulsar/protocols/grpc/GrpcServiceTest.java#L186)
+
 Topic lookup works similarly to the [binary protocol](https://pulsar.apache.org/docs/en/develop-binary-protocol/#topic-lookup) except that it returns the `grpcServiceHost`, `grpcServicePort` and `grpcServicePortTls` owning the given topic in the response.
 
 > It's also possible to lookup the broker by REST or binary protocol and then making a call to the topic's broker `/admin/v2/broker-stats/load-report` endpoint to get the info in the `protocols.grpc` field in the form `grpcServiceHost=xxx;grpcServicePort=xxx;grpcServicePortTls=xxx`.
@@ -102,6 +103,7 @@ Topic lookup works similarly to the [binary protocol](https://pulsar.apache.org/
 rpc produceSingle(CommandProduceSingle) returns (CommandSendReceipt) {}
 ```
 [Example in Java](https://github.com/cbornet/pulsar-grpc/blob/ade0b5af65c3f139ae23e7dc694b1871ad6a7072/protocol-handler/src/test/java/org/apache/pulsar/protocols/grpc/PulsarGrpcServiceTest.java#L1428)
+
 This is a simplified interface to send one messages one at a time. Note that authentication/authorization will occur at each call so prefer the streaming interface if you have a lot of messages to send.
 `CommandProduceSingle` assembles a `CommandProducer` used to create a producer and a `CommandSend` containing the message to send.
 The producer is automatically closed at the end of the rpc call so there's no `CloseProducer` command needed.
@@ -113,6 +115,7 @@ The producer is automatically closed at the end of the rpc call so there's no `C
 rpc produce(stream CommandSend) returns (stream SendResult) {}
 ```
 [Example in Java](https://github.com/cbornet/pulsar-grpc/blob/ade0b5af65c3f139ae23e7dc694b1871ad6a7072/protocol-handler/src/test/java/org/apache/pulsar/protocols/grpc/PulsarGrpcServiceTest.java#L448)
+
 This call creates a producer to send messages continuously and receive acknowledgments asynchronously.
 The `CommandProducer` used to create the producer must be passed as [gRPC call metadata](https://grpc.io/docs/what-is-grpc/core-concepts/#metadata) with the key `pulsar-producer-params-bin` and encoded in protobuf.
 
@@ -129,6 +132,7 @@ The producer is automatically closed at the end of the rpc call so there's no `C
 rpc consume(stream ConsumeInput) returns (stream ConsumeOutput) {}
 ```
 [Example in Java](https://github.com/cbornet/pulsar-grpc/blob/ade0b5af65c3f139ae23e7dc694b1871ad6a7072/protocol-handler/src/test/java/org/apache/pulsar/protocols/grpc/ProducerConsumerCompatibilityTest.java#L246)
+
 This call creates a consumer to receive messages continuously and send acknowledgments.
 
 The `CommandSubscribe` used to create the producer must be passed as [gRPC call metadata](https://grpc.io/docs/what-is-grpc/core-concepts/#metadata) with the key `pulsar-consumer-params-bin` and encoded in protobuf.
