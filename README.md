@@ -85,10 +85,10 @@ For producers/consumers, the gRPC flow control is used so you don't have to hand
 
 ### Topic Lookup
 
-**gRPC definition**
 ```protobuf
 rpc lookup_topic(CommandLookupTopic) returns (CommandLookupTopicResponse) {}
 ```
+[Example in Java](https://github.com/cbornet/pulsar-grpc/blob/ade0b5af65c3f139ae23e7dc694b1871ad6a7072/protocol-handler/src/test/java/org/apache/pulsar/protocols/grpc/GrpcServiceTest.java#L186)
 Topic lookup works similarly to the [binary protocol](https://pulsar.apache.org/docs/en/develop-binary-protocol/#topic-lookup) except that it returns the `grpcServiceHost`, `grpcServicePort` and `grpcServicePortTls` owning the given topic in the response.
 
 > It's also possible to lookup the broker by REST or binary protocol and then making a call to the topic's broker `/admin/v2/broker-stats/load-report` endpoint to get the info in the `protocols.grpc` field in the form `grpcServiceHost=xxx;grpcServicePort=xxx;grpcServicePortTls=xxx`.
@@ -98,10 +98,10 @@ Topic lookup works similarly to the [binary protocol](https://pulsar.apache.org/
 
 #### Producing a single message
 
-**gRPC definition**
 ```protobuf
 rpc produceSingle(CommandProduceSingle) returns (CommandSendReceipt) {}
 ```
+[Example in Java](https://github.com/cbornet/pulsar-grpc/blob/ade0b5af65c3f139ae23e7dc694b1871ad6a7072/protocol-handler/src/test/java/org/apache/pulsar/protocols/grpc/PulsarGrpcServiceTest.java#L1428)
 This is a simplified interface to send one messages one at a time. Note that authentication/authorization will occur at each call so prefer the streaming interface if you have a lot of messages to send.
 `CommandProduceSingle` assembles a `CommandProducer` used to create a producer and a `CommandSend` containing the message to send.
 The producer is automatically closed at the end of the rpc call so there's no `CloseProducer` command needed.
@@ -109,10 +109,10 @@ The producer is automatically closed at the end of the rpc call so there's no `C
 
 #### Producing a stream of messages
 
-**gRPC definition**
 ```protobuf
 rpc produce(stream CommandSend) returns (stream SendResult) {}
 ```
+[Example in Java](https://github.com/cbornet/pulsar-grpc/blob/ade0b5af65c3f139ae23e7dc694b1871ad6a7072/protocol-handler/src/test/java/org/apache/pulsar/protocols/grpc/PulsarGrpcServiceTest.java#L448)
 This call creates a producer to send messages continuously and receive acknowledgments asynchronously.
 The `CommandProducer` used to create the producer must be passed as [gRPC call metadata](https://grpc.io/docs/what-is-grpc/core-concepts/#metadata) with the key `pulsar-producer-params-bin` and encoded in protobuf.
 
@@ -125,10 +125,10 @@ The producer is automatically closed at the end of the rpc call so there's no `C
 
 ### Consuming messages
 
-**gRPC definition**
 ```protobuf
 rpc consume(stream ConsumeInput) returns (stream ConsumeOutput) {}
 ```
+[Example in Java](https://github.com/cbornet/pulsar-grpc/blob/ade0b5af65c3f139ae23e7dc694b1871ad6a7072/protocol-handler/src/test/java/org/apache/pulsar/protocols/grpc/ProducerConsumerCompatibilityTest.java#L246)
 This call creates a consumer to receive messages continuously and send acknowledgments.
 
 The `CommandSubscribe` used to create the producer must be passed as [gRPC call metadata](https://grpc.io/docs/what-is-grpc/core-concepts/#metadata) with the key `pulsar-consumer-params-bin` and encoded in protobuf.
@@ -152,9 +152,11 @@ The consumer is automatically closed at the end of the rpc call so there's no `C
 
 ### Authenticating
 
-All [Pulsar modes of authentication](https://pulsar.apache.org/docs/en/security-overview/) are supported (TLS, Athenz, JWT, Kerberos).
+All [Pulsar modes of authentication](https://pulsar.apache.org/docs/en/security-overview/) are supported (TLS, Basic, Athenz, JWT, Kerberos).
 
 Authentication is done by attaching a `CommandAuth` as a binary metadata header with key `pulsar-auth-bin` that contain the same `auth_method` and `auth_data` fields as the Pulsar binary `CommandConnect` message.
+
+[Example in Java](https://github.com/cbornet/pulsar-grpc/blob/30b7cc119bf282e6d9ee4ba6e73cbc03cc2315a1/protocol-handler/src/test/java/org/apache/pulsar/protocols/grpc/AuthenticationInterceptorTest.java#L202)
 
 For Kerberos/SASL the flow is similar to the one for the REST interface:
 * The client sends a `CommandAuth` message in a call, the broker will immediately close the call with a `CommandAuthChallenge` as a binary metadata header with key `pulsar-authchallenge-bin`.
@@ -162,6 +164,7 @@ For Kerberos/SASL the flow is similar to the one for the REST interface:
 * The broker will verify the challenge response and if successful will close the call with an `AuthRoleToken` as a binary metadata header with key `pulsar-authroletoken-bin`.
 * The `AuthRoleToken` shall then be used to authentify subsequent calls by passing it as a binary metadata header with key `pulsar-authroletoken-bin`.
 
+[Example in Java](https://github.com/cbornet/pulsar-grpc/blob/30b7cc119bf282e6d9ee4ba6e73cbc03cc2315a1/protocol-handler/src/test/java/org/apache/pulsar/protocols/grpc/AuthenticationInterceptorTest.java#L343)
 
 ### Transactions
 
