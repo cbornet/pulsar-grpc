@@ -62,6 +62,10 @@ import org.apache.pulsar.protocols.grpc.api.CommandAddPartitionToTxn;
 import org.apache.pulsar.protocols.grpc.api.CommandAddPartitionToTxnResponse;
 import org.apache.pulsar.protocols.grpc.api.CommandConsumerStats;
 import org.apache.pulsar.protocols.grpc.api.CommandEndTxn;
+import org.apache.pulsar.protocols.grpc.api.CommandEndTxnOnPartition;
+import org.apache.pulsar.protocols.grpc.api.CommandEndTxnOnPartitionResponse;
+import org.apache.pulsar.protocols.grpc.api.CommandEndTxnOnSubscription;
+import org.apache.pulsar.protocols.grpc.api.CommandEndTxnOnSubscriptionResponse;
 import org.apache.pulsar.protocols.grpc.api.CommandEndTxnResponse;
 import org.apache.pulsar.protocols.grpc.api.CommandFlow;
 import org.apache.pulsar.protocols.grpc.api.CommandGetLastMessageId;
@@ -181,7 +185,6 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
             return isAuthorized;
         });
     }
-
 
 
     @Override
@@ -419,30 +422,29 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
                 });
     }
 
-    /*@Override
+    @Override
     public void createTransaction(CommandNewTxn command, StreamObserver<CommandNewTxnResponse> responseObserver) {
-        SocketAddress remoteAddress = REMOTE_ADDRESS_CTX_KEY.get();
         if (log.isDebugEnabled()) {
-            log.debug("Receive new txn request to transaction meta store {} from {}.", command.getTcId(), remoteAddress);
+            log.debug("Receive new txn request to transaction meta store {} from {}.", command.getTcId(), REMOTE_ADDRESS_CTX_KEY.get());
         }
         TransactionCoordinatorID tcId = TransactionCoordinatorID.get(command.getTcId());
-        service.pulsar().getTransactionMetadataStoreService().newTransaction(tcId)
+        service.pulsar().getTransactionMetadataStoreService().newTransaction(tcId, command.getTxnTtlSeconds())
                 .whenComplete(((txnID, ex) -> {
                     if (ex == null) {
                         if (log.isDebugEnabled()) {
-                            log.debug("Send response {} for new txn request", tcId.getId());
+                            log.debug("Send response {} for new txn", tcId.getId());
                         }
                         responseObserver.onNext(Commands.newTxnResponse(txnID.getLeastSigBits(), txnID.getMostSigBits()));
                         responseObserver.onCompleted();
                     } else {
                         if (log.isDebugEnabled()) {
-                            log.debug("Send response error for new txn request", ex);
+                            log.debug("Send response error for new txn", ex);
                         }
                         responseObserver.onError(Commands.newStatusException(Status.FAILED_PRECONDITION, ex,
                                 convertServerError(BrokerServiceException.getClientErrorCode(ex))));
                     }
                 }));
-    }*/
+    }
 
     @Override
     public void addPartitionsToTransaction(CommandAddPartitionToTxn command, StreamObserver<CommandAddPartitionToTxnResponse> responseObserver) {
@@ -457,49 +459,118 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
                         if (log.isDebugEnabled()) {
                             log.debug("Send response success for add published partition to txn request");
                         }
-                        responseObserver.onNext(Commands.newAddPartitionToTxnResponse());
+                        responseObserver.onNext(Commands.newAddPartitionToTxnResponse(
+                                txnID.getLeastSigBits(), txnID.getMostSigBits()));
                         responseObserver.onCompleted();
                     } else {
                         if (log.isDebugEnabled()) {
                             log.debug("Send response error for add published partition to txn request", ex);
                         }
-                        responseObserver.onError(Commands.newStatusException(Status.FAILED_PRECONDITION, ex,
-                                convertServerError(BrokerServiceException.getClientErrorCode(ex))));
+                        responseObserver.onNext(Commands.newAddPartitionToTxnResponse(txnID.getMostSigBits(),
+                                convertServerError(BrokerServiceException.getClientErrorCode(ex)), ex.getMessage()));
+                        responseObserver.onCompleted();
                     }
                 }));
     }
 
     @Override
     public void endTransaction(CommandEndTxn command, StreamObserver<CommandEndTxnResponse> responseObserver) {
-        SocketAddress remoteAddress = REMOTE_ADDRESS_CTX_KEY.get();
-        TxnStatus newStatus = null;
-        switch (command.getTxnAction()) {
-            case COMMIT:
-                newStatus = TxnStatus.COMMITTING;
-                break;
-            case ABORT:
-                newStatus = TxnStatus.ABORTING;
-                break;
-        }
+        final int txnAction = command.getTxnAction().getNumber();
         TxnID txnID = new TxnID(command.getTxnidMostBits(), command.getTxnidLeastBits());
-        if (log.isDebugEnabled()) {
-            log.debug("Receive end txn by {} request from {} with txnId {}", newStatus, remoteAddress, txnID);
-        }
-        service.pulsar().getTransactionMetadataStoreService().updateTxnStatus(txnID, newStatus, TxnStatus.OPEN)
-                .whenComplete((v, ex) -> {
-                    if (ex == null) {
-                        if (log.isDebugEnabled()) {
-                            log.debug("Send response success for end txn request");
+
+        List<PulsarApi.MessageIdData> messageIdDataList = command.getMessageIdList().stream()
+                .map(Commands::convertMessageIdData)
+                .collect(Collectors.toList());
+
+        service.pulsar().getTransactionMetadataStoreService()
+                .endTransaction(txnID, txnAction, messageIdDataList)
+                .thenRun(() -> {
+                    responseObserver.onNext(Commands.newEndTxnResponse(
+                            txnID.getLeastSigBits(), txnID.getMostSigBits()));
+                    responseObserver.onCompleted();
+                }).exceptionally(throwable -> {
+            log.error("Send response error for end txn request.", throwable);
+            responseObserver.onNext(Commands.newEndTxnResponse(txnID.getMostSigBits(),
+                    convertServerError(BrokerServiceException.getClientErrorCode(throwable)), throwable.getMessage()));
+            responseObserver.onCompleted();
+            return null;
+        });
+    }
+
+    @Override
+    public void endTransactionOnPartition(CommandEndTxnOnPartition command, StreamObserver<CommandEndTxnOnPartitionResponse> responseObserver) {
+        final int txnAction = command.getTxnAction().getNumber();
+        TxnID txnID = new TxnID(command.getTxnidMostBits(), command.getTxnidLeastBits());
+
+        service.getTopics().get(TopicName.get(command.getTopic()).toString()).whenComplete((topic, t) -> {
+            if (!topic.isPresent()) {
+                responseObserver.onNext(Commands.newEndTxnOnPartitionResponse(
+                        ServerError.TopicNotFound,
+                        "Topic " + command.getTopic() + " is not found."));
+                return;
+            }
+
+            List<PulsarApi.MessageIdData> messageIdDataList = command.getMessageIdList().stream()
+                    .map(Commands::convertMessageIdData)
+                    .collect(Collectors.toList());
+
+            topic.get().endTxn(txnID, txnAction, messageIdDataList)
+                    .whenComplete((ignored, throwable) -> {
+                        if (throwable != null) {
+                            log.error("Handle endTxnOnPartition {} failed.", command.getTopic(), throwable);
+                            responseObserver.onNext(Commands.newEndTxnOnPartitionResponse(
+                                    ServerError.UnknownError, throwable.getMessage()));
+                            return;
                         }
-                        responseObserver.onNext(Commands.newEndTxnResponse(txnID.getLeastSigBits(), txnID.getMostSigBits()));
-                        responseObserver.onCompleted();
-                    } else {
-                        if (log.isDebugEnabled()) {
-                            log.debug("Send response error for end txn request");
-                        }
-                        responseObserver.onError(Commands.newStatusException(Status.FAILED_PRECONDITION, ex,
-                                convertServerError(BrokerServiceException.getClientErrorCode(ex))));
+                        responseObserver.onNext(Commands.newEndTxnOnPartitionResponse(
+                                txnID.getLeastSigBits(), txnID.getMostSigBits()));
+                    });
+        });
+    }
+
+    @Override
+    public void endTransactionOnSubscription(CommandEndTxnOnSubscription command, StreamObserver<CommandEndTxnOnSubscriptionResponse> responseObserver) {
+        final long txnidMostBits = command.getTxnidMostBits();
+        final long txnidLeastBits = command.getTxnidLeastBits();
+        final String topic = command.getSubscription().getTopic();
+        final String subName = command.getSubscription().getSubscription();
+        final int txnAction = command.getTxnAction().getNumber();
+
+        service.getTopics().get(TopicName.get(command.getSubscription().getTopic()).toString())
+                .thenAccept(optionalTopic -> {
+                    if (!optionalTopic.isPresent()) {
+                        log.error("The topic {} is not exist in broker.", command.getSubscription().getTopic());
+                        responseObserver.onNext(Commands.newEndTxnOnSubscriptionResponse(
+                                txnidLeastBits, txnidMostBits,
+                                ServerError.UnknownError,
+                                "The topic " + topic + " is not exist in broker."));
+                        return;
                     }
+
+                    Subscription subscription = optionalTopic.get().getSubscription(subName);
+                    if (subscription == null) {
+                        log.error("Topic {} subscription {} is not exist.", optionalTopic.get().getName(), subName);
+                        responseObserver.onNext(Commands.newEndTxnOnSubscriptionResponse(
+                                txnidLeastBits, txnidMostBits,
+                                ServerError.UnknownError,
+                                "Topic " + optionalTopic.get().getName() + " subscription " + subName + " is not exist."));
+                        return;
+                    }
+
+                    CompletableFuture<Void> completableFuture =
+                            subscription.endTxn(txnidMostBits, txnidLeastBits, txnAction);
+                    completableFuture.whenComplete((ignored, throwable) -> {
+                        if (throwable != null) {
+                            log.error("Handle end txn on subscription failed for request");
+                            responseObserver.onNext(Commands.newEndTxnOnSubscriptionResponse(
+                                    txnidLeastBits, txnidMostBits,
+                                    ServerError.UnknownError,
+                                    "Handle end txn on subscription failed."));
+                            return;
+                        }
+                        responseObserver.onNext(
+                                Commands.newEndTxnOnSubscriptionResponse(txnidLeastBits, txnidMostBits));
+                    });
                 });
     }
 

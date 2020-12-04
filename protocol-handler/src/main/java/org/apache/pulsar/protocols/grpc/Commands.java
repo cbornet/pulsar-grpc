@@ -51,6 +51,8 @@ import org.apache.pulsar.protocols.grpc.api.CommandAuthChallenge;
 import org.apache.pulsar.protocols.grpc.api.CommandConsumerStats;
 import org.apache.pulsar.protocols.grpc.api.CommandConsumerStatsResponse;
 import org.apache.pulsar.protocols.grpc.api.CommandEndTxn;
+import org.apache.pulsar.protocols.grpc.api.CommandEndTxnOnPartitionResponse;
+import org.apache.pulsar.protocols.grpc.api.CommandEndTxnOnSubscriptionResponse;
 import org.apache.pulsar.protocols.grpc.api.CommandEndTxnResponse;
 import org.apache.pulsar.protocols.grpc.api.CommandError;
 import org.apache.pulsar.protocols.grpc.api.CommandFlow;
@@ -781,8 +783,21 @@ public class Commands {
                 .build();
     }
 
-    public static CommandAddPartitionToTxnResponse newAddPartitionToTxnResponse() {
-        return CommandAddPartitionToTxnResponse.getDefaultInstance();
+    public static CommandAddPartitionToTxnResponse newAddPartitionToTxnResponse(long txnIdLeastBits, long txnIdMostBits) {
+        return CommandAddPartitionToTxnResponse.newBuilder()
+                .setTxnidLeastBits(txnIdLeastBits)
+                .setTxnidMostBits(txnIdMostBits)
+                .build();
+    }
+
+    public static CommandAddPartitionToTxnResponse newAddPartitionToTxnResponse(long txnIdMostBits, ServerError error, String errorMsg) {
+        CommandAddPartitionToTxnResponse.Builder builder = CommandAddPartitionToTxnResponse.newBuilder();
+        builder.setTxnidMostBits(txnIdMostBits);
+        builder.setError(error);
+        if (errorMsg != null) {
+            builder.setMessage(errorMsg);
+        }
+        return builder.build();
     }
 
     public static CommandEndTxn newEndTxn(long txnIdLeastBits, long txnIdMostBits, TxnAction txnAction) {
@@ -796,8 +811,51 @@ public class Commands {
     public static CommandEndTxnResponse newEndTxnResponse(long txnIdLeastBits, long txnIdMostBits) {
         return CommandEndTxnResponse.newBuilder()
                 .setTxnidLeastBits(txnIdLeastBits)
+                .setTxnidMostBits(txnIdMostBits).build();
+    }
+
+    public static CommandEndTxnResponse newEndTxnResponse(long txnIdMostBits, ServerError error, String errorMsg) {
+        CommandEndTxnResponse.Builder builder = CommandEndTxnResponse.newBuilder();
+        builder.setTxnidMostBits(txnIdMostBits);
+        builder.setError(error);
+        if (errorMsg != null) {
+            builder.setMessage(errorMsg);
+        }
+        return builder.build();
+    }
+
+    public static CommandEndTxnOnPartitionResponse newEndTxnOnPartitionResponse(long txnIdLeastBits, long txnIdMostBits) {
+        return CommandEndTxnOnPartitionResponse.newBuilder()
+                .setTxnidLeastBits(txnIdLeastBits)
                 .setTxnidMostBits(txnIdMostBits)
                 .build();
+    }
+
+    public static CommandEndTxnOnPartitionResponse newEndTxnOnPartitionResponse(ServerError error, String errorMsg) {
+        CommandEndTxnOnPartitionResponse.Builder builder = CommandEndTxnOnPartitionResponse.newBuilder();
+        builder.setError(error);
+        if (errorMsg != null) {
+            builder.setMessage(errorMsg);
+        }
+        return builder.build();
+    }
+
+    public static CommandEndTxnOnSubscriptionResponse newEndTxnOnSubscriptionResponse(long txnIdLeastBits, long txnIdMostBits) {
+        return CommandEndTxnOnSubscriptionResponse.newBuilder()
+                        .setTxnidLeastBits(txnIdLeastBits)
+                        .setTxnidMostBits(txnIdMostBits).build();
+    }
+
+    public static CommandEndTxnOnSubscriptionResponse newEndTxnOnSubscriptionResponse(long txnIdLeastBits, long txnIdMostBits,
+            ServerError error, String errorMsg) {
+        CommandEndTxnOnSubscriptionResponse.Builder builder = CommandEndTxnOnSubscriptionResponse.newBuilder();
+        builder.setTxnidMostBits(txnIdMostBits);
+        builder.setTxnidLeastBits(txnIdLeastBits);
+        builder.setError(error);
+        if (errorMsg != null) {
+            builder.setMessage(errorMsg);
+        }
+        return builder.build();
     }
 
     public static PulsarGrpc.PulsarStub attachProducerParams(PulsarGrpc.PulsarStub stub, CommandProducer producerParams) {

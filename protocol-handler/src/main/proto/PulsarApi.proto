@@ -49,6 +49,8 @@ service Pulsar {
     rpc create_transaction(CommandNewTxn) returns (CommandNewTxnResponse) {}
     rpc add_partitions_to_transaction(CommandAddPartitionToTxn) returns (CommandAddPartitionToTxnResponse) {}
     rpc end_transaction(CommandEndTxn) returns (CommandEndTxnResponse) {}
+    rpc end_transaction_on_partition(CommandEndTxnOnPartition) returns (CommandEndTxnOnPartitionResponse) {}
+    rpc end_transaction_on_subscription(CommandEndTxnOnSubscription) returns (CommandEndTxnOnSubscriptionResponse) {}
 }
 
 message Schema {
@@ -704,7 +706,8 @@ enum TxnAction {
 }
 
 message CommandNewTxn {
-    optional uint64 tc_id = 1 [default = 0];
+    optional uint64 txn_ttl_seconds = 1 [default = 0];
+    optional uint64 tc_id           = 2 [default = 0];
 }
 
 message CommandNewTxnResponse {
@@ -719,15 +722,69 @@ message CommandAddPartitionToTxn {
 }
 
 message CommandAddPartitionToTxnResponse {
+    optional uint64 txnid_least_bits = 1 [default = 0];
+    optional uint64 txnid_most_bits  = 2 [default = 0];
+    optional ServerError error       = 3;
+    optional string message          = 4;
+}
+
+message Subscription {
+    required string topic = 1;
+    required string subscription = 2;
+}
+
+message CommandAddSubscriptionToTxn {
+    optional uint64 txnid_least_bits   = 1 [default = 0];
+    optional uint64 txnid_most_bits    = 2 [default = 0];
+    repeated Subscription subscription = 3;
+}
+
+message CommandAddSubscriptionToTxnResponse {
+    optional uint64 txnid_least_bits = 1 [default = 0];
+    optional uint64 txnid_most_bits  = 2 [default = 0];
+    optional ServerError error       = 3;
+    optional string message          = 4;
 }
 
 message CommandEndTxn {
-    optional uint64 txnid_least_bits = 1 [default = 0];
-    optional uint64 txnid_most_bits  = 2 [default = 0];
-    optional TxnAction txn_action    = 3;
+    optional uint64 txnid_least_bits  = 1 [default = 0];
+    optional uint64 txnid_most_bits   = 2 [default = 0];
+    optional TxnAction txn_action     = 3;
+    repeated MessageIdData message_id = 4;
 }
 
 message CommandEndTxnResponse {
     optional uint64 txnid_least_bits = 1 [default = 0];
     optional uint64 txnid_most_bits  = 2 [default = 0];
+    optional ServerError error       = 3;
+    optional string message          = 4;
+}
+
+message CommandEndTxnOnPartition {
+    optional uint64 txnid_least_bits  = 1 [default = 0];
+    optional uint64 txnid_most_bits   = 2 [default = 0];
+    optional string topic             = 3;
+    optional TxnAction txn_action     = 4;
+    repeated MessageIdData message_id = 5;
+}
+
+message CommandEndTxnOnPartitionResponse {
+    optional uint64 txnid_least_bits = 1 [default = 0];
+    optional uint64 txnid_most_bits  = 2 [default = 0];
+    optional ServerError error       = 3;
+    optional string message          = 4;
+}
+
+message CommandEndTxnOnSubscription {
+    optional uint64 txnid_least_bits   = 1 [default = 0];
+    optional uint64 txnid_most_bits    = 2 [default = 0];
+    optional Subscription subscription = 3;
+    optional TxnAction txn_action      = 4;
+}
+
+message CommandEndTxnOnSubscriptionResponse {
+    optional uint64 txnid_least_bits = 1 [default = 0];
+    optional uint64 txnid_most_bits  = 2 [default = 0];
+    optional ServerError error       = 3;
+    optional string message          = 4;
 }
