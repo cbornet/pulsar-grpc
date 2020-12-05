@@ -828,6 +828,30 @@ public class PulsarGrpcServiceTest {
     }
 
     @Test
+    public void testAckCommandError() throws Exception {
+        pulsar.getConfiguration().setTransactionCoordinatorEnabled(false);
+        PositionImpl pos = new PositionImpl(0, 0);
+        doReturn(pos).when(cursorMock).getMarkDeletedPosition();
+        CommandSubscribe subscribe = Commands.newSubscribe(successTopicName, successSubName, SubType.Exclusive, 0,
+                "test" /* consumer name */, 0 /* avoid reseting cursor */);
+        PulsarGrpc.PulsarStub consumerStub = Commands.attachConsumerParams(stub, subscribe);
+
+        TestStreamObserver<ConsumeOutput> observer = TestStreamObserver.create();
+        StreamObserver<ConsumeInput> consumeInput = consumerStub.consume(observer);
+        assertTrue(observer.takeOneMessage().hasSubscribeSuccess());
+
+        consumeInput.onNext(Commands.newAck(pos.getLedgerId(), pos.getEntryId(), null, AckType.Individual,
+                null, Collections.emptyMap(), 100, 100, 1));
+
+        ConsumeOutput consumeOutput = observer.takeOneMessage();
+        assertTrue(consumeOutput.hasAckResponse());
+        CommandAckResponse ackResponse = consumeOutput.getAckResponse();
+        assertEquals(ackResponse.getError(), ServerError.NotAllowedError);
+        consumeInput.onCompleted();
+        observer.waitForCompletion();
+    }
+
+    @Test
     public void testFlowCommand() throws Exception {
         CommandSubscribe subscribe = Commands.newSubscribe(successTopicName, successSubName, SubType.Exclusive, 0,
                 "test" /* consumer name */, 0 /* avoid reseting cursor */);
