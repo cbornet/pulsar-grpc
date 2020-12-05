@@ -98,7 +98,6 @@ public class ConsumerCommandSender extends DefaultGrpcCommandSender {
             if (log.isDebugEnabled()) {
                 log.debug("[{}-{}] Sending message to consumer, msg id {}-{}", topicName, subscription, entry.getLedgerId(), entry.getEntryId());
             }
-
             int redeliveryCount = 0;
             PositionImpl position = PositionImpl.get(messageIdBuilder.getLedgerId(), messageIdBuilder.getEntryId());
             if (redeliveryTracker.contains(position)) {
@@ -117,8 +116,12 @@ public class ConsumerCommandSender extends DefaultGrpcCommandSender {
             entry.release();
         }
         batchSizes.recyle();
+        if (batchIndexesAcks != null) {
+            batchIndexesAcks.recycle();
+        }
         // Cannot know when gRPC has effectively sent the message so validate as soon as onNext returns
         // Can we do better ?
+        //TODO: Should get brokerService executor ?
         return ImmediateEventExecutor.INSTANCE.newSucceededFuture(null);
 
     }
