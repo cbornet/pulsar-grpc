@@ -486,17 +486,17 @@ public class Commands {
 
     public static ConsumeInput newAck(MessageIdData messageIdData, CommandAck.AckType ackType) {
         return newAck(messageIdData.getLedgerId(), messageIdData.getEntryId(), null, ackType, null,
-                Collections.emptyMap(), -1, -1, -1);
+                Collections.emptyMap(), -1, -1, -1, -1);
     }
 
     public static ConsumeInput newAck(long ledgerId, long entryId, CommandAck.AckType ackType,
             CommandAck.ValidationError validationError, Map<String, Long> properties) {
-        return newAck(ledgerId, entryId, null, ackType, validationError, properties, -1, -1, -1);
+        return newAck(ledgerId, entryId, null, ackType, validationError, properties, -1, -1, -1, -1);
     }
 
     public static ConsumeInput newAck(long ledgerId, long entryId, BitSetRecyclable ackSet, CommandAck.AckType ackType,
             CommandAck.ValidationError validationError, Map<String, Long> properties, long txnIdLeastBits,
-            long txnIdMostBits, long requestId) {
+            long txnIdMostBits, long requestId, int batchSize) {
         CommandAck.Builder ackBuilder = CommandAck.newBuilder();
         ackBuilder.setAckType(ackType);
         MessageIdData.Builder messageIdDataBuilder = MessageIdData.newBuilder();
@@ -504,6 +504,9 @@ public class Commands {
         messageIdDataBuilder.setEntryId(entryId);
         if (ackSet != null) {
             messageIdDataBuilder.addAllAckSet(SafeCollectionUtils.longArrayToList(ackSet.toLongArray()));
+        }
+        if (batchSize >= 0) {
+            messageIdDataBuilder.setBatchSize(batchSize);
         }
         MessageIdData messageIdData = messageIdDataBuilder.build();
         ackBuilder.addMessageId(messageIdData);
@@ -1042,6 +1045,9 @@ public class Commands {
             builder.setBatchIndex(messageIdData.getBatchIndex());
         }
         builder.addAllAckSet(messageIdData.getAckSetList());
+        if (messageIdData.hasBatchSize()) {
+            builder.setBatchSize(messageIdData.getBatchSize());
+        }
         PulsarApi.MessageIdData messageIdData_ = builder.build();
         builder.recycle();
         return messageIdData_;

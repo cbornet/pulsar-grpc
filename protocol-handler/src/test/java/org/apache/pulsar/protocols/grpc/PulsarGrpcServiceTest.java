@@ -816,7 +816,7 @@ public class PulsarGrpcServiceTest {
         assertTrue(observer.takeOneMessage().hasSubscribeSuccess());
 
         consumeInput.onNext(Commands.newAck(pos.getLedgerId(), pos.getEntryId(), null, AckType.Individual,
-                null, Collections.emptyMap(), -1, -1, 1));
+                null, Collections.emptyMap(), -1, -1, 1, -1));
 
         ConsumeOutput consumeOutput = observer.takeOneMessage();
         assertTrue(consumeOutput.hasAckResponse());
@@ -841,7 +841,7 @@ public class PulsarGrpcServiceTest {
         assertTrue(observer.takeOneMessage().hasSubscribeSuccess());
 
         consumeInput.onNext(Commands.newAck(pos.getLedgerId(), pos.getEntryId(), null, AckType.Individual,
-                null, Collections.emptyMap(), 100, 100, 1));
+                null, Collections.emptyMap(), 100, 100, 1, -1));
 
         ConsumeOutput consumeOutput = observer.takeOneMessage();
         assertTrue(consumeOutput.hasAckResponse());
