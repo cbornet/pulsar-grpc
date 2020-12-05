@@ -57,6 +57,7 @@ import org.apache.pulsar.broker.service.Topic;
 import org.apache.pulsar.broker.service.nonpersistent.NonPersistentTopic;
 import org.apache.pulsar.broker.service.persistent.PersistentTopic;
 import org.apache.pulsar.broker.service.schema.DefaultSchemaRegistryService;
+import org.apache.pulsar.client.api.transaction.TxnID;
 import org.apache.pulsar.common.api.proto.PulsarApi;
 import org.apache.pulsar.common.naming.NamespaceName;
 import org.apache.pulsar.common.naming.TopicName;
@@ -69,10 +70,14 @@ import org.apache.pulsar.common.schema.SchemaInfo;
 import org.apache.pulsar.common.schema.SchemaType;
 import org.apache.pulsar.protocols.grpc.api.CommandAck.AckType;
 import org.apache.pulsar.protocols.grpc.api.CommandAckResponse;
+import org.apache.pulsar.protocols.grpc.api.CommandAddPartitionToTxnResponse;
 import org.apache.pulsar.protocols.grpc.api.CommandConsumerStatsResponse;
+import org.apache.pulsar.protocols.grpc.api.CommandEndTxnResponse;
 import org.apache.pulsar.protocols.grpc.api.CommandError;
 import org.apache.pulsar.protocols.grpc.api.CommandGetTopicsOfNamespace;
 import org.apache.pulsar.protocols.grpc.api.CommandGetTopicsOfNamespaceResponse;
+import org.apache.pulsar.protocols.grpc.api.CommandNewTxn;
+import org.apache.pulsar.protocols.grpc.api.CommandNewTxnResponse;
 import org.apache.pulsar.protocols.grpc.api.CommandProduceSingle;
 import org.apache.pulsar.protocols.grpc.api.CommandProducer;
 import org.apache.pulsar.protocols.grpc.api.CommandSend;
@@ -84,7 +89,12 @@ import org.apache.pulsar.protocols.grpc.api.ConsumeOutput;
 import org.apache.pulsar.protocols.grpc.api.PulsarGrpc;
 import org.apache.pulsar.protocols.grpc.api.SendResult;
 import org.apache.pulsar.protocols.grpc.api.ServerError;
+import org.apache.pulsar.protocols.grpc.api.TxnAction;
 import org.apache.pulsar.shaded.com.google.protobuf.v241.ByteString;
+import org.apache.pulsar.transaction.coordinator.TransactionCoordinatorID;
+import org.apache.pulsar.transaction.coordinator.TxnMeta;
+import org.apache.pulsar.transaction.coordinator.impl.InMemTransactionMetadataStoreProvider;
+import org.apache.pulsar.transaction.coordinator.proto.PulsarTransactionMetadata.TxnStatus;
 import org.apache.pulsar.zookeeper.ZooKeeperCache;
 import org.apache.pulsar.zookeeper.ZooKeeperDataCache;
 import org.apache.pulsar.zookeeper.ZookeeperClientFactoryImpl;
@@ -189,7 +199,7 @@ public class PulsarGrpcServiceTest {
         ZooKeeper mockZk = createMockZooKeeper();
         doReturn(mockZk).when(pulsar).getZkClient();
         doReturn(createMockBookKeeper(mockZk, ForkJoinPool.commonPool()))
-            .when(pulsar).getBookKeeperClient();
+                .when(pulsar).getBookKeeperClient();
 
         configCacheService = mock(ConfigurationCacheService.class);
         ZooKeeperDataCache<Policies> zkDataCache = mock(ZooKeeperDataCache.class);
@@ -213,20 +223,20 @@ public class PulsarGrpcServiceTest {
         doReturn(true).when(namespaceService).isServiceUnitActive(any());
         doReturn(CompletableFuture.completedFuture(true)).when(namespaceService).checkTopicOwnership(any());
 
-        /*transactionMetadataStoreService =
-                new TransactionMetadataStoreService(new InMemTransactionMetadataStoreProvider(), pulsar);
-        doReturn(transactionMetadataStoreService).when(pulsar).getTransactionMetadataStoreService();*/
+        transactionMetadataStoreService =
+                new TransactionMetadataStoreService(new InMemTransactionMetadataStoreProvider(), pulsar, null);
+        doReturn(transactionMetadataStoreService).when(pulsar).getTransactionMetadataStoreService();
 
         setupMLAsyncCallbackMocks();
 
         String serverName = InProcessServerBuilder.generateName();
 
         server = InProcessServerBuilder.forName(serverName)
-            .addService(ServerInterceptors.intercept(
-                new PulsarGrpcService(brokerService, svcConfig, new NioEventLoopGroup()),
-                Collections.singletonList(new GrpcServerInterceptor())
-            ))
-            .build();
+                .addService(ServerInterceptors.intercept(
+                        new PulsarGrpcService(brokerService, svcConfig, new NioEventLoopGroup()),
+                        Collections.singletonList(new GrpcServerInterceptor())
+                ))
+                .build();
 
         server.start();
 
@@ -248,7 +258,7 @@ public class PulsarGrpcServiceTest {
     @Test
     public void testProduce() throws Exception {
         // test PRODUCER success case
-        CommandProducer producerParams = Commands.newProducer(successTopicName,"prod-name", Collections.emptyMap());
+        CommandProducer producerParams = Commands.newProducer(successTopicName, "prod-name", Collections.emptyMap());
         PulsarGrpc.PulsarStub producerStub = Commands.attachProducerParams(stub, producerParams);
 
         TestStreamObserver<SendResult> observer = TestStreamObserver.create();
@@ -262,7 +272,7 @@ public class PulsarGrpcServiceTest {
         assertEquals(topicRef.getProducers().size(), 1);
 
         // test PRODUCER error case
-        producerParams = Commands.newProducer(failTopicName,"prod-name-2", Collections.emptyMap());
+        producerParams = Commands.newProducer(failTopicName, "prod-name-2", Collections.emptyMap());
         producerStub = Commands.attachProducerParams(stub, producerParams);
 
         TestStreamObserver<SendResult> observer2 = TestStreamObserver.create();
@@ -306,7 +316,7 @@ public class PulsarGrpcServiceTest {
         doReturn(true).when(brokerService).isAuthorizationEnabled();
 
         // test PRODUCER success case
-        CommandProducer producerParams = Commands.newProducer(successTopicName,"prod-name", Collections.emptyMap());
+        CommandProducer producerParams = Commands.newProducer(successTopicName, "prod-name", Collections.emptyMap());
         PulsarGrpc.PulsarStub producerStub = Commands.attachProducerParams(stub, producerParams);
 
         TestStreamObserver<SendResult> observer = TestStreamObserver.create();
@@ -366,7 +376,7 @@ public class PulsarGrpcServiceTest {
         doReturn(CompletableFuture.completedFuture(true)).when(authorizationProvider).checkPermission(any(TopicName.class), Mockito.any(),
                 any(AuthAction.class));
 
-        CommandProducer producerParams = Commands.newProducer(successTopicName,"prod-name", Collections.emptyMap());
+        CommandProducer producerParams = Commands.newProducer(successTopicName, "prod-name", Collections.emptyMap());
         PulsarGrpc.PulsarStub producerStub = Commands.attachProducerParams(stub, producerParams);
 
         TestStreamObserver<SendResult> observer = TestStreamObserver.create();
@@ -377,7 +387,7 @@ public class PulsarGrpcServiceTest {
         request.onCompleted();
         observer.waitForCompletion();
 
-        producerParams = Commands.newProducer(topicWithNonLocalCluster,"prod-name", Collections.emptyMap());
+        producerParams = Commands.newProducer(topicWithNonLocalCluster, "prod-name", Collections.emptyMap());
         verifyProduceFails(producerParams, Status.PERMISSION_DENIED, ServerError.AuthorizationError);
     }
 
@@ -440,13 +450,13 @@ public class PulsarGrpcServiceTest {
         doReturn(true).when(brokerService).isAuthorizationEnabled();
         doReturn("prod1").when(brokerService).generateUniqueProducerName();
 
-        CommandProducer producerParams = Commands.newProducer(successTopicName,null, Collections.emptyMap());
+        CommandProducer producerParams = Commands.newProducer(successTopicName, null, Collections.emptyMap());
         verifyProduceFails(producerParams, Status.PERMISSION_DENIED, ServerError.AuthorizationError);
     }
 
     @Test
     public void testSendCommand() throws Exception {
-        CommandProducer producerParams = Commands.newProducer(successTopicName,"prod-name", Collections.emptyMap());
+        CommandProducer producerParams = Commands.newProducer(successTopicName, "prod-name", Collections.emptyMap());
         PulsarGrpc.PulsarStub producerStub = Commands.attachProducerParams(stub, producerParams);
 
         TestStreamObserver<SendResult> observer = TestStreamObserver.create();
@@ -843,8 +853,8 @@ public class PulsarGrpcServiceTest {
         doReturn(zkDataCache).when(configCacheService).policiesCache();
 
         // test success case: encrypted producer can connect
-        CommandProducer producerParams =Commands.newProducer(encryptionRequiredTopicName,
-            "encrypted-producer", true, null);
+        CommandProducer producerParams = Commands.newProducer(encryptionRequiredTopicName,
+                "encrypted-producer", true, null);
         PulsarGrpc.PulsarStub producerStub = Commands.attachProducerParams(stub, producerParams);
 
         TestStreamObserver<SendResult> observer = TestStreamObserver.create();
@@ -875,7 +885,7 @@ public class PulsarGrpcServiceTest {
 
         // test success case: encrypted producer can connect
         CommandProducer producerParams = Commands.newProducer(encryptionRequiredTopicName,
-            "unencrypted-producer", false, null);
+                "unencrypted-producer", false, null);
         verifyProduceFails(producerParams, Status.INVALID_ARGUMENT, ServerError.MetadataError);
         PersistentTopic topicRef = (PersistentTopic) brokerService.getTopicReference(encryptionRequiredTopicName).get();
         assertNotNull(topicRef);
@@ -919,7 +929,7 @@ public class PulsarGrpcServiceTest {
         doReturn(zkDataCache).when(configCacheService).policiesCache();
 
         CommandProducer producerParams = Commands.newProducer(encryptionRequiredTopicName,
-            "prod-name", true, null);
+                "prod-name", true, null);
 
         PulsarGrpc.PulsarStub producerStub = Commands.attachProducerParams(stub, producerParams);
 
@@ -930,11 +940,11 @@ public class PulsarGrpcServiceTest {
 
         // test success case: encrypted messages can be published
         PulsarApi.MessageMetadata messageMetadata = PulsarApi.MessageMetadata.newBuilder()
-            .setPublishTime(System.currentTimeMillis())
-            .setProducerName("prod-name")
-            .setSequenceId(0)
-            .addEncryptionKeys(PulsarApi.EncryptionKeys.newBuilder().setKey("testKey").setValue(ByteString.copyFrom("testVal".getBytes())))
-            .build();
+                .setPublishTime(System.currentTimeMillis())
+                .setProducerName("prod-name")
+                .setSequenceId(0)
+                .addEncryptionKeys(PulsarApi.EncryptionKeys.newBuilder().setKey("testKey").setValue(ByteString.copyFrom("testVal".getBytes())))
+                .build();
         ByteBuf data = Unpooled.buffer(1024);
 
         CommandSend send = Commands.newSend(1, 0, 1, messageMetadata, data);
@@ -959,7 +969,7 @@ public class PulsarGrpcServiceTest {
         doReturn(zkDataCache).when(configCacheService).policiesCache();
 
         CommandProducer producerParams = Commands.newProducer(encryptionRequiredTopicName,
-            "prod-name", true, null);
+                "prod-name", true, null);
 
         PulsarGrpc.PulsarStub producerStub = Commands.attachProducerParams(stub, producerParams);
 
@@ -970,10 +980,10 @@ public class PulsarGrpcServiceTest {
 
         // test success case: encrypted messages can be published
         PulsarApi.MessageMetadata messageMetadata = PulsarApi.MessageMetadata.newBuilder()
-            .setPublishTime(System.currentTimeMillis())
-            .setProducerName("prod-name")
-            .setSequenceId(0)
-            .build();
+                .setPublishTime(System.currentTimeMillis())
+                .setProducerName("prod-name")
+                .setSequenceId(0)
+                .build();
         ByteBuf data = Unpooled.buffer(1024);
 
         CommandSend send = Commands.newSend(1, 0, 1, messageMetadata, data);
@@ -1103,7 +1113,7 @@ public class PulsarGrpcServiceTest {
         doReturn(true).when(spyTopic).getSchemaValidationEnforced();
         doReturn(CompletableFuture.completedFuture(spyTopic)).when(brokerService).getOrCreateTopic(successTopicName);
 
-        CommandProducer producerParams = Commands.newProducer(successTopicName,"prod-name", Collections.emptyMap());
+        CommandProducer producerParams = Commands.newProducer(successTopicName, "prod-name", Collections.emptyMap());
         verifyProduceFails(producerParams, Status.FAILED_PRECONDITION, ServerError.IncompatibleSchema);
     }
 
@@ -1115,8 +1125,8 @@ public class PulsarGrpcServiceTest {
         doReturn(CompletableFuture.completedFuture(spyTopic)).when(brokerService).getOrCreateTopic(successTopicName);
 
         // test success case: encrypted producer can connect
-        CommandProducer producerParams =Commands.newProducer(successTopicName,
-            "exceeded-producer", true, null);
+        CommandProducer producerParams = Commands.newProducer(successTopicName,
+                "exceeded-producer", true, null);
         verifyProduceFails(producerParams, Status.FAILED_PRECONDITION, ServerError.ProducerBlockedQuotaExceededError);
     }
 
@@ -1128,8 +1138,8 @@ public class PulsarGrpcServiceTest {
         doReturn(CompletableFuture.completedFuture(spyTopic)).when(brokerService).getOrCreateTopic(successTopicName);
 
         // test success case: encrypted producer can connect
-        CommandProducer producerParams =Commands.newProducer(successTopicName,
-            "exceeded-producer", true, null);
+        CommandProducer producerParams = Commands.newProducer(successTopicName,
+                "exceeded-producer", true, null);
         verifyProduceFails(producerParams, Status.FAILED_PRECONDITION, ServerError.ProducerBlockedQuotaExceededException);
     }
 
@@ -1341,7 +1351,7 @@ public class PulsarGrpcServiceTest {
         assertEquals(topics.getTopicsList().get(1), "my-topic2");
     }
 
-    /*@Test
+    @Test
     public void testCreateTransaction() {
         long tcId = 100;
         transactionMetadataStoreService.addTransactionMetadataStore(TransactionCoordinatorID.get(tcId));
@@ -1349,7 +1359,7 @@ public class PulsarGrpcServiceTest {
         CommandNewTxnResponse txn = blockingStub.createTransaction(Commands.newTxn(tcId));
 
         TxnStatus txnStatus = transactionMetadataStoreService.getTxnMeta(new TxnID(txn.getTxnidMostBits(), txn.getTxnidLeastBits()))
-                .thenApply(txnMeta -> txnMeta.status())
+                .thenApply(TxnMeta::status)
                 .getNow(null);
 
         assertEquals(txnStatus, TxnStatus.OPEN);
@@ -1376,10 +1386,11 @@ public class PulsarGrpcServiceTest {
         CommandNewTxnResponse txn = blockingStub.createTransaction(Commands.newTxn(tcId));
 
         List<String> partitions = Arrays.asList("part1", "part2");
-        blockingStub.addPartitionsToTransaction(Commands.newAddPartitionToTxn(txn.getTxnidLeastBits(), txn.getTxnidMostBits(), partitions));
+        blockingStub.addPartitionsToTransaction(
+                Commands.newAddPartitionToTxn(txn.getTxnidLeastBits(), txn.getTxnidMostBits(), partitions));
 
         List<String> txnPartitions = transactionMetadataStoreService.getTxnMeta(new TxnID(txn.getTxnidMostBits(), txn.getTxnidLeastBits()))
-                .thenApply(txnMeta -> txnMeta.producedPartitions())
+                .thenApply(TxnMeta::producedPartitions)
                 .getNow(null);
 
         assertEquals(txnPartitions, partitions);
@@ -1404,13 +1415,17 @@ public class PulsarGrpcServiceTest {
 
         CommandNewTxnResponse txn = blockingStub.createTransaction(Commands.newTxn(tcId));
 
-        blockingStub.endTransaction(Commands.newEndTxn(txn.getTxnidLeastBits(), txn.getTxnidMostBits(), TxnAction.ABORT));
+        CommandEndTxnResponse response = blockingStub.endTransaction(
+                Commands.newEndTxn(txn.getTxnidLeastBits(), txn.getTxnidMostBits(), TxnAction.ABORT));
 
-        TxnStatus txnStatus = transactionMetadataStoreService.getTxnMeta(new TxnID(txn.getTxnidMostBits(), txn.getTxnidLeastBits()))
-                .thenApply(txnMeta -> txnMeta.status())
+        TxnStatus txnStatus = transactionMetadataStoreService
+                .getTxnMeta(new TxnID(txn.getTxnidMostBits(), txn.getTxnidLeastBits()))
+                .thenApply(TxnMeta::status)
                 .getNow(null);
 
-        assertEquals(txnStatus, TxnStatus.ABORTING);
+        assertEquals(txnStatus, TxnStatus.ABORTED);
+        assertEquals(response.getTxnidLeastBits(), 0);
+        assertEquals(response.getTxnidMostBits(), 100);
     }
 
     @Test
@@ -1419,14 +1434,14 @@ public class PulsarGrpcServiceTest {
             blockingStub.endTransaction(Commands.newEndTxn(100, 200, TxnAction.ABORT));
             fail("StatusRuntimeException should have been thrown");
         } catch (StatusRuntimeException e) {
-            assertErrorIsStatusExceptionWithServerError(e, Status.FAILED_PRECONDITION,
+            assertErrorIsStatusExceptionWithServerError(e, Status.UNKNOWN,
                     ServerError.TransactionCoordinatorNotFound);
         }
-    }*/
+    }
 
     @Test
     public void testProduceSingle() {
-        CommandProducer producerParams = Commands.newProducer(successTopicName,"prod-name", Collections.emptyMap());
+        CommandProducer producerParams = Commands.newProducer(successTopicName, "prod-name", Collections.emptyMap());
 
         PulsarApi.MessageMetadata messageMetadata = PulsarApi.MessageMetadata.newBuilder()
                 .setPublishTime(System.currentTimeMillis())
@@ -1449,7 +1464,7 @@ public class PulsarGrpcServiceTest {
     @Test
     public void testProduceSingleError() {
         String invalidTopicName = "xx/ass/aa/aaa";
-        CommandProducer producerParams = Commands.newProducer(invalidTopicName,"prod-name", Collections.emptyMap());
+        CommandProducer producerParams = Commands.newProducer(invalidTopicName, "prod-name", Collections.emptyMap());
 
         PulsarApi.MessageMetadata messageMetadata = PulsarApi.MessageMetadata.newBuilder()
                 .setPublishTime(System.currentTimeMillis())
@@ -1631,7 +1646,7 @@ public class PulsarGrpcServiceTest {
             super.shutdown();
         }
     }
-    
+
     @SuppressWarnings("unchecked")
     private void setupMLAsyncCallbackMocks() {
         doReturn(new ArrayList<Object>()).when(ledgerMock).getCursors();

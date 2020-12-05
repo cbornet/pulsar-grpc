@@ -466,9 +466,8 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
                         if (log.isDebugEnabled()) {
                             log.debug("Send response error for add published partition to txn request", ex);
                         }
-                        responseObserver.onNext(Commands.newAddPartitionToTxnResponse(txnID.getMostSigBits(),
-                                convertServerError(BrokerServiceException.getClientErrorCode(ex)), ex.getMessage()));
-                        responseObserver.onCompleted();
+                        responseObserver.onError(Commands.newStatusException(Status.FAILED_PRECONDITION, ex,
+                                convertServerError(BrokerServiceException.getClientErrorCode(ex))));
                     }
                 }));
     }
@@ -490,9 +489,8 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
                     responseObserver.onCompleted();
                 }).exceptionally(throwable -> {
             log.error("Send response error for end txn request.", throwable);
-            responseObserver.onNext(Commands.newEndTxnResponse(txnID.getMostSigBits(),
-                    convertServerError(BrokerServiceException.getClientErrorCode(throwable)), throwable.getMessage()));
-            responseObserver.onCompleted();
+            responseObserver.onError(Commands.newStatusException(Status.UNKNOWN, throwable,
+                    convertServerError(BrokerServiceException.getClientErrorCode(throwable))));
             return null;
         });
     }
@@ -504,9 +502,8 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
 
         service.getTopics().get(TopicName.get(command.getTopic()).toString()).whenComplete((topic, t) -> {
             if (!topic.isPresent()) {
-                responseObserver.onNext(Commands.newEndTxnOnPartitionResponse(
-                        ServerError.TopicNotFound,
-                        "Topic " + command.getTopic() + " is not found."));
+                responseObserver.onError(Commands.newStatusException(Status.UNKNOWN,
+                        "Topic " + command.getTopic() + " is not found.", null, ServerError.TopicNotFound));
                 return;
             }
 
@@ -518,8 +515,8 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
                     .whenComplete((ignored, throwable) -> {
                         if (throwable != null) {
                             log.error("Handle endTxnOnPartition {} failed.", command.getTopic(), throwable);
-                            responseObserver.onNext(Commands.newEndTxnOnPartitionResponse(
-                                    ServerError.UnknownError, throwable.getMessage()));
+                            responseObserver.onError(Commands.newStatusException(Status.UNKNOWN, throwable,
+                                    ServerError.UnknownError));
                             return;
                         }
                         responseObserver.onNext(Commands.newEndTxnOnPartitionResponse(
@@ -540,20 +537,18 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
                 .thenAccept(optionalTopic -> {
                     if (!optionalTopic.isPresent()) {
                         log.error("The topic {} is not exist in broker.", command.getSubscription().getTopic());
-                        responseObserver.onNext(Commands.newEndTxnOnSubscriptionResponse(
-                                txnidLeastBits, txnidMostBits,
-                                ServerError.UnknownError,
-                                "The topic " + topic + " is not exist in broker."));
+
+                        responseObserver.onError(Commands.newStatusException(Status.UNKNOWN,
+                                "The topic " + topic + " does not exist in broker.", null, ServerError.UnknownError));
                         return;
                     }
 
                     Subscription subscription = optionalTopic.get().getSubscription(subName);
                     if (subscription == null) {
                         log.error("Topic {} subscription {} is not exist.", optionalTopic.get().getName(), subName);
-                        responseObserver.onNext(Commands.newEndTxnOnSubscriptionResponse(
-                                txnidLeastBits, txnidMostBits,
-                                ServerError.UnknownError,
-                                "Topic " + optionalTopic.get().getName() + " subscription " + subName + " is not exist."));
+                        responseObserver.onError(Commands.newStatusException(Status.UNKNOWN,
+                                "Topic " + optionalTopic.get().getName() + " subscription " + subName + " does not exist.",
+                                null, ServerError.UnknownError));
                         return;
                     }
 
@@ -562,10 +557,9 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
                     completableFuture.whenComplete((ignored, throwable) -> {
                         if (throwable != null) {
                             log.error("Handle end txn on subscription failed for request");
-                            responseObserver.onNext(Commands.newEndTxnOnSubscriptionResponse(
-                                    txnidLeastBits, txnidMostBits,
-                                    ServerError.UnknownError,
-                                    "Handle end txn on subscription failed."));
+                            responseObserver.onError(Commands.newStatusException(Status.UNKNOWN,
+                                    "Handle end txn on subscription failed.",
+                                    null, ServerError.UnknownError));
                             return;
                         }
                         responseObserver.onNext(

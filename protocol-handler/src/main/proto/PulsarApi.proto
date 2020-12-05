@@ -724,8 +724,6 @@ message CommandAddPartitionToTxn {
 message CommandAddPartitionToTxnResponse {
     optional uint64 txnid_least_bits = 1 [default = 0];
     optional uint64 txnid_most_bits  = 2 [default = 0];
-    optional ServerError error       = 3;
-    optional string message          = 4;
 }
 
 message Subscription {
@@ -742,8 +740,6 @@ message CommandAddSubscriptionToTxn {
 message CommandAddSubscriptionToTxnResponse {
     optional uint64 txnid_least_bits = 1 [default = 0];
     optional uint64 txnid_most_bits  = 2 [default = 0];
-    optional ServerError error       = 3;
-    optional string message          = 4;
 }
 
 message CommandEndTxn {
@@ -756,8 +752,6 @@ message CommandEndTxn {
 message CommandEndTxnResponse {
     optional uint64 txnid_least_bits = 1 [default = 0];
     optional uint64 txnid_most_bits  = 2 [default = 0];
-    optional ServerError error       = 3;
-    optional string message          = 4;
 }
 
 message CommandEndTxnOnPartition {
@@ -771,8 +765,6 @@ message CommandEndTxnOnPartition {
 message CommandEndTxnOnPartitionResponse {
     optional uint64 txnid_least_bits = 1 [default = 0];
     optional uint64 txnid_most_bits  = 2 [default = 0];
-    optional ServerError error       = 3;
-    optional string message          = 4;
 }
 
 message CommandEndTxnOnSubscription {
@@ -785,6 +777,4 @@ message CommandEndTxnOnSubscription {
 message CommandEndTxnOnSubscriptionResponse {
     optional uint64 txnid_least_bits = 1 [default = 0];
     optional uint64 txnid_most_bits  = 2 [default = 0];
-    optional ServerError error       = 3;
-    optional string message          = 4;
 }

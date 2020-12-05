@@ -439,8 +439,10 @@ public class Commands {
 
     private static KeySharedMode internalConvertKeySharedMode(org.apache.pulsar.client.api.KeySharedMode mode) {
         switch (mode) {
-            case AUTO_SPLIT: return KeySharedMode.AUTO_SPLIT;
-            case STICKY: return KeySharedMode.STICKY;
+            case AUTO_SPLIT:
+                return KeySharedMode.AUTO_SPLIT;
+            case STICKY:
+                return KeySharedMode.STICKY;
             default:
                 throw new IllegalArgumentException("Unexpected key shared mode: " + mode);
         }
@@ -791,13 +793,9 @@ public class Commands {
     }
 
     public static CommandAddPartitionToTxnResponse newAddPartitionToTxnResponse(long txnIdMostBits, ServerError error, String errorMsg) {
-        CommandAddPartitionToTxnResponse.Builder builder = CommandAddPartitionToTxnResponse.newBuilder();
-        builder.setTxnidMostBits(txnIdMostBits);
-        builder.setError(error);
-        if (errorMsg != null) {
-            builder.setMessage(errorMsg);
-        }
-        return builder.build();
+        return CommandAddPartitionToTxnResponse.newBuilder()
+                .setTxnidMostBits(txnIdMostBits)
+                .build();
     }
 
     public static CommandEndTxn newEndTxn(long txnIdLeastBits, long txnIdMostBits, TxnAction txnAction) {
@@ -814,16 +812,6 @@ public class Commands {
                 .setTxnidMostBits(txnIdMostBits).build();
     }
 
-    public static CommandEndTxnResponse newEndTxnResponse(long txnIdMostBits, ServerError error, String errorMsg) {
-        CommandEndTxnResponse.Builder builder = CommandEndTxnResponse.newBuilder();
-        builder.setTxnidMostBits(txnIdMostBits);
-        builder.setError(error);
-        if (errorMsg != null) {
-            builder.setMessage(errorMsg);
-        }
-        return builder.build();
-    }
-
     public static CommandEndTxnOnPartitionResponse newEndTxnOnPartitionResponse(long txnIdLeastBits, long txnIdMostBits) {
         return CommandEndTxnOnPartitionResponse.newBuilder()
                 .setTxnidLeastBits(txnIdLeastBits)
@@ -831,31 +819,10 @@ public class Commands {
                 .build();
     }
 
-    public static CommandEndTxnOnPartitionResponse newEndTxnOnPartitionResponse(ServerError error, String errorMsg) {
-        CommandEndTxnOnPartitionResponse.Builder builder = CommandEndTxnOnPartitionResponse.newBuilder();
-        builder.setError(error);
-        if (errorMsg != null) {
-            builder.setMessage(errorMsg);
-        }
-        return builder.build();
-    }
-
     public static CommandEndTxnOnSubscriptionResponse newEndTxnOnSubscriptionResponse(long txnIdLeastBits, long txnIdMostBits) {
         return CommandEndTxnOnSubscriptionResponse.newBuilder()
-                        .setTxnidLeastBits(txnIdLeastBits)
-                        .setTxnidMostBits(txnIdMostBits).build();
-    }
-
-    public static CommandEndTxnOnSubscriptionResponse newEndTxnOnSubscriptionResponse(long txnIdLeastBits, long txnIdMostBits,
-            ServerError error, String errorMsg) {
-        CommandEndTxnOnSubscriptionResponse.Builder builder = CommandEndTxnOnSubscriptionResponse.newBuilder();
-        builder.setTxnidMostBits(txnIdMostBits);
-        builder.setTxnidLeastBits(txnIdLeastBits);
-        builder.setError(error);
-        if (errorMsg != null) {
-            builder.setMessage(errorMsg);
-        }
-        return builder.build();
+                .setTxnidLeastBits(txnIdLeastBits)
+                .setTxnidMostBits(txnIdMostBits).build();
     }
 
     public static PulsarGrpc.PulsarStub attachProducerParams(PulsarGrpc.PulsarStub stub, CommandProducer producerParams) {
