@@ -1455,15 +1455,15 @@ public class PulsarGrpcServiceTest {
         topics.put(successTopicName, CompletableFuture.completedFuture(Optional.of(spyTopic)));
         doReturn(topics).when(brokerService).getTopics();
 
-        CommandEndTxnOnPartitionResponse response = blockingStub.endTransactionOnPartition(
-                Commands.newEndTxnOnPartition(txn.getTxnidLeastBits(), txn.getTxnidMostBits(), successTopicName, TxnAction.ABORT, Collections.EMPTY_LIST));
+        CommandEndTxnOnPartitionResponse response = blockingStub.endTransactionOnPartition(Commands.newEndTxnOnPartition(
+                txn.getTxnidLeastBits(), txn.getTxnidMostBits(), successTopicName, TxnAction.ABORT, Collections.EMPTY_LIST));
 
         assertEquals(response.getTxnidLeastBits(), 0);
         assertEquals(response.getTxnidMostBits(), 100);
     }
 
     @Test
-    public void testEndTransactionOnPartitionTopicNotFound() throws Exception {
+    public void testEndTransactionOnPartitionTopicNotFound() {
         long tcId = 100;
         transactionMetadataStoreService.addTransactionMetadataStore(TransactionCoordinatorID.get(tcId));
 
@@ -1478,12 +1478,35 @@ public class PulsarGrpcServiceTest {
         doReturn(topics).when(brokerService).getTopics();
 
         try {
-            blockingStub.endTransactionOnPartition(
-                    Commands.newEndTxnOnPartition(txn.getTxnidLeastBits(), txn.getTxnidMostBits(), successTopicName, TxnAction.ABORT, Collections.EMPTY_LIST));
+            blockingStub.endTransactionOnPartition(Commands.newEndTxnOnPartition(
+                    txn.getTxnidLeastBits(), txn.getTxnidMostBits(), successTopicName, TxnAction.ABORT, Collections.EMPTY_LIST));
             fail("StatusRuntimeException should have been thrown");
         } catch (StatusRuntimeException e) {
             assertErrorIsStatusExceptionWithServerError(e, Status.UNKNOWN,
                     ServerError.TopicNotFound);
+        }
+    }
+
+    @Test
+    public void testEndTransactionOnPartitionError() {
+        long tcId = 100;
+        transactionMetadataStoreService.addTransactionMetadataStore(TransactionCoordinatorID.get(tcId));
+
+        CommandNewTxnResponse txn = blockingStub.createTransaction(Commands.newTxn(tcId));
+
+        // Non persistent topic don't support transactions
+        Topic topic = new NonPersistentTopic(successTopicName, brokerService);
+
+        ConcurrentOpenHashMap<String, CompletableFuture<Optional<Topic>>> topics = new ConcurrentOpenHashMap<>();
+        topics.put(successTopicName, CompletableFuture.completedFuture(Optional.of(topic)));
+        doReturn(topics).when(brokerService).getTopics();
+
+        try {
+            blockingStub.endTransactionOnPartition(Commands.newEndTxnOnPartition(
+                    txn.getTxnidLeastBits(), txn.getTxnidMostBits(), successTopicName, TxnAction.ABORT, Collections.EMPTY_LIST));
+            fail("StatusRuntimeException should have been thrown");
+        } catch (StatusRuntimeException e) {
+            assertErrorIsStatusExceptionWithServerError(e, Status.UNKNOWN, ServerError.UnknownError);
         }
     }
 
