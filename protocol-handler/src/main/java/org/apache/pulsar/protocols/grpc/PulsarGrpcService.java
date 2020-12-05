@@ -536,19 +536,19 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
         service.getTopics().get(TopicName.get(command.getSubscription().getTopic()).toString())
                 .thenAccept(optionalTopic -> {
                     if (!optionalTopic.isPresent()) {
-                        log.error("The topic {} is not exist in broker.", command.getSubscription().getTopic());
+                        log.error("The topic {} does not exist in broker.", command.getSubscription().getTopic());
 
                         responseObserver.onError(Commands.newStatusException(Status.UNKNOWN,
-                                "The topic " + topic + " does not exist in broker.", null, ServerError.UnknownError));
+                                "The topic " + topic + " does not exist in broker.", null, ServerError.TopicNotFound));
                         return;
                     }
 
                     Subscription subscription = optionalTopic.get().getSubscription(subName);
                     if (subscription == null) {
-                        log.error("Topic {} subscription {} is not exist.", optionalTopic.get().getName(), subName);
+                        log.error("Topic {} subscription {} does not exist.", optionalTopic.get().getName(), subName);
                         responseObserver.onError(Commands.newStatusException(Status.UNKNOWN,
                                 "Topic " + optionalTopic.get().getName() + " subscription " + subName + " does not exist.",
-                                null, ServerError.UnknownError));
+                                null, ServerError.SubscriptionNotFound));
                         return;
                     }
 

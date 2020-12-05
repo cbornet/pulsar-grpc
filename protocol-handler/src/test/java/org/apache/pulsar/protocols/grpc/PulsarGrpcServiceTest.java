@@ -53,7 +53,9 @@ import org.apache.pulsar.broker.cache.ConfigurationCacheService;
 import org.apache.pulsar.broker.cache.LocalZooKeeperCacheService;
 import org.apache.pulsar.broker.namespace.NamespaceService;
 import org.apache.pulsar.broker.service.BrokerService;
+import org.apache.pulsar.broker.service.Subscription;
 import org.apache.pulsar.broker.service.Topic;
+import org.apache.pulsar.broker.service.nonpersistent.NonPersistentSubscription;
 import org.apache.pulsar.broker.service.nonpersistent.NonPersistentTopic;
 import org.apache.pulsar.broker.service.persistent.PersistentTopic;
 import org.apache.pulsar.broker.service.schema.DefaultSchemaRegistryService;
@@ -73,6 +75,7 @@ import org.apache.pulsar.protocols.grpc.api.CommandAck.AckType;
 import org.apache.pulsar.protocols.grpc.api.CommandAckResponse;
 import org.apache.pulsar.protocols.grpc.api.CommandConsumerStatsResponse;
 import org.apache.pulsar.protocols.grpc.api.CommandEndTxnOnPartitionResponse;
+import org.apache.pulsar.protocols.grpc.api.CommandEndTxnOnSubscriptionResponse;
 import org.apache.pulsar.protocols.grpc.api.CommandEndTxnResponse;
 import org.apache.pulsar.protocols.grpc.api.CommandError;
 import org.apache.pulsar.protocols.grpc.api.CommandGetTopicsOfNamespace;
@@ -87,6 +90,7 @@ import org.apache.pulsar.protocols.grpc.api.CommandSubscribe;
 import org.apache.pulsar.protocols.grpc.api.CommandSubscribe.SubType;
 import org.apache.pulsar.protocols.grpc.api.ConsumeInput;
 import org.apache.pulsar.protocols.grpc.api.ConsumeOutput;
+import org.apache.pulsar.protocols.grpc.api.MessageIdData;
 import org.apache.pulsar.protocols.grpc.api.PulsarGrpc;
 import org.apache.pulsar.protocols.grpc.api.SendResult;
 import org.apache.pulsar.protocols.grpc.api.ServerError;
@@ -134,6 +138,7 @@ import static org.apache.pulsar.broker.cache.ConfigurationCacheService.POLICIES;
 import static org.apache.pulsar.protocols.grpc.Constants.CONSUMER_PARAMS_METADATA_KEY;
 import static org.apache.pulsar.protocols.grpc.Constants.ERROR_CODE_METADATA_KEY;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.matches;
@@ -1441,45 +1446,51 @@ public class PulsarGrpcServiceTest {
     }
 
     @Test
-    public void testEndTransactionOnPartition() throws Exception {
-        long tcId = 100;
-        transactionMetadataStoreService.addTransactionMetadataStore(TransactionCoordinatorID.get(tcId));
-
-        CommandNewTxnResponse txn = blockingStub.createTransaction(Commands.newTxn(tcId));
-
+    public void testEndTransactionOnPartition() {
         Topic spyTopic = spy(new NonPersistentTopic(successTopicName, brokerService));
         CompletableFuture<Void> completedFuture = CompletableFuture.completedFuture(null);
-        doReturn(completedFuture).when(spyTopic).endTxn(new TxnID(100, 0), TxnAction.ABORT_VALUE, Collections.EMPTY_LIST);
+
+        ArgumentCaptor<List<PulsarApi.MessageIdData>> messageCaptor = ArgumentCaptor.forClass(List.class);
+
+        doReturn(completedFuture).when(spyTopic).endTxn(eq(new TxnID(200, 100)), eq(TxnAction.ABORT_VALUE),
+                messageCaptor.capture());
 
         ConcurrentOpenHashMap<String, CompletableFuture<Optional<Topic>>> topics = new ConcurrentOpenHashMap<>();
         topics.put(successTopicName, CompletableFuture.completedFuture(Optional.of(spyTopic)));
         doReturn(topics).when(brokerService).getTopics();
 
-        CommandEndTxnOnPartitionResponse response = blockingStub.endTransactionOnPartition(Commands.newEndTxnOnPartition(
-                txn.getTxnidLeastBits(), txn.getTxnidMostBits(), successTopicName, TxnAction.ABORT, Collections.EMPTY_LIST));
+        MessageIdData messageIdData = MessageIdData.newBuilder()
+                .setLedgerId(10)
+                .setEntryId(20)
+                .setPartition(30)
+                .setBatchIndex(40)
+                .addAckSet(50)
+                .build();
 
-        assertEquals(response.getTxnidLeastBits(), 0);
-        assertEquals(response.getTxnidMostBits(), 100);
+        CommandEndTxnOnPartitionResponse response = blockingStub.endTransactionOnPartition(
+                Commands.newEndTxnOnPartition(100, 200, successTopicName,
+                        TxnAction.ABORT, Collections.singletonList(messageIdData)));
+
+        assertEquals(response.getTxnidLeastBits(), 100);
+        assertEquals(response.getTxnidMostBits(), 200);
+
+        PulsarApi.MessageIdData capturedMessageIdData = messageCaptor.getValue().get(0);
+        assertEquals(capturedMessageIdData.getLedgerId(), 10);
+        assertEquals(capturedMessageIdData.getEntryId(), 20);
+        assertEquals(capturedMessageIdData.getPartition(), 30);
+        assertEquals(capturedMessageIdData.getBatchIndex(), 40);
+        assertEquals(capturedMessageIdData.getAckSet(0), 50);
     }
 
     @Test
     public void testEndTransactionOnPartitionTopicNotFound() {
-        long tcId = 100;
-        transactionMetadataStoreService.addTransactionMetadataStore(TransactionCoordinatorID.get(tcId));
-
-        CommandNewTxnResponse txn = blockingStub.createTransaction(Commands.newTxn(tcId));
-
-        Topic spyTopic = spy(new NonPersistentTopic(successTopicName, brokerService));
-        CompletableFuture<Void> completedFuture = CompletableFuture.completedFuture(null);
-        doReturn(completedFuture).when(spyTopic).endTxn(new TxnID(100, 0), TxnAction.ABORT_VALUE, Collections.EMPTY_LIST);
-
         ConcurrentOpenHashMap<String, CompletableFuture<Optional<Topic>>> topics = new ConcurrentOpenHashMap<>();
         topics.put(successTopicName, CompletableFuture.completedFuture(Optional.empty()));
         doReturn(topics).when(brokerService).getTopics();
 
         try {
             blockingStub.endTransactionOnPartition(Commands.newEndTxnOnPartition(
-                    txn.getTxnidLeastBits(), txn.getTxnidMostBits(), successTopicName, TxnAction.ABORT, Collections.EMPTY_LIST));
+                    100, 200, successTopicName, TxnAction.ABORT, Collections.EMPTY_LIST));
             fail("StatusRuntimeException should have been thrown");
         } catch (StatusRuntimeException e) {
             assertErrorIsStatusExceptionWithServerError(e, Status.UNKNOWN,
@@ -1489,12 +1500,7 @@ public class PulsarGrpcServiceTest {
 
     @Test
     public void testEndTransactionOnPartitionError() {
-        long tcId = 100;
-        transactionMetadataStoreService.addTransactionMetadataStore(TransactionCoordinatorID.get(tcId));
-
-        CommandNewTxnResponse txn = blockingStub.createTransaction(Commands.newTxn(tcId));
-
-        // Non persistent topic don't support transactions
+        // Non persistent topics don't support transactions
         Topic topic = new NonPersistentTopic(successTopicName, brokerService);
 
         ConcurrentOpenHashMap<String, CompletableFuture<Optional<Topic>>> topics = new ConcurrentOpenHashMap<>();
@@ -1503,7 +1509,79 @@ public class PulsarGrpcServiceTest {
 
         try {
             blockingStub.endTransactionOnPartition(Commands.newEndTxnOnPartition(
-                    txn.getTxnidLeastBits(), txn.getTxnidMostBits(), successTopicName, TxnAction.ABORT, Collections.EMPTY_LIST));
+                    100, 200, successTopicName, TxnAction.ABORT, Collections.EMPTY_LIST));
+            fail("StatusRuntimeException should have been thrown");
+        } catch (StatusRuntimeException e) {
+            assertErrorIsStatusExceptionWithServerError(e, Status.UNKNOWN, ServerError.UnknownError);
+        }
+    }
+
+    @Test
+    public void testEndTransactionOnSubscription() {
+        Subscription subscription = mock(Subscription.class);
+        doReturn(CompletableFuture.completedFuture(null))
+                .when(subscription).endTxn(200, 100, TxnAction.ABORT_VALUE);
+
+        Topic topic = mock(Topic.class);
+        doReturn(subscription).when(topic).getSubscription(successSubName);
+
+        ConcurrentOpenHashMap<String, CompletableFuture<Optional<Topic>>> topics = new ConcurrentOpenHashMap<>();
+        topics.put(successTopicName, CompletableFuture.completedFuture(Optional.of(topic)));
+        doReturn(topics).when(brokerService).getTopics();
+
+        CommandEndTxnOnSubscriptionResponse response = blockingStub.endTransactionOnSubscription(
+                Commands.newEndTxnOnSubscription(100, 200, successTopicName,
+                        successSubName, TxnAction.ABORT));
+
+        assertEquals(response.getTxnidLeastBits(), 100);
+        assertEquals(response.getTxnidMostBits(), 200);
+    }
+
+    @Test
+    public void testEndTransactionOnSubscriptionTopicNotFound() {
+        ConcurrentOpenHashMap<String, CompletableFuture<Optional<Topic>>> topics = new ConcurrentOpenHashMap<>();
+        topics.put(successTopicName, CompletableFuture.completedFuture(Optional.empty()));
+        doReturn(topics).when(brokerService).getTopics();
+
+        try {
+            blockingStub.endTransactionOnSubscription(Commands.newEndTxnOnSubscription(
+                    100, 200, successTopicName, successSubName, TxnAction.ABORT));
+            fail("StatusRuntimeException should have been thrown");
+        } catch (StatusRuntimeException e) {
+            assertErrorIsStatusExceptionWithServerError(e, Status.UNKNOWN, ServerError.TopicNotFound);
+        }
+    }
+
+    @Test
+    public void testEndTransactionOnSubscriptionSubscriptionNotFound() {
+        Topic topic = new NonPersistentTopic(successTopicName, brokerService);
+        ConcurrentOpenHashMap<String, CompletableFuture<Optional<Topic>>> topics = new ConcurrentOpenHashMap<>();
+        topics.put(successTopicName, CompletableFuture.completedFuture(Optional.of(topic)));
+        doReturn(topics).when(brokerService).getTopics();
+
+        try {
+            blockingStub.endTransactionOnSubscription(Commands.newEndTxnOnSubscription(
+                    100, 200, successTopicName, successSubName, TxnAction.ABORT));
+            fail("StatusRuntimeException should have been thrown");
+        } catch (StatusRuntimeException e) {
+            assertErrorIsStatusExceptionWithServerError(e, Status.UNKNOWN, ServerError.SubscriptionNotFound);
+        }
+    }
+
+    @Test
+    public void testEndTransactionOnSubscriptionError() throws Exception {
+        NonPersistentTopic topic = new NonPersistentTopic(successTopicName, brokerService);
+        // NonPersistentSubscription doesn't support transactions
+        NonPersistentSubscription subscription = new NonPersistentSubscription(topic, successSubName);
+        topic.getSubscriptions().put(successSubName, subscription);
+
+        ConcurrentOpenHashMap<String, CompletableFuture<Optional<Topic>>> topics = new ConcurrentOpenHashMap<>();
+        topics.put(successTopicName, CompletableFuture.completedFuture(Optional.of(topic)));
+        doReturn(topics).when(brokerService).getTopics();
+
+        try {
+            blockingStub.endTransactionOnSubscription(Commands.newEndTxnOnSubscription(
+                    100, 200, successTopicName, successSubName, TxnAction.ABORT));
             fail("StatusRuntimeException should have been thrown");
         } catch (StatusRuntimeException e) {
             assertErrorIsStatusExceptionWithServerError(e, Status.UNKNOWN, ServerError.UnknownError);

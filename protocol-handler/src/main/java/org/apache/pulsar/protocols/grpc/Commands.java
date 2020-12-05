@@ -53,6 +53,7 @@ import org.apache.pulsar.protocols.grpc.api.CommandConsumerStatsResponse;
 import org.apache.pulsar.protocols.grpc.api.CommandEndTxn;
 import org.apache.pulsar.protocols.grpc.api.CommandEndTxnOnPartition;
 import org.apache.pulsar.protocols.grpc.api.CommandEndTxnOnPartitionResponse;
+import org.apache.pulsar.protocols.grpc.api.CommandEndTxnOnSubscription;
 import org.apache.pulsar.protocols.grpc.api.CommandEndTxnOnSubscriptionResponse;
 import org.apache.pulsar.protocols.grpc.api.CommandEndTxnResponse;
 import org.apache.pulsar.protocols.grpc.api.CommandError;
@@ -823,6 +824,25 @@ public class Commands {
                 .setTxnidLeastBits(txnIdLeastBits)
                 .setTxnidMostBits(txnIdMostBits)
                 .build();
+    }
+
+    public static CommandEndTxnOnSubscription newEndTxnOnSubscription(long txnIdLeastBits, long txnIdMostBits, String topic,
+            String subscription, TxnAction txnAction) {
+        org.apache.pulsar.protocols.grpc.api.Subscription sub = org.apache.pulsar.protocols.grpc.api.Subscription.newBuilder()
+                .setTopic(topic)
+                .setSubscription(subscription)
+                .build();
+        return newEndTxnOnSubscription(txnIdLeastBits, txnIdMostBits, sub, txnAction);
+    }
+
+    public static CommandEndTxnOnSubscription newEndTxnOnSubscription(long txnIdLeastBits, long txnIdMostBits,
+            org.apache.pulsar.protocols.grpc.api.Subscription subscription, TxnAction txnAction) {
+        return CommandEndTxnOnSubscription.newBuilder()
+                        .setTxnidLeastBits(txnIdLeastBits)
+                        .setTxnidMostBits(txnIdMostBits)
+                        .setSubscription(subscription)
+                        .setTxnAction(txnAction)
+                        .build();
     }
 
     public static CommandEndTxnOnSubscriptionResponse newEndTxnOnSubscriptionResponse(long txnIdLeastBits, long txnIdMostBits) {
