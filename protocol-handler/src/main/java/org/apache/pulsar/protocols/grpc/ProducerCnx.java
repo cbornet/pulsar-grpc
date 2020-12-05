@@ -31,6 +31,7 @@ import org.apache.pulsar.broker.authentication.AuthenticationDataSource;
 import org.apache.pulsar.broker.service.BrokerService;
 import org.apache.pulsar.broker.service.Producer;
 import org.apache.pulsar.broker.service.PulsarCommandSender;
+import org.apache.pulsar.client.api.transaction.TxnID;
 import org.apache.pulsar.common.allocator.PulsarByteBufAllocator;
 import org.apache.pulsar.common.api.proto.PulsarApi;
 import org.apache.pulsar.common.compression.CompressionCodec;
@@ -190,6 +191,13 @@ public class ProducerCnx extends AbstractGrpcCnx {
         }
 
         startSendOperation(producer, headersAndPayload.readableBytes(), send.getNumMessages());
+
+        if (send.hasTxnidMostBits() && send.hasTxnidLeastBits()) {
+            TxnID txnID = new TxnID(send.getTxnidMostBits(), send.getTxnidLeastBits());
+            producer.publishTxnMessage(txnID, producer.getProducerId(), send.getSequenceId(),
+                    send.getHighestSequenceId(), headersAndPayload, send.getNumMessages(), send.getIsChunk());
+            return;
+        }
 
         // Persist the message
         if (highestSequenceId != null && sequenceId <= highestSequenceId) {

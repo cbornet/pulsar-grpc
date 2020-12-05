@@ -154,12 +154,16 @@ public class Commands {
 
     public static CommandSend newSend(long sequenceId, int numMessages,
             PulsarApi.MessageMetadata messageMetadata, ByteBuf payload) {
-        return newSend(sequenceId, numMessages, 0, 0, messageMetadata, payload);
-    }
+        return newSend(sequenceId, numMessages,
+                messageMetadata.hasTxnidLeastBits() ? messageMetadata.getTxnidLeastBits() : -1,
+                messageMetadata.hasTxnidMostBits() ? messageMetadata.getTxnidMostBits() : -1,
+                messageMetadata, payload);    }
 
     public static CommandSend newSend(long lowestSequenceId, long highestSequenceId, int numMessages,
             PulsarApi.MessageMetadata messageMetadata, ByteBuf payload) {
-        return newSend(lowestSequenceId, highestSequenceId, numMessages, 0, 0,
+        return newSend(lowestSequenceId, highestSequenceId, numMessages,
+                messageMetadata.hasTxnidLeastBits() ? messageMetadata.getTxnidLeastBits() : -1,
+                messageMetadata.hasTxnidMostBits() ? messageMetadata.getTxnidMostBits() : -1,
                 messageMetadata, payload);
     }
 
@@ -170,6 +174,12 @@ public class Commands {
         sendBuilder.setSequenceId(sequenceId);
         if (numMessages > 1) {
             sendBuilder.setNumMessages(numMessages);
+        }
+        if (txnIdLeastBits >= 0) {
+            sendBuilder.setTxnidLeastBits(txnIdLeastBits);
+        }
+        if (txnIdMostBits >= 0) {
+            sendBuilder.setTxnidMostBits(txnIdMostBits);
         }
         if (messageData.hasTotalChunkMsgSize() && messageData.getTotalChunkMsgSize() > 1) {
             sendBuilder.setIsChunk(true);
@@ -500,10 +510,10 @@ public class Commands {
         if (validationError != null) {
             ackBuilder.setValidationError(validationError);
         }
-        if (txnIdMostBits > 0) {
+        if (txnIdMostBits >= 0) {
             ackBuilder.setTxnidMostBits(txnIdMostBits);
         }
-        if (txnIdLeastBits > 0) {
+        if (txnIdLeastBits >= 0) {
             ackBuilder.setTxnidLeastBits(txnIdLeastBits);
         }
         if (requestId >= 0) {
