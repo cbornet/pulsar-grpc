@@ -68,10 +68,11 @@ import org.apache.pulsar.common.protocol.schema.SchemaData;
 import org.apache.pulsar.common.schema.LongSchemaVersion;
 import org.apache.pulsar.common.schema.SchemaInfo;
 import org.apache.pulsar.common.schema.SchemaType;
+import org.apache.pulsar.common.util.collections.ConcurrentOpenHashMap;
 import org.apache.pulsar.protocols.grpc.api.CommandAck.AckType;
 import org.apache.pulsar.protocols.grpc.api.CommandAckResponse;
-import org.apache.pulsar.protocols.grpc.api.CommandAddPartitionToTxnResponse;
 import org.apache.pulsar.protocols.grpc.api.CommandConsumerStatsResponse;
+import org.apache.pulsar.protocols.grpc.api.CommandEndTxnOnPartitionResponse;
 import org.apache.pulsar.protocols.grpc.api.CommandEndTxnResponse;
 import org.apache.pulsar.protocols.grpc.api.CommandError;
 import org.apache.pulsar.protocols.grpc.api.CommandGetTopicsOfNamespace;
@@ -1436,6 +1437,53 @@ public class PulsarGrpcServiceTest {
         } catch (StatusRuntimeException e) {
             assertErrorIsStatusExceptionWithServerError(e, Status.UNKNOWN,
                     ServerError.TransactionCoordinatorNotFound);
+        }
+    }
+
+    @Test
+    public void testEndTransactionOnPartition() throws Exception {
+        long tcId = 100;
+        transactionMetadataStoreService.addTransactionMetadataStore(TransactionCoordinatorID.get(tcId));
+
+        CommandNewTxnResponse txn = blockingStub.createTransaction(Commands.newTxn(tcId));
+
+        Topic spyTopic = spy(new NonPersistentTopic(successTopicName, brokerService));
+        CompletableFuture<Void> completedFuture = CompletableFuture.completedFuture(null);
+        doReturn(completedFuture).when(spyTopic).endTxn(new TxnID(100, 0), TxnAction.ABORT_VALUE, Collections.EMPTY_LIST);
+
+        ConcurrentOpenHashMap<String, CompletableFuture<Optional<Topic>>> topics = new ConcurrentOpenHashMap<>();
+        topics.put(successTopicName, CompletableFuture.completedFuture(Optional.of(spyTopic)));
+        doReturn(topics).when(brokerService).getTopics();
+
+        CommandEndTxnOnPartitionResponse response = blockingStub.endTransactionOnPartition(
+                Commands.newEndTxnOnPartition(txn.getTxnidLeastBits(), txn.getTxnidMostBits(), successTopicName, TxnAction.ABORT, Collections.EMPTY_LIST));
+
+        assertEquals(response.getTxnidLeastBits(), 0);
+        assertEquals(response.getTxnidMostBits(), 100);
+    }
+
+    @Test
+    public void testEndTransactionOnPartitionTopicNotFound() throws Exception {
+        long tcId = 100;
+        transactionMetadataStoreService.addTransactionMetadataStore(TransactionCoordinatorID.get(tcId));
+
+        CommandNewTxnResponse txn = blockingStub.createTransaction(Commands.newTxn(tcId));
+
+        Topic spyTopic = spy(new NonPersistentTopic(successTopicName, brokerService));
+        CompletableFuture<Void> completedFuture = CompletableFuture.completedFuture(null);
+        doReturn(completedFuture).when(spyTopic).endTxn(new TxnID(100, 0), TxnAction.ABORT_VALUE, Collections.EMPTY_LIST);
+
+        ConcurrentOpenHashMap<String, CompletableFuture<Optional<Topic>>> topics = new ConcurrentOpenHashMap<>();
+        topics.put(successTopicName, CompletableFuture.completedFuture(Optional.empty()));
+        doReturn(topics).when(brokerService).getTopics();
+
+        try {
+            blockingStub.endTransactionOnPartition(
+                    Commands.newEndTxnOnPartition(txn.getTxnidLeastBits(), txn.getTxnidMostBits(), successTopicName, TxnAction.ABORT, Collections.EMPTY_LIST));
+            fail("StatusRuntimeException should have been thrown");
+        } catch (StatusRuntimeException e) {
+            assertErrorIsStatusExceptionWithServerError(e, Status.UNKNOWN,
+                    ServerError.TopicNotFound);
         }
     }
 

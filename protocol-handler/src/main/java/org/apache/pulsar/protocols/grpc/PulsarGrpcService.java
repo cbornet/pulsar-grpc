@@ -101,7 +101,6 @@ import org.apache.pulsar.protocols.grpc.api.Schema;
 import org.apache.pulsar.protocols.grpc.api.SendResult;
 import org.apache.pulsar.protocols.grpc.api.ServerError;
 import org.apache.pulsar.transaction.coordinator.TransactionCoordinatorID;
-import org.apache.pulsar.transaction.coordinator.proto.PulsarTransactionMetadata.TxnStatus;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -521,6 +520,7 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
                         }
                         responseObserver.onNext(Commands.newEndTxnOnPartitionResponse(
                                 txnID.getLeastSigBits(), txnID.getMostSigBits()));
+                        responseObserver.onCompleted();
                     });
         });
     }
@@ -564,6 +564,7 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
                         }
                         responseObserver.onNext(
                                 Commands.newEndTxnOnSubscriptionResponse(txnidLeastBits, txnidMostBits));
+                        responseObserver.onCompleted();
                     });
                 });
     }
