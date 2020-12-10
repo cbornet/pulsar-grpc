@@ -46,6 +46,9 @@ import java.util.concurrent.CountDownLatch;
 import static org.mockito.Mockito.doReturn;
 import static org.testng.Assert.assertTrue;
 
+/**
+ * Tests for consumer throttling.
+ */
 public class ConsumerThrottleTest extends ProducerConsumerBase {
 
     private static final Logger log = LoggerFactory.getLogger(ConsumerThrottleTest.class);

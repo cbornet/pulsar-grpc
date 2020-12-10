@@ -29,14 +29,21 @@ import java.net.SocketAddress;
 import static io.grpc.Metadata.ASCII_STRING_MARSHALLER;
 import static io.grpc.Metadata.BINARY_BYTE_MARSHALLER;
 
-public class Constants {
-    public static final Metadata.Key<byte[]> PRODUCER_PARAMS_METADATA_KEY = Metadata.Key.of("pulsar-producer-params-bin", BINARY_BYTE_MARSHALLER);
-    public static final Metadata.Key<byte[]> CONSUMER_PARAMS_METADATA_KEY = Metadata.Key.of("pulsar-consumer-params-bin", BINARY_BYTE_MARSHALLER);
-    public static final Metadata.Key<String> ERROR_CODE_METADATA_KEY = Metadata.Key.of("pulsar-error-code", ASCII_STRING_MARSHALLER);
-    public static final Metadata.Key<byte[]> AUTH_METADATA_KEY = Metadata.Key.of("pulsar-auth-bin", BINARY_BYTE_MARSHALLER);
-    public static final Metadata.Key<byte[]> AUTHCHALLENGE_METADATA_KEY = Metadata.Key.of("pulsar-authchallenge-bin", BINARY_BYTE_MARSHALLER);
-    public static final Metadata.Key<byte[]> AUTHRESPONSE_METADATA_KEY = Metadata.Key.of("pulsar-authresponse-bin", BINARY_BYTE_MARSHALLER);
-    public static final Metadata.Key<byte[]> AUTH_ROLE_TOKEN_METADATA_KEY = Metadata.Key.of("pulsar-authroletoken-bin", BINARY_BYTE_MARSHALLER);
+class Constants {
+    public static final Metadata.Key<byte[]> PRODUCER_PARAMS_METADATA_KEY =
+            Metadata.Key.of("pulsar-producer-params-bin", BINARY_BYTE_MARSHALLER);
+    public static final Metadata.Key<byte[]> CONSUMER_PARAMS_METADATA_KEY =
+            Metadata.Key.of("pulsar-consumer-params-bin", BINARY_BYTE_MARSHALLER);
+    public static final Metadata.Key<String> ERROR_CODE_METADATA_KEY =
+            Metadata.Key.of("pulsar-error-code", ASCII_STRING_MARSHALLER);
+    public static final Metadata.Key<byte[]> AUTH_METADATA_KEY =
+            Metadata.Key.of("pulsar-auth-bin", BINARY_BYTE_MARSHALLER);
+    public static final Metadata.Key<byte[]> AUTHCHALLENGE_METADATA_KEY =
+            Metadata.Key.of("pulsar-authchallenge-bin", BINARY_BYTE_MARSHALLER);
+    public static final Metadata.Key<byte[]> AUTHRESPONSE_METADATA_KEY =
+            Metadata.Key.of("pulsar-authresponse-bin", BINARY_BYTE_MARSHALLER);
+    public static final Metadata.Key<byte[]> AUTH_ROLE_TOKEN_METADATA_KEY =
+            Metadata.Key.of("pulsar-authroletoken-bin", BINARY_BYTE_MARSHALLER);
 
     public static final Context.Key<CommandProducer> PRODUCER_PARAMS_CTX_KEY = Context.key("ProducerParams");
     public static final Context.Key<CommandSubscribe> CONSUMER_PARAMS_CTX_KEY = Context.key("ConsumerParams");

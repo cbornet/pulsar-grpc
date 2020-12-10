@@ -33,12 +33,18 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.net.InetSocketAddress;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 
-import static org.apache.pulsar.protocols.grpc.Constants.*;
+import static org.apache.pulsar.protocols.grpc.Constants.GRPC_SERVICE_HOST_PROPERTY_NAME;
+import static org.apache.pulsar.protocols.grpc.Constants.GRPC_SERVICE_PORT_PROPERTY_NAME;
+import static org.apache.pulsar.protocols.grpc.Constants.GRPC_SERVICE_PORT_TLS_PROPERTY_NAME;
 
-public class GrpcService implements ProtocolHandler {
+class GrpcService implements ProtocolHandler {
 
     private static final Logger log = LoggerFactory.getLogger(GrpcService.class);
     private static final String NAME = "grpc";
@@ -85,15 +91,17 @@ public class GrpcService implements ProtocolHandler {
     public void start(BrokerService service) {
         try {
             advertisedAddress = service.pulsar().getAdvertisedAddress();
-            PulsarGrpcService pulsarGrpcService = new PulsarGrpcService(service, configuration, new NioEventLoopGroup());
+            PulsarGrpcService pulsarGrpcService =
+                    new PulsarGrpcService(service, configuration, new NioEventLoopGroup());
             List<ServerInterceptor> interceptors = new ArrayList<>();
             interceptors.add(new GrpcServerInterceptor());
             if (service.isAuthenticationEnabled()) {
                 interceptors.add(new AuthenticationInterceptor(service));
             }
 
-            Optional<Integer> grpcServicePort = Optional.ofNullable(configuration.getProperties().getProperty(GRPC_SERVICE_PORT_PROPERTY_NAME))
-                    .map(Integer::parseInt);
+            Optional<Integer> grpcServicePort =
+                    Optional.ofNullable(configuration.getProperties().getProperty(GRPC_SERVICE_PORT_PROPERTY_NAME))
+                            .map(Integer::parseInt);
 
             if (grpcServicePort.isPresent()) {
                 Integer port = grpcServicePort.get();
@@ -104,21 +112,25 @@ public class GrpcService implements ProtocolHandler {
                 log.info("gRPC Service started, listening on " + server.getPort());
             }
 
-            Optional<Integer> grpcServicePortTls = Optional.ofNullable(configuration.getProperties().getProperty(GRPC_SERVICE_PORT_TLS_PROPERTY_NAME))
-                    .map(Integer::parseInt);
+            Optional<Integer> grpcServicePortTls =
+                    Optional.ofNullable(configuration.getProperties().getProperty(GRPC_SERVICE_PORT_TLS_PROPERTY_NAME))
+                            .map(Integer::parseInt);
 
             if (grpcServicePortTls.isPresent()) {
                 Integer port = grpcServicePortTls.get();
-                SslContext sslContext = SecurityUtility.createNettySslContextForServer(configuration.isTlsAllowInsecureConnection(),
-                        configuration.getTlsTrustCertsFilePath(), configuration.getTlsCertificateFilePath(),
-                        configuration.getTlsKeyFilePath(), configuration.getTlsCiphers(), configuration.getTlsProtocols(),
-                        configuration.isTlsRequireTrustedClientCertOnConnect());
+                SslContext sslContext =
+                        SecurityUtility.createNettySslContextForServer(configuration.isTlsAllowInsecureConnection(),
+                                configuration.getTlsTrustCertsFilePath(), configuration.getTlsCertificateFilePath(),
+                                configuration.getTlsKeyFilePath(), configuration.getTlsCiphers(),
+                                configuration.getTlsProtocols(),
+                                configuration.isTlsRequireTrustedClientCertOnConnect());
 
-                tlsServer = NettyServerBuilder.forAddress(new InetSocketAddress(service.pulsar().getBindAddress(), port))
-                        .addService(ServerInterceptors.intercept(pulsarGrpcService, interceptors))
-                        .sslContext(sslContext)
-                        .build()
-                        .start();
+                tlsServer =
+                        NettyServerBuilder.forAddress(new InetSocketAddress(service.pulsar().getBindAddress(), port))
+                                .addService(ServerInterceptors.intercept(pulsarGrpcService, interceptors))
+                                .sslContext(sslContext)
+                                .build()
+                                .start();
                 log.info("gRPC TLS Service started, listening on " + tlsServer.getPort());
             }
 

@@ -66,6 +66,7 @@ import org.testng.annotations.Test;
 
 import javax.naming.AuthenticationException;
 import javax.security.auth.login.Configuration;
+
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
@@ -90,16 +91,19 @@ import static org.testng.Assert.assertNull;
 import static org.testng.Assert.assertTrue;
 import static org.testng.Assert.fail;
 
+/**
+ * Tests for {@link AuthenticationInterceptor}.
+ */
 public class AuthenticationInterceptorTest {
 
     private static final Logger log = LoggerFactory.getLogger(AuthenticationInterceptorTest.class);
-    private final String TLS_TRUST_CERT_FILE_PATH = "./src/test/resources/authentication/tls/cacert.pem";
-    private final String TLS_SERVER_CERT_FILE_PATH = "./src/test/resources/authentication/tls/broker-cert.pem";
-    private final String TLS_SERVER_KEY_FILE_PATH = "./src/test/resources/authentication/tls/broker-key.pem";
-    private final String TLS_CLIENT_CERT_FILE_PATH = "./src/test/resources/authentication/tls/client-cert.pem";
-    private final String TLS_CLIENT_KEY_FILE_PATH = "./src/test/resources/authentication/tls/client-key.pem";
+    private static final String TLS_TRUST_CERT_FILE_PATH = "./src/test/resources/authentication/tls/cacert.pem";
+    private static final String TLS_SERVER_CERT_FILE_PATH = "./src/test/resources/authentication/tls/broker-cert.pem";
+    private static final String TLS_SERVER_KEY_FILE_PATH = "./src/test/resources/authentication/tls/broker-key.pem";
+    private static final String TLS_CLIENT_CERT_FILE_PATH = "./src/test/resources/authentication/tls/client-cert.pem";
+    private static final String TLS_CLIENT_KEY_FILE_PATH = "./src/test/resources/authentication/tls/client-key.pem";
 
-    private final String BASIC_CONF_FILE_PATH = "./src/test/resources/authentication/basic/.htpasswd";
+    private static final String BASIC_CONF_FILE_PATH = "./src/test/resources/authentication/basic/.htpasswd";
 
     private BrokerService brokerService;
     private AuthenticationService authenticationService;
@@ -113,7 +117,7 @@ public class AuthenticationInterceptorTest {
     private static MiniKdc kdc;
     private static Properties properties;
 
-    private static String localHostname = "localhost";
+    private static final String localHostname = "localhost";
     private static Authentication authSasl;
 
     @BeforeMethod
@@ -269,7 +273,7 @@ public class AuthenticationInterceptorTest {
     public void testAuthenticationRoleToken() throws Exception {
         AuthRoleTokenInfo role = AuthRoleTokenInfo.newBuilder()
                 .setRole("role-token")
-                .setExpires(System.currentTimeMillis() + 3600*1000)
+                .setExpires(System.currentTimeMillis() + 3600 * 1000)
                 .build();
 
         byte[] signature = signer.computeSignature(role.toByteArray());
@@ -291,7 +295,7 @@ public class AuthenticationInterceptorTest {
     public void testAuthenticationRoleTokenInvalidSignature() throws Exception {
         AuthRoleTokenInfo role = AuthRoleTokenInfo.newBuilder()
                 .setRole("role-token")
-                .setExpires(System.currentTimeMillis() + 3600*1000)
+                .setExpires(System.currentTimeMillis() + 3600 * 1000)
                 .build();
 
         AuthRoleToken token = AuthRoleToken.newBuilder()
@@ -316,7 +320,7 @@ public class AuthenticationInterceptorTest {
     public void testAuthenticationRoleTokenExpired() throws Exception {
         AuthRoleTokenInfo role = AuthRoleTokenInfo.newBuilder()
                 .setRole("role-token")
-                .setExpires(System.currentTimeMillis() - 3600*1000)
+                .setExpires(System.currentTimeMillis() - 3600 * 1000)
                 .build();
 
         byte[] signature = signer.computeSignature(role.toByteArray());
@@ -349,7 +353,7 @@ public class AuthenticationInterceptorTest {
         provider.initialize(conf);
         doReturn(provider).when(authenticationService).getAuthenticationProvider(provider.getAuthMethodName());
 
-        AuthenticationDataProvider dataProvider =  authSasl.getAuthData(localHostname);
+        AuthenticationDataProvider dataProvider = authSasl.getAuthData(localHostname);
 
         // Init
         AuthData initData1 = dataProvider.authenticate(AuthData.of(AuthData.INIT_AUTH_DATA));
@@ -445,7 +449,8 @@ public class AuthenticationInterceptorTest {
         }
     }
 
-    private org.apache.pulsar.protocols.grpc.api.AuthData.Builder getResponseForChallenge(org.apache.pulsar.protocols.grpc.api.AuthData challenge, byte[] authData) throws AuthenticationException {
+    private org.apache.pulsar.protocols.grpc.api.AuthData.Builder getResponseForChallenge(
+            org.apache.pulsar.protocols.grpc.api.AuthData challenge, byte[] authData) throws AuthenticationException {
         return org.apache.pulsar.protocols.grpc.api.AuthData.newBuilder()
                 .setAuthMethodName(challenge.getAuthMethodName())
                 .setAuthStateId(challenge.getAuthStateId())

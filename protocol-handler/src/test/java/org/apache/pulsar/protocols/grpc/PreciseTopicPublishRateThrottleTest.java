@@ -9,7 +9,6 @@ import io.netty.buffer.Unpooled;
 import org.apache.pulsar.broker.service.AbstractTopic;
 import org.apache.pulsar.broker.service.BrokerTestBase;
 import org.apache.pulsar.broker.service.Topic;
-import org.apache.pulsar.client.api.MessageId;
 import org.apache.pulsar.common.api.proto.PulsarApi;
 import org.apache.pulsar.common.policies.data.Policies;
 import org.apache.pulsar.common.policies.data.PublishRate;
@@ -34,6 +33,9 @@ import java.util.concurrent.TimeoutException;
 import static org.mockito.Mockito.doReturn;
 import static org.testng.Assert.assertTrue;
 
+/**
+ * Tests for producer throttling with precise topic publish rate limiter.
+ */
 public class PreciseTopicPublishRateThrottleTest extends BrokerTestBase {
 
     private GrpcService grpcService;
@@ -70,7 +72,7 @@ public class PreciseTopicPublishRateThrottleTest extends BrokerTestBase {
 
     @Test
     public void testPreciseTopicPublishRateLimitingDisabled() throws Exception {
-        PublishRate publishRate = new PublishRate(1,10);
+        PublishRate publishRate = new PublishRate(1, 10);
         // disable precis topic publish rate limiting
         conf.setPreciseTopicPublishRateLimiterEnable(false);
         conf.setMaxPendingPublishRequestsPerConnection(0);
@@ -96,7 +98,7 @@ public class PreciseTopicPublishRateThrottleTest extends BrokerTestBase {
 
         Topic topicRef = pulsar.getBrokerService().getTopicReference(topic).get();
         Assert.assertNotNull(topicRef);
-        ((AbstractTopic)topicRef).updateMaxPublishRate(policies);
+        ((AbstractTopic) topicRef).updateMaxPublishRate(policies);
         MessageIdData messageId = null;
         try {
             // first will be success
@@ -123,7 +125,7 @@ public class PreciseTopicPublishRateThrottleTest extends BrokerTestBase {
 
     @Test
     public void testProducerBlockedByPreciseTopicPublishRateLimiting() throws Exception {
-        PublishRate publishRate = new PublishRate(1,10);
+        PublishRate publishRate = new PublishRate(1, 10);
         conf.setPreciseTopicPublishRateLimiterEnable(true);
         conf.setMaxPendingPublishRequestsPerConnection(0);
         setup();
@@ -148,7 +150,7 @@ public class PreciseTopicPublishRateThrottleTest extends BrokerTestBase {
 
         Topic topicRef = pulsar.getBrokerService().getTopicReference(topic).get();
         Assert.assertNotNull(topicRef);
-        ((AbstractTopic)topicRef).updateMaxPublishRate(policies);
+        ((AbstractTopic) topicRef).updateMaxPublishRate(policies);
         MessageIdData messageId;
         try {
             // first will be success, and will set auto read to false
@@ -165,7 +167,7 @@ public class PreciseTopicPublishRateThrottleTest extends BrokerTestBase {
 
     @Test
     public void testPreciseTopicPublishRateLimitingProduceRefresh() throws Exception {
-        PublishRate publishRate = new PublishRate(1,10);
+        PublishRate publishRate = new PublishRate(1, 10);
         conf.setPreciseTopicPublishRateLimiterEnable(true);
         conf.setMaxPendingPublishRequestsPerConnection(0);
         setup();
@@ -190,7 +192,7 @@ public class PreciseTopicPublishRateThrottleTest extends BrokerTestBase {
 
         Topic topicRef = pulsar.getBrokerService().getTopicReference(topic).get();
         Assert.assertNotNull(topicRef);
-        ((AbstractTopic)topicRef).updateMaxPublishRate(policies);
+        ((AbstractTopic) topicRef).updateMaxPublishRate(policies);
         MessageIdData messageId = null;
         try {
             // first will be success, and will set auto read to false
@@ -260,7 +262,8 @@ public class PreciseTopicPublishRateThrottleTest extends BrokerTestBase {
 
     }
 
-    private MessageIdData producerSend(int i, StreamObserver<CommandSend> commandSend, TestStreamObserver<SendResult> sendResult,
+    private MessageIdData producerSend(int i, StreamObserver<CommandSend> commandSend,
+            TestStreamObserver<SendResult> sendResult,
             byte[] bytes, int timeoutMs) throws InterruptedException, TimeoutException {
         PulsarApi.MessageMetadata messageMetadata = PulsarApi.MessageMetadata.newBuilder()
                 .setPublishTime(System.currentTimeMillis())

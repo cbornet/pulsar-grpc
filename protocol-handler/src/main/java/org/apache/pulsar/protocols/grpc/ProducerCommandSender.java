@@ -21,7 +21,7 @@ package org.apache.pulsar.protocols.grpc;
 import io.grpc.stub.StreamObserver;
 import org.apache.pulsar.protocols.grpc.api.SendResult;
 
-public class ProducerCommandSender extends DefaultGrpcCommandSender {
+class ProducerCommandSender extends DefaultGrpcCommandSender {
 
     private final StreamObserver<SendResult> responseObserver;
 
@@ -30,12 +30,14 @@ public class ProducerCommandSender extends DefaultGrpcCommandSender {
     }
 
     @Override
-    public void sendSendError(long producerId, long sequenceId, org.apache.pulsar.common.api.proto.PulsarApi.ServerError serverError, String message) {
+    public void sendSendError(long producerId, long sequenceId,
+            org.apache.pulsar.common.api.proto.PulsarApi.ServerError serverError, String message) {
         responseObserver.onNext(Commands.newSendError(sequenceId, Commands.convertServerError(serverError), message));
     }
 
     @Override
-    public void sendSendReceiptResponse(long producerId, long sequenceId, long highestSequenceId, long ledgerId, long entryId) {
+    public void sendSendReceiptResponse(long producerId, long sequenceId, long highestSequenceId, long ledgerId,
+            long entryId) {
         responseObserver.onNext(Commands.newSendReceipt(sequenceId, highestSequenceId, ledgerId, entryId));
     }
 

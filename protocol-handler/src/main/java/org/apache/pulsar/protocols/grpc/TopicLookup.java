@@ -45,23 +45,27 @@ import java.util.concurrent.CompletionException;
 
 import static org.apache.pulsar.protocols.grpc.Commands.newLookupResponse;
 import static org.apache.pulsar.protocols.grpc.Commands.newStatusException;
-import static org.apache.pulsar.protocols.grpc.Constants.*;
+import static org.apache.pulsar.protocols.grpc.Constants.GRPC_SERVICE_HOST_PROPERTY_NAME;
+import static org.apache.pulsar.protocols.grpc.Constants.GRPC_SERVICE_PORT_PROPERTY_NAME;
+import static org.apache.pulsar.protocols.grpc.Constants.GRPC_SERVICE_PORT_TLS_PROPERTY_NAME;
 
-public class TopicLookup extends PulsarWebResource {
+class TopicLookup extends PulsarWebResource {
+
+    private static final Logger log = LoggerFactory.getLogger(TopicLookup.class);
 
     /**
-     *
      * Lookup broker-service address for a given namespace-bundle which contains given topic.
      *
-     * a. Returns broker-address if namespace-bundle is already owned by any broker b. If current-broker receives
+     * <p>a. Returns broker-address if namespace-bundle is already owned by any broker b. If current-broker receives
      * lookup-request and if it's not a leader then current broker redirects request to leader by returning
      * leader-service address. c. If current-broker is leader then it finds out least-loaded broker to own namespace
      * bundle and redirects request by returning least-loaded broker. d. If current-broker receives request to own the
      * namespace-bundle then it owns a bundle and returns success(connect) response to client.
-     *
      */
-    public static CompletableFuture<CommandLookupTopicResponse> lookupTopicAsync(PulsarService pulsarService, TopicName topicName,
-            boolean authoritative, String clientAppId, AuthenticationDataSource authenticationData, final String advertisedListenerName) {
+    public static CompletableFuture<CommandLookupTopicResponse> lookupTopicAsync(PulsarService pulsarService,
+            TopicName topicName,
+            boolean authoritative, String clientAppId, AuthenticationDataSource authenticationData,
+            final String advertisedListenerName) {
 
         final CompletableFuture<CommandLookupTopicResponse> validationFuture = new CompletableFuture<>();
         final CompletableFuture<CommandLookupTopicResponse> lookupfuture = new CompletableFuture<>();
@@ -86,7 +90,8 @@ public class TopicLookup extends PulsarWebResource {
                 } catch (RestException authException) {
                     log.warn("Failed to authorized {} on cluster {}", clientAppId, topicName.toString());
                     validationFuture.completeExceptionally(
-                            newStatusException(Status.PERMISSION_DENIED, authException, ServerError.AuthorizationError));
+                            newStatusException(Status.PERMISSION_DENIED, authException,
+                                    ServerError.AuthorizationError));
                     return;
                 } catch (Exception e) {
                     log.warn("Unknown error while authorizing {} on cluster {}", clientAppId, topicName.toString());
@@ -147,7 +152,8 @@ public class TopicLookup extends PulsarWebResource {
                             if (!lookupResult.isPresent()) {
                                 lookupfuture.completeExceptionally(
                                         newStatusException(Status.UNAVAILABLE,
-                                                "No broker was available to own " + topicName, null, ServerError.ServiceNotReady));
+                                                "No broker was available to own " + topicName, null,
+                                                ServerError.ServiceNotReady));
                                 return;
                             }
 
@@ -182,7 +188,8 @@ public class TopicLookup extends PulsarWebResource {
         return lookupfuture;
     }
 
-    private static Void handleLookupException(TopicName topicName, String clientAppId, CompletableFuture<CommandLookupTopicResponse> lookupfuture, Throwable ex) {
+    private static Void handleLookupException(TopicName topicName, String clientAppId,
+            CompletableFuture<CommandLookupTopicResponse> lookupfuture, Throwable ex) {
         if (ex instanceof CompletionException && ex.getCause() instanceof IllegalStateException) {
             log.info("Failed to lookup {} for topic {} with error {}", clientAppId,
                     topicName.toString(), ex.getCause().getMessage());
@@ -196,40 +203,47 @@ public class TopicLookup extends PulsarWebResource {
     }
 
     private static void lookupTopicGrpcData(PulsarService pulsarService,
-            CompletableFuture<CommandLookupTopicResponse> lookupfuture, String serviceUrl, String serviceUrlTls, boolean authoritative,
+            CompletableFuture<CommandLookupTopicResponse> lookupfuture, String serviceUrl, String serviceUrlTls,
+            boolean authoritative,
             CommandLookupTopicResponse.LookupType type, boolean redirectThroughServiceUrl) {
         try {
             String lookupServiceUrl = serviceUrl != null ? serviceUrl : serviceUrlTls;
             URI uri = new URI(lookupServiceUrl);
             String path = String.format("%s/%s:%s", LoadManager.LOADBALANCE_BROKERS_ROOT, uri.getHost(),
                     uri.getPort());
-            pulsarService.getLocalZkCache().getDataAsync(path, pulsarService.getLoadManager().get().getLoadReportDeserializer()).thenAccept(reportData -> {
-                Optional<String> grpcData = reportData.flatMap(serviceLookupData -> serviceLookupData.getProtocol("grpc"));
-                if (grpcData.isPresent()) {
-                    String props = grpcData.get();
-                    Properties properties = new Properties();
-                    try {
-                        properties.load(new StringReader(props.replaceAll(";", "\n")));
-                        String grpcHost = properties.getProperty(GRPC_SERVICE_HOST_PROPERTY_NAME);
-                        String grpcServicePortProp = properties.getProperty(GRPC_SERVICE_PORT_PROPERTY_NAME);
-                        Integer grpcServicePort =
-                                grpcServicePortProp != null ? Integer.valueOf(grpcServicePortProp) : null;
-                        String grpcServicePortTlsProp = properties.getProperty(GRPC_SERVICE_PORT_TLS_PROPERTY_NAME);
-                        Integer grpcServicePortTls =
-                                grpcServicePortTlsProp != null ? Integer.valueOf(grpcServicePortTlsProp) : null;
-                        if (grpcHost != null) {
-                            lookupfuture.complete(newLookupResponse(grpcHost, grpcServicePort, grpcServicePortTls,
-                                    authoritative, type, redirectThroughServiceUrl));
-                            return;
-                        }
+            pulsarService.getLocalZkCache()
+                    .getDataAsync(path, pulsarService.getLoadManager().get().getLoadReportDeserializer())
+                    .thenAccept(reportData -> {
+                        Optional<String> grpcData =
+                                reportData.flatMap(serviceLookupData -> serviceLookupData.getProtocol("grpc"));
+                        if (grpcData.isPresent()) {
+                            String props = grpcData.get();
+                            Properties properties = new Properties();
+                            try {
+                                properties.load(new StringReader(props.replaceAll(";", "\n")));
+                                String grpcHost = properties.getProperty(GRPC_SERVICE_HOST_PROPERTY_NAME);
+                                String grpcServicePortProp = properties.getProperty(GRPC_SERVICE_PORT_PROPERTY_NAME);
+                                Integer grpcServicePort =
+                                        grpcServicePortProp != null ? Integer.valueOf(grpcServicePortProp) : null;
+                                String grpcServicePortTlsProp =
+                                        properties.getProperty(GRPC_SERVICE_PORT_TLS_PROPERTY_NAME);
+                                Integer grpcServicePortTls =
+                                        grpcServicePortTlsProp != null ? Integer.valueOf(grpcServicePortTlsProp) : null;
+                                if (grpcHost != null) {
+                                    lookupfuture
+                                            .complete(newLookupResponse(grpcHost, grpcServicePort, grpcServicePortTls,
+                                                    authoritative, type, redirectThroughServiceUrl));
+                                    return;
+                                }
 
-                    } catch (Exception e) {
-                        log.error("Couldn't parse grpc data", e);
-                    }
-                }
-                lookupfuture.completeExceptionally(newStatusException(Status.UNAVAILABLE,
-                        "Couldn't get gRPC protocol data on broker owning the topic", null, ServerError.MetadataError));
-            }).exceptionally(ex -> {
+                            } catch (Exception e) {
+                                log.error("Couldn't parse grpc data", e);
+                            }
+                        }
+                        lookupfuture.completeExceptionally(newStatusException(Status.UNAVAILABLE,
+                                "Couldn't get gRPC protocol data on broker owning the topic", null,
+                                ServerError.MetadataError));
+                    }).exceptionally(ex -> {
                 lookupfuture.completeExceptionally(newStatusException(Status.UNAVAILABLE,
                         "Couldn't read load report on broker owning the topic", null, ServerError.MetadataError));
                 return null;
@@ -239,6 +253,4 @@ public class TopicLookup extends PulsarWebResource {
                     "Invalid broker URL", null, ServerError.UnknownError));
         }
     }
-
-    private static final Logger log = LoggerFactory.getLogger(TopicLookup.class);
 }

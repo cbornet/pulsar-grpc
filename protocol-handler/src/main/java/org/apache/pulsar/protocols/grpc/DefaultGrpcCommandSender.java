@@ -60,7 +60,8 @@ abstract class DefaultGrpcCommandSender implements PulsarCommandSender {
     }
 
     @Override
-    public void sendProducerSuccessResponse(long requestId, String producerName, long lastSequenceId, SchemaVersion schemaVersion) {
+    public void sendProducerSuccessResponse(long requestId, String producerName, long lastSequenceId,
+            SchemaVersion schemaVersion) {
 
     }
 
@@ -105,7 +106,8 @@ abstract class DefaultGrpcCommandSender implements PulsarCommandSender {
     }
 
     @Override
-    public void sendLookupResponse(String brokerServiceUrl, String brokerServiceUrlTls, boolean authoritative, PulsarApi.CommandLookupTopicResponse.LookupType response, long requestId, boolean proxyThroughServiceUrl) {
+    public void sendLookupResponse(String brokerServiceUrl, String brokerServiceUrlTls, boolean authoritative,
+            PulsarApi.CommandLookupTopicResponse.LookupType response, long requestId, boolean proxyThroughServiceUrl) {
 
     }
 
@@ -135,7 +137,9 @@ abstract class DefaultGrpcCommandSender implements PulsarCommandSender {
     }
 
     @Override
-    public Future<Void> sendMessagesToConsumer(long consumerId, String topicName, Subscription subscription, int partitionIdx, List<Entry> entries, EntryBatchSizes batchSizes, EntryBatchIndexesAcks batchIndexesAcks, RedeliveryTracker redeliveryTracker) {
+    public Future<Void> sendMessagesToConsumer(long consumerId, String topicName, Subscription subscription,
+            int partitionIdx, List<Entry> entries, EntryBatchSizes batchSizes, EntryBatchIndexesAcks batchIndexesAcks,
+            RedeliveryTracker redeliveryTracker) {
         return ImmediateEventExecutor.INSTANCE.newSucceededFuture(null);
     }
 }

@@ -19,19 +19,31 @@
 package org.apache.pulsar.protocols.grpc;
 
 import com.google.protobuf.InvalidProtocolBufferException;
-import io.grpc.*;
+import io.grpc.Context;
+import io.grpc.Contexts;
+import io.grpc.Grpc;
+import io.grpc.Metadata;
+import io.grpc.ServerCall;
+import io.grpc.ServerCallHandler;
+import io.grpc.ServerInterceptor;
+import io.grpc.Status;
 import org.apache.pulsar.protocols.grpc.api.CommandProducer;
 import org.apache.pulsar.protocols.grpc.api.CommandSubscribe;
 
 import java.net.SocketAddress;
 
 import static com.google.common.base.Preconditions.checkArgument;
-import static org.apache.pulsar.protocols.grpc.Constants.*;
+import static org.apache.pulsar.protocols.grpc.Constants.CONSUMER_PARAMS_CTX_KEY;
+import static org.apache.pulsar.protocols.grpc.Constants.CONSUMER_PARAMS_METADATA_KEY;
+import static org.apache.pulsar.protocols.grpc.Constants.PRODUCER_PARAMS_CTX_KEY;
+import static org.apache.pulsar.protocols.grpc.Constants.PRODUCER_PARAMS_METADATA_KEY;
+import static org.apache.pulsar.protocols.grpc.Constants.REMOTE_ADDRESS_CTX_KEY;
 
-public class GrpcServerInterceptor implements ServerInterceptor {
+class GrpcServerInterceptor implements ServerInterceptor {
 
     @Override
-    public <ReqT, RespT> ServerCall.Listener<ReqT> interceptCall(ServerCall<ReqT, RespT> serverCall, Metadata metadata, ServerCallHandler<ReqT, RespT> serverCallHandler) {
+    public <ReqT, RespT> ServerCall.Listener<ReqT> interceptCall(ServerCall<ReqT, RespT> serverCall, Metadata metadata,
+            ServerCallHandler<ReqT, RespT> serverCallHandler) {
         Context ctx = Context.current();
 
         if (metadata.containsKey(PRODUCER_PARAMS_METADATA_KEY)) {
@@ -40,7 +52,8 @@ public class GrpcServerInterceptor implements ServerInterceptor {
                 checkArgument(!params.getTopic().isEmpty(), "Empty topic name");
                 ctx = ctx.withValue(PRODUCER_PARAMS_CTX_KEY, params);
             } catch (InvalidProtocolBufferException | IllegalArgumentException e) {
-                throw Status.INVALID_ARGUMENT.withDescription("Invalid producer metadata: " + e.getMessage()).asRuntimeException(metadata);
+                throw Status.INVALID_ARGUMENT.withDescription("Invalid producer metadata: " + e.getMessage())
+                        .asRuntimeException(metadata);
             }
         }
         if (metadata.containsKey(CONSUMER_PARAMS_METADATA_KEY)) {
@@ -49,7 +62,8 @@ public class GrpcServerInterceptor implements ServerInterceptor {
                 checkArgument(!params.getTopic().isEmpty(), "Empty topic name");
                 ctx = ctx.withValue(CONSUMER_PARAMS_CTX_KEY, params);
             } catch (InvalidProtocolBufferException | IllegalArgumentException e) {
-                throw Status.INVALID_ARGUMENT.withDescription("Invalid consumer metadata: " + e.getMessage()).asRuntimeException(metadata);
+                throw Status.INVALID_ARGUMENT.withDescription("Invalid consumer metadata: " + e.getMessage())
+                        .asRuntimeException(metadata);
             }
         }
 

@@ -172,5 +172,15 @@ For Kerberos/SASL the flow is similar to the one for the REST interface:
 
 ### Transactions
 
-Coming soon.
+The gRPC protocol handler has full support for transactions.
+PIP 31 describes [the flow](https://docs.google.com/document/d/145VYp09JKTw9jAT-7yNyFU255FptB2_B2Fye100ZXDI/edit#heading=h.ej7chjkq8eph) and the [message definition](https://docs.google.com/document/d/145VYp09JKTw9jAT-7yNyFU255FptB2_B2Fye100ZXDI/edit#heading=h.onmmwpybu4v2) for transactions.
+In gRPC this results in the following RPCs
+```protobuf
+rpc create_transaction(CommandNewTxn) returns (CommandNewTxnResponse) {}
+rpc add_partitions_to_transaction(CommandAddPartitionToTxn) returns (CommandAddPartitionToTxnResponse) {}
+rpc end_transaction(CommandEndTxn) returns (CommandEndTxnResponse) {}
+rpc end_transaction_on_partition(CommandEndTxnOnPartition) returns (CommandEndTxnOnPartitionResponse) {}
+rpc end_transaction_on_subscription(CommandEndTxnOnSubscription) returns (CommandEndTxnOnSubscriptionResponse) {}
+```
+[Example in Java](https://github.com/cbornet/pulsar-grpc/blob/33b8d92f276ea346e75e05e665d329a960e57c54/protocol-handler/src/test/java/org/apache/pulsar/protocols/grpc/PulsarGrpcServiceTest.java#L1385)
 

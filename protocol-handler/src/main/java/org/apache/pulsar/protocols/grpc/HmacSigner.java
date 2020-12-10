@@ -20,11 +20,12 @@ package org.apache.pulsar.protocols.grpc;
 
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
+
 import java.security.InvalidKeyException;
 import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
 
-public class HmacSigner {
+class HmacSigner {
 
     private static final String HMAC_SHA256 = "HmacSHA256";
     private final SecretKeySpec key;

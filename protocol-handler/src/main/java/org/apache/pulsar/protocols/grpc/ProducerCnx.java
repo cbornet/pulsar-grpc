@@ -54,44 +54,96 @@ import static org.apache.pulsar.common.protocol.Commands.serializeSingleMessageI
 import static org.apache.pulsar.protocols.grpc.Commands.convertCompressionType;
 import static org.apache.pulsar.protocols.grpc.Commands.convertSingleMessageMetadata;
 
-public class ProducerCnx extends AbstractGrpcCnx {
+class ProducerCnx extends AbstractGrpcCnx {
+    private static final AtomicLongFieldUpdater<ProducerCnx> MSG_PUBLISH_BUFFER_SIZE_UPDATER =
+            AtomicLongFieldUpdater.newUpdater(ProducerCnx.class, "messagePublishBufferSize");
     private final CallStreamObserver<SendResult> responseObserver;
     private final ProducerCommandSender producerCommandSender;
     private final EventLoop eventLoop;
     private final boolean preciseDispatcherFlowControl;
-    private boolean preciseTopicPublishRateLimitingEnable;
-
     // Max number of pending requests per produce RPC
     private final int maxPendingSendRequests;
     private final int resumeReadsThreshold;
+    private final int maxNonPersistentPendingMessages;
+    private final AutoReadAwareOnReadyHandler onReadyHandler = new AutoReadAwareOnReadyHandler();
+    private final boolean preciseTopicPublishRateLimitingEnable;
     private int pendingSendRequest = 0;
     private int nonPersistentPendingMessages = 0;
-    private final int MaxNonPersistentPendingMessages;
     private volatile boolean isAutoRead = true;
     private volatile boolean autoReadDisabledRateLimiting = false;
-    private final AutoReadAwareOnReadyHandler onReadyHandler = new AutoReadAwareOnReadyHandler();
     // Flag to manage throttling-publish-buffer by atomically enable/disable read-channel.
     private volatile boolean autoReadDisabledPublishBufferLimiting = false;
-    private static final AtomicLongFieldUpdater<ProducerCnx> MSG_PUBLISH_BUFFER_SIZE_UPDATER =
-            AtomicLongFieldUpdater.newUpdater(ProducerCnx.class, "messagePublishBufferSize");
     private volatile long messagePublishBufferSize = 0;
 
     public ProducerCnx(BrokerService service, SocketAddress remoteAddress, String authRole,
             AuthenticationDataSource authenticationData, StreamObserver<SendResult> responseObserver,
             EventLoop eventLoop) {
         super(service, remoteAddress, authRole, authenticationData);
-        this.MaxNonPersistentPendingMessages = service.pulsar().getConfiguration()
+        this.maxNonPersistentPendingMessages = service.pulsar().getConfiguration()
                 .getMaxConcurrentNonPersistentMessagePerConnection();
         this.maxPendingSendRequests = service.pulsar().getConfiguration().getMaxPendingPublishRequestsPerConnection();
         this.resumeReadsThreshold = maxPendingSendRequests / 2;
         this.preciseDispatcherFlowControl = service.pulsar().getConfiguration().isPreciseDispatcherFlowControl();
-        this.preciseTopicPublishRateLimitingEnable = service.pulsar().getConfiguration().isPreciseTopicPublishRateLimiterEnable();
+        this.preciseTopicPublishRateLimitingEnable =
+                service.pulsar().getConfiguration().isPreciseTopicPublishRateLimiterEnable();
         this.responseObserver = (CallStreamObserver<SendResult>) responseObserver;
         this.responseObserver.disableAutoInboundFlowControl();
         this.responseObserver.setOnReadyHandler(onReadyHandler);
 
         this.producerCommandSender = new ProducerCommandSender(responseObserver);
         this.eventLoop = eventLoop;
+    }
+
+    private static ByteBuf compressAndSerialize(MessageMetadata.Builder metadataBuilder, ByteBuf payload) {
+        ByteBuf headersAndPayload;
+        if (metadataBuilder.getCompression() != CompressionType.NONE) {
+            PulsarApi.CompressionType compressionType = convertCompressionType(metadataBuilder.getCompression());
+            CompressionCodec compressor = CompressionCodecProvider.getCompressionCodec(compressionType);
+            int uncompressedSize = payload.readableBytes();
+            ByteBuf compressedPayload = compressor.encode(payload);
+            payload.release();
+            metadataBuilder.setUncompressedSize(uncompressedSize);
+            try {
+                headersAndPayload = serializeMetadataAndPayload(metadataBuilder.build(), compressedPayload);
+            } finally {
+                compressedPayload.release();
+            }
+        } else {
+            headersAndPayload = serializeMetadataAndPayload(metadataBuilder.build(), payload);
+        }
+        return headersAndPayload;
+    }
+
+    private static ByteBuf serializeMetadataAndPayload(MessageMetadata msgMetadata, ByteBuf payload) {
+        int msgMetadataSize = msgMetadata.getSerializedSize();
+        int payloadSize = payload.readableBytes();
+        int headerContentSize = 10 + msgMetadataSize;
+        int checksumReaderIndex;
+        int totalSize = headerContentSize + payloadSize;
+        ByteBuf metadataAndPayload = PulsarByteBufAllocator.DEFAULT.buffer(totalSize, totalSize);
+
+        try {
+            metadataAndPayload.writeShort(3585);
+            checksumReaderIndex = metadataAndPayload.writerIndex();
+            metadataAndPayload.writerIndex(metadataAndPayload.writerIndex() + 4);
+            metadataAndPayload.writeInt(msgMetadataSize);
+            CodedOutputStream outStream = CodedOutputStream.newInstance(
+                    metadataAndPayload.nioBuffer(metadataAndPayload.writerIndex(), metadataAndPayload.writableBytes()));
+            msgMetadata.writeTo(outStream);
+            metadataAndPayload.writerIndex(metadataAndPayload.writerIndex() + msgMetadataSize);
+        } catch (IOException var13) {
+            throw new RuntimeException(var13);
+        }
+
+        metadataAndPayload.markReaderIndex();
+        metadataAndPayload.readerIndex(checksumReaderIndex + 4);
+        int metadataChecksum = Crc32cIntChecksum.computeChecksum(metadataAndPayload);
+        int computedChecksum = Crc32cIntChecksum.resumeChecksum(metadataChecksum, payload);
+        metadataAndPayload.setInt(checksumReaderIndex, computedChecksum);
+        metadataAndPayload.resetReaderIndex();
+
+        metadataAndPayload.writeBytes(payload);
+        return metadataAndPayload;
     }
 
     @Override
@@ -117,7 +169,7 @@ public class ProducerCnx extends AbstractGrpcCnx {
 
         switch (send.getSendOneofCase()) {
             case BINARY_METADATA_AND_PAYLOAD:
-                if(!send.hasSequenceId()) {
+                if (!send.hasSequenceId()) {
                     return;
                 }
                 ByteBuffer buffer = send.getBinaryMetadataAndPayload().asReadOnlyByteBuffer();
@@ -142,10 +194,12 @@ public class ProducerCnx extends AbstractGrpcCnx {
                 metadataBuilder.setNumMessagesInBatch(messages.size());
                 ByteBuf batchedMessageMetadataAndPayload = PulsarByteBufAllocator.DEFAULT.buffer(1024);
                 for (SingleMessage message : messages) {
-                    PulsarApi.SingleMessageMetadata.Builder singleMessageMetadata = convertSingleMessageMetadata(message.getMetadata());
+                    PulsarApi.SingleMessageMetadata.Builder singleMessageMetadata =
+                            convertSingleMessageMetadata(message.getMetadata());
                     ByteBuf payload = Unpooled.wrappedBuffer(message.getPayload().asReadOnlyByteBuffer());
                     try {
-                        serializeSingleMessageInBatchWithPayload(singleMessageMetadata, payload, batchedMessageMetadataAndPayload);
+                        serializeSingleMessageInBatchWithPayload(singleMessageMetadata, payload,
+                                batchedMessageMetadataAndPayload);
                     } finally {
                         singleMessageMetadata.recycle();
                     }
@@ -158,8 +212,8 @@ public class ProducerCnx extends AbstractGrpcCnx {
                 if (!send.hasNumMessages() && metadata.hasNumMessagesInBatch()) {
                     numMessages = metadata.getNumMessagesInBatch();
                 }
-                // Since https://github.com/apache/pulsar/pull/5390 Pulsar uses the airlift lib to compress which doesn't support
-                // ReadOnlyByteBuffer as input. So we have to make a copy here...
+                // Since https://github.com/apache/pulsar/pull/5390 Pulsar uses the airlift lib to compress which
+                // doesn't support ReadOnlyByteBuffer as input. So we have to make a copy here...
                 // ByteBuf payload = Unpooled.wrappedBuffer(metadataAndPayload.getPayload().asReadOnlyByteBuffer());
                 // TODO: check if JNI compression could be used instead of airlift ?
                 ByteBuf payload = Unpooled.wrappedBuffer(metadataAndPayload.getPayload().toByteArray());
@@ -176,12 +230,14 @@ public class ProducerCnx extends AbstractGrpcCnx {
 
         if (producer.isNonPersistentTopic()) {
             // avoid processing non-persist message if reached max concurrent-message limit
-            if (nonPersistentPendingMessages > MaxNonPersistentPendingMessages) {
-                final long sequenceId_ = sequenceId;
-                final long highestSequenceId_ = highestSequenceId == null ? 0 : highestSequenceId;
+            if (nonPersistentPendingMessages > maxNonPersistentPendingMessages) {
+                final long receiptSequenceId = sequenceId;
+                final long receiptHighestSequenceId = highestSequenceId == null ? 0 : highestSequenceId;
                 service.getTopicOrderedExecutor().executeOrdered(
                         producer.getTopic().getName(),
-                        SafeRun.safeRun(() -> responseObserver.onNext(Commands.newSendReceipt(sequenceId_, highestSequenceId_, -1, -1)))
+                        SafeRun.safeRun(() -> responseObserver
+                                .onNext(Commands.newSendReceipt(receiptSequenceId, receiptHighestSequenceId,
+                                        -1, -1)))
                 );
                 producer.recordMessageDrop(numMessages);
                 return;
@@ -210,31 +266,12 @@ public class ProducerCnx extends AbstractGrpcCnx {
         onMessageHandled();
     }
 
-    private static ByteBuf compressAndSerialize(MessageMetadata.Builder metadataBuilder, ByteBuf payload) {
-        ByteBuf headersAndPayload;
-        if (metadataBuilder.getCompression() != CompressionType.NONE) {
-            PulsarApi.CompressionType compressionType = convertCompressionType(metadataBuilder.getCompression());
-            CompressionCodec compressor = CompressionCodecProvider.getCompressionCodec(compressionType);
-            int uncompressedSize = payload.readableBytes();
-            ByteBuf compressedPayload = compressor.encode(payload);
-            payload.release();
-            metadataBuilder.setUncompressedSize(uncompressedSize);
-            try {
-                headersAndPayload = serializeMetadataAndPayload(metadataBuilder.build(), compressedPayload);
-            } finally {
-                compressedPayload.release();
-            }
-        } else {
-            headersAndPayload = serializeMetadataAndPayload(metadataBuilder.build(), payload);
-        }
-        return headersAndPayload;
-    }
-
     private void startSendOperation(Producer producer, int msgSize, int numMessages) {
         MSG_PUBLISH_BUFFER_SIZE_UPDATER.getAndAdd(this, msgSize);
         boolean isPublishRateExceeded = false;
         if (preciseTopicPublishRateLimitingEnable) {
-            boolean isPreciseTopicPublishRateExceeded = producer.getTopic().isTopicPublishRateExceeded(numMessages, msgSize);
+            boolean isPreciseTopicPublishRateExceeded =
+                    producer.getTopic().isTopicPublishRateExceeded(numMessages, msgSize);
             if (isPreciseTopicPublishRateExceeded) {
                 producer.getTopic().disableCnxAutoRead();
                 return;
@@ -331,6 +368,11 @@ public class ProducerCnx extends AbstractGrpcCnx {
         }
     }
 
+    @Override
+    public void execute(Runnable runnable) {
+        eventLoop.execute(runnable);
+    }
+
     class AutoReadAwareOnReadyHandler implements Runnable {
         // Guard against spurious onReady() calls caused by a race between onNext() and onReady(). If the transport
         // toggles isReady() from false to true while onNext() is executing, but before onNext() checks isReady(),
@@ -342,48 +384,11 @@ public class ProducerCnx extends AbstractGrpcCnx {
         public void run() {
             if (responseObserver.isReady() && !wasReady) {
                 wasReady = true;
-                if(isAutoRead) {
+                if (isAutoRead) {
                     responseObserver.request(1);
                 }
             }
         }
 
-    }
-
-    @Override
-    public void execute(Runnable runnable) {
-        eventLoop.execute(runnable);
-    }
-
-    private static ByteBuf serializeMetadataAndPayload(MessageMetadata msgMetadata, ByteBuf payload) {
-        int msgMetadataSize = msgMetadata.getSerializedSize();
-        int payloadSize = payload.readableBytes();
-        int headerContentSize = 10 + msgMetadataSize;
-        int checksumReaderIndex;
-        int totalSize = headerContentSize + payloadSize;
-        ByteBuf metadataAndPayload = PulsarByteBufAllocator.DEFAULT.buffer(totalSize, totalSize);
-
-        try {
-            metadataAndPayload.writeShort(3585);
-            checksumReaderIndex = metadataAndPayload.writerIndex();
-            metadataAndPayload.writerIndex(metadataAndPayload.writerIndex() + 4);
-            metadataAndPayload.writeInt(msgMetadataSize);
-            CodedOutputStream outStream = CodedOutputStream.newInstance(
-                    metadataAndPayload.nioBuffer(metadataAndPayload.writerIndex(), metadataAndPayload.writableBytes()));
-            msgMetadata.writeTo(outStream);
-            metadataAndPayload.writerIndex(metadataAndPayload.writerIndex() + msgMetadataSize);
-        } catch (IOException var13) {
-            throw new RuntimeException(var13);
-        }
-
-        metadataAndPayload.markReaderIndex();
-        metadataAndPayload.readerIndex(checksumReaderIndex + 4);
-        int metadataChecksum = Crc32cIntChecksum.computeChecksum(metadataAndPayload);
-        int computedChecksum = Crc32cIntChecksum.resumeChecksum(metadataChecksum, payload);
-        metadataAndPayload.setInt(checksumReaderIndex, computedChecksum);
-        metadataAndPayload.resetReaderIndex();
-
-        metadataAndPayload.writeBytes(payload);
-        return metadataAndPayload;
     }
 }

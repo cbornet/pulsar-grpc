@@ -96,6 +96,9 @@ import static org.mockito.Mockito.doReturn;
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertTrue;
 
+/**
+ * Compatibility tests between Pulsar binary client and gRPC client.
+ */
 public class ProducerConsumerCompatibilityTest extends ProducerConsumerBase {
 
     private static final Logger log = LoggerFactory.getLogger(ProducerConsumerCompatibilityTest.class);
@@ -832,7 +835,8 @@ public class ProducerConsumerCompatibilityTest extends ProducerConsumerBase {
         }
 
         // Redeliver last message
-        consumeInput.onNext(Commands.newRedeliverUnacknowledgedMessages(Collections.singletonList(message.getMessageId())));
+        consumeInput
+                .onNext(Commands.newRedeliverUnacknowledgedMessages(Collections.singletonList(message.getMessageId())));
 
         message = consumeOutput.takeOneMessage().getMessage();
         String receivedMessage = getFirstPayloadInBatch(message);
@@ -1350,32 +1354,32 @@ public class ProducerConsumerCompatibilityTest extends ProducerConsumerBase {
         }
 
         public EncryptionKeyInfo getPublicKey(String keyName, Map<String, String> keyMeta) {
-            String CERT_FILE_PATH = "./src/test/resources/certificate/public-key." + keyName;
-            if (Files.isReadable(Paths.get(CERT_FILE_PATH))) {
+            String certFilePath = "./src/test/resources/certificate/public-key." + keyName;
+            if (Files.isReadable(Paths.get(certFilePath))) {
                 try {
-                    this.keyInfo.setKey(Files.readAllBytes(Paths.get(CERT_FILE_PATH)));
+                    this.keyInfo.setKey(Files.readAllBytes(Paths.get(certFilePath)));
                     return this.keyInfo;
                 } catch (IOException var5) {
-                    Assert.fail("Failed to read certificate from " + CERT_FILE_PATH);
+                    Assert.fail("Failed to read certificate from " + certFilePath);
                 }
             } else {
-                Assert.fail("Certificate file " + CERT_FILE_PATH + " is not present or not readable.");
+                Assert.fail("Certificate file " + certFilePath + " is not present or not readable.");
             }
 
             return null;
         }
 
         public EncryptionKeyInfo getPrivateKey(String keyName, Map<String, String> keyMeta) {
-            String CERT_FILE_PATH = "./src/test/resources/certificate/private-key." + keyName;
-            if (Files.isReadable(Paths.get(CERT_FILE_PATH))) {
+            String certFilePath = "./src/test/resources/certificate/private-key." + keyName;
+            if (Files.isReadable(Paths.get(certFilePath))) {
                 try {
-                    this.keyInfo.setKey(Files.readAllBytes(Paths.get(CERT_FILE_PATH)));
+                    this.keyInfo.setKey(Files.readAllBytes(Paths.get(certFilePath)));
                     return this.keyInfo;
                 } catch (IOException var5) {
-                    Assert.fail("Failed to read certificate from " + CERT_FILE_PATH);
+                    Assert.fail("Failed to read certificate from " + certFilePath);
                 }
             } else {
-                Assert.fail("Certificate file " + CERT_FILE_PATH + " is not present or not readable.");
+                Assert.fail("Certificate file " + certFilePath + " is not present or not readable.");
             }
 
             return null;

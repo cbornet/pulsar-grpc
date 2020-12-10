@@ -82,7 +82,8 @@ public class SecurityUtility {
         X509Certificate[] certificates = loadCertificatesFromPemFile(certFilePath);
         PrivateKey privateKey = loadPrivateKeyFromPemFile(keyFilePath);
 
-        SslContextBuilder builder = GrpcSslContexts.forServer(new FileInputStream(certFilePath), new FileInputStream(keyFilePath));
+        SslContextBuilder builder =
+                GrpcSslContexts.forServer(new FileInputStream(certFilePath), new FileInputStream(keyFilePath));
         setupCiphers(builder, ciphers);
         setupProtocols(builder, protocols);
         setupTrustCerts(builder, allowInsecureConnection, trustCertsFilePath);
@@ -156,7 +157,7 @@ public class SecurityUtility {
 
     private static void setupKeyManager(SslContextBuilder builder, PrivateKey privateKey,
             X509Certificate[] certificates) {
-        builder.keyManager(privateKey, (X509Certificate[]) certificates);
+        builder.keyManager(privateKey, certificates);
     }
 
     private static void setupCiphers(SslContextBuilder builder, Set<String> ciphers) {

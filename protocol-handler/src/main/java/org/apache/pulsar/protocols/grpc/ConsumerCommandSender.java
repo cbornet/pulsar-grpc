@@ -18,7 +18,6 @@
  */
 package org.apache.pulsar.protocols.grpc;
 
-import io.grpc.stub.CallStreamObserver;
 import io.grpc.stub.StreamObserver;
 import io.netty.buffer.ByteBuf;
 import io.netty.util.concurrent.Future;
@@ -39,9 +38,8 @@ import org.slf4j.LoggerFactory;
 import java.io.IOException;
 import java.util.List;
 import java.util.function.Consumer;
-import java.util.function.Function;
 
-public class ConsumerCommandSender extends DefaultGrpcCommandSender {
+class ConsumerCommandSender extends DefaultGrpcCommandSender {
 
     private static final Logger log = LoggerFactory.getLogger(ConsumerCommandSender.class);
 
@@ -96,7 +94,8 @@ public class ConsumerCommandSender extends DefaultGrpcCommandSender {
             ByteBuf metadataAndPayload = entry.getDataBuffer();
 
             if (log.isDebugEnabled()) {
-                log.debug("[{}-{}] Sending message to consumer, msg id {}-{}", topicName, subscription, entry.getLedgerId(), entry.getEntryId());
+                log.debug("[{}-{}] Sending message to consumer, msg id {}-{}", topicName, subscription,
+                        entry.getLedgerId(), entry.getEntryId());
             }
             int redeliveryCount = 0;
             PositionImpl position = PositionImpl.get(messageIdBuilder.getLedgerId(), messageIdBuilder.getEntryId());

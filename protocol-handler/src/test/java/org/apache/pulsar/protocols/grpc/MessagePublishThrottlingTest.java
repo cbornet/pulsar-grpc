@@ -21,58 +21,23 @@ package org.apache.pulsar.protocols.grpc;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
 import com.google.common.util.concurrent.AtomicDouble;
-import com.google.protobuf.ByteString;
 import io.grpc.ManagedChannel;
 import io.grpc.netty.NegotiationType;
 import io.grpc.netty.NettyChannelBuilder;
 import io.grpc.stub.StreamObserver;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
-import lombok.AllArgsConstructor;
-import lombok.Builder;
-import lombok.Data;
-import lombok.NoArgsConstructor;
 import org.apache.pulsar.broker.service.Producer;
 import org.apache.pulsar.broker.service.PublishRateLimiter;
 import org.apache.pulsar.broker.service.persistent.PersistentTopic;
-import org.apache.pulsar.client.api.Consumer;
-import org.apache.pulsar.client.api.CryptoKeyReader;
-import org.apache.pulsar.client.api.EncryptionKeyInfo;
-import org.apache.pulsar.client.api.Message;
-import org.apache.pulsar.client.api.ProducerBuilder;
 import org.apache.pulsar.client.api.ProducerConsumerBase;
 import org.apache.pulsar.client.impl.ProducerImpl;
 import org.apache.pulsar.common.api.proto.PulsarApi;
 import org.apache.pulsar.common.policies.data.PublishRate;
-import org.apache.pulsar.common.protocol.schema.SchemaVersion;
-import org.apache.pulsar.common.schema.LongSchemaVersion;
-import org.apache.pulsar.protocols.grpc.api.CommandAck.AckType;
-import org.apache.pulsar.protocols.grpc.api.CommandGetLastMessageIdResponse;
-import org.apache.pulsar.protocols.grpc.api.CommandGetOrCreateSchema;
-import org.apache.pulsar.protocols.grpc.api.CommandGetOrCreateSchemaResponse;
-import org.apache.pulsar.protocols.grpc.api.CommandGetSchema;
-import org.apache.pulsar.protocols.grpc.api.CommandGetSchemaResponse;
-import org.apache.pulsar.protocols.grpc.api.CommandLookupTopic;
-import org.apache.pulsar.protocols.grpc.api.CommandLookupTopicResponse;
-import org.apache.pulsar.protocols.grpc.api.CommandLookupTopicResponse.LookupType;
-import org.apache.pulsar.protocols.grpc.api.CommandMessage;
-import org.apache.pulsar.protocols.grpc.api.CommandPartitionedTopicMetadata;
-import org.apache.pulsar.protocols.grpc.api.CommandPartitionedTopicMetadataResponse;
 import org.apache.pulsar.protocols.grpc.api.CommandProducer;
 import org.apache.pulsar.protocols.grpc.api.CommandSend;
-import org.apache.pulsar.protocols.grpc.api.CommandSubscribe;
-import org.apache.pulsar.protocols.grpc.api.CompressionType;
-import org.apache.pulsar.protocols.grpc.api.ConsumeInput;
-import org.apache.pulsar.protocols.grpc.api.ConsumeOutput;
-import org.apache.pulsar.protocols.grpc.api.MessageIdData;
-import org.apache.pulsar.protocols.grpc.api.MessageMetadata;
-import org.apache.pulsar.protocols.grpc.api.Messages;
-import org.apache.pulsar.protocols.grpc.api.MetadataAndPayload;
-import org.apache.pulsar.protocols.grpc.api.PayloadType;
 import org.apache.pulsar.protocols.grpc.api.PulsarGrpc;
-import org.apache.pulsar.protocols.grpc.api.Schema;
 import org.apache.pulsar.protocols.grpc.api.SendResult;
-import org.apache.pulsar.protocols.grpc.api.SingleMessage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.testng.Assert;
@@ -80,15 +45,10 @@ import org.testng.annotations.AfterMethod;
 import org.testng.annotations.BeforeMethod;
 import org.testng.annotations.Test;
 
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Paths;
-import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
@@ -99,13 +59,13 @@ import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.stream.Collectors;
 
-import static org.apache.pulsar.common.protocol.Commands.parseMessageMetadata;
 import static org.mockito.Mockito.doReturn;
-import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertTrue;
 
+/**
+ * Tests for producer throttling.
+ */
 public class MessagePublishThrottlingTest extends ProducerConsumerBase {
 
     private static final Logger log = LoggerFactory.getLogger(MessagePublishThrottlingTest.class);
@@ -278,7 +238,8 @@ public class MessagePublishThrottlingTest extends ProducerConsumerBase {
         // disable throttling
         publishMsgRate.publishThrottlingRateInByte = -1;
         admin.namespaces().setPublishRate(namespace, publishMsgRate);
-        retryStrategically((test) -> topic.getTopicPublishRateLimiter().equals(PublishRateLimiter.DISABLED_RATE_LIMITER), 5,
+        retryStrategically(
+                (test) -> topic.getTopicPublishRateLimiter().equals(PublishRateLimiter.DISABLED_RATE_LIMITER), 5,
                 200);
         Assert.assertEquals(topic.getTopicPublishRateLimiter(), PublishRateLimiter.DISABLED_RATE_LIMITER);
 
@@ -299,6 +260,7 @@ public class MessagePublishThrottlingTest extends ProducerConsumerBase {
     /**
      * Verifies publish rate limiting by setting rate-limiting on number of published messages.
      * Broker publish throttle enabled / topic publish throttle disabled
+     *
      * @throws Exception
      */
     @Test
@@ -388,6 +350,7 @@ public class MessagePublishThrottlingTest extends ProducerConsumerBase {
     /**
      * Verifies publish rate limiting by setting rate-limiting on number of publish bytes.
      * Broker publish throttle enabled / topic publish throttle disabled
+     *
      * @throws Exception
      */
     @Test
@@ -486,6 +449,7 @@ public class MessagePublishThrottlingTest extends ProducerConsumerBase {
      * 1. set brokerByteRate > topicByteRate,
      * 2. with 1 topic, topicByteRate first take effective, then brokerByteRate take effective, the former rate is less.
      * 3. create 3 topics with same rate limit, publish should throttle by broker and topic limit.
+     *
      * @throws Exception
      */
     @Test
@@ -563,7 +527,7 @@ public class MessagePublishThrottlingTest extends ProducerConsumerBase {
         List<ProducerImpl<byte[]>> producers = Lists.newArrayListWithExpectedSize(topicNumber);
         List<PersistentTopic> topics = Lists.newArrayListWithExpectedSize(topicNumber);
 
-        for (int i = 0 ; i < topicNumber; i ++) {
+        for (int i = 0; i < topicNumber; i++) {
             String iTopicName = topicNameBase + i;
             ProducerImpl<byte[]> iProducer = (ProducerImpl<byte[]>) pulsarClient.newProducer()
                     .topic(iTopicName)
@@ -593,7 +557,7 @@ public class MessagePublishThrottlingTest extends ProducerConsumerBase {
         final AtomicInteger index = new AtomicInteger(0);
         CountDownLatch latch = new CountDownLatch(topicNumber);
 
-        for (int i = 0; i < topicNumber; i ++) {
+        for (int i = 0; i < topicNumber; i++) {
             topicRatesCounter.add(() -> {
                 int id = index.incrementAndGet();
                 ProducerImpl<byte[]> iProducer = producers.get(id);
@@ -669,7 +633,8 @@ public class MessagePublishThrottlingTest extends ProducerConsumerBase {
         executor.shutdown();
     }
 
-    private void producerSend(int i, StreamObserver<CommandSend> commandSend, TestStreamObserver<SendResult> sendResult, byte[] bytes) throws InterruptedException, TimeoutException {
+    private void producerSend(int i, StreamObserver<CommandSend> commandSend, TestStreamObserver<SendResult> sendResult,
+            byte[] bytes) throws InterruptedException, TimeoutException {
         PulsarApi.MessageMetadata messageMetadata = PulsarApi.MessageMetadata.newBuilder()
                 .setPublishTime(System.currentTimeMillis())
                 .setProducerName("prod-name")
@@ -683,16 +648,15 @@ public class MessagePublishThrottlingTest extends ProducerConsumerBase {
     private static class TestStreamObserver<T> implements StreamObserver<T> {
 
         public static final int TIMEOUT = 10;
-
-        public static <T> TestStreamObserver<T> create() {
-            return new TestStreamObserver<>();
-        }
-
         private final LinkedBlockingQueue<T> queue = new LinkedBlockingQueue<>();
         private final CompletableFuture<Throwable> error = new CompletableFuture<>();
         private final CountDownLatch complete = new CountDownLatch(1);
 
         private TestStreamObserver() {
+        }
+
+        public static <T> TestStreamObserver<T> create() {
+            return new TestStreamObserver<>();
         }
 
         @Override

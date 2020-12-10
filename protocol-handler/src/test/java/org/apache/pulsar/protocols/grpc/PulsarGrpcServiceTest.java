@@ -151,7 +151,9 @@ import static org.testng.Assert.assertNull;
 import static org.testng.Assert.assertTrue;
 import static org.testng.Assert.fail;
 
-@Test
+/**
+ * Tests for {@link PulsarGrpcService}.
+ */
 public class PulsarGrpcServiceTest {
 
     private ServiceConfiguration svcConfig;
@@ -167,11 +169,12 @@ public class PulsarGrpcServiceTest {
     private final String nonOwnedTopicName = "persistent://prop/use/ns-abc/success-not-owned-topic";
     private final String encryptionRequiredTopicName = "persistent://prop/use/ns-abc/successEncryptionRequiredTopic";
     private final String successSubName = "successSub";
-    private final String nonExistentTopicName = "persistent://nonexistent-prop/nonexistent-cluster/nonexistent-namespace/successNonExistentTopic";
+    private final String nonExistentTopicName =
+            "persistent://nonexistent-prop/nonexistent-cluster/nonexistent-namespace/successNonExistentTopic";
     private final String topicWithNonLocalCluster = "persistent://prop/usw/ns-abc/successTopic";
 
     private ManagedLedger ledgerMock;
-    private ManagedCursor cursorMock = mock(ManagedCursor.class);
+    private final ManagedCursor cursorMock = mock(ManagedCursor.class);
 
     private OrderedExecutor executor;
 
@@ -283,7 +286,8 @@ public class PulsarGrpcServiceTest {
 
         TestStreamObserver<SendResult> observer2 = TestStreamObserver.create();
         producerStub.produce(observer2);
-        assertErrorIsStatusExceptionWithServerError(observer2.waitForError(), Status.FAILED_PRECONDITION, ServerError.PersistenceError);
+        assertErrorIsStatusExceptionWithServerError(observer2.waitForError(), Status.FAILED_PRECONDITION,
+                ServerError.PersistenceError);
         assertFalse(pulsar.getBrokerService().getTopicReference(failTopicName).isPresent());
 
         request.onCompleted();
@@ -315,8 +319,9 @@ public class PulsarGrpcServiceTest {
     @Test
     public void testProducerCommandWithAuthorizationPositive() throws Exception {
         AuthorizationService authorizationService = mock(AuthorizationService.class);
-        doReturn(CompletableFuture.completedFuture(true)).when(authorizationService).allowTopicOperationAsync(Mockito.any(),
-                Mockito.any(), Mockito.any(), Mockito.any());
+        doReturn(CompletableFuture.completedFuture(true)).when(authorizationService)
+                .allowTopicOperationAsync(Mockito.any(),
+                        Mockito.any(), Mockito.any(), Mockito.any());
         doReturn(authorizationService).when(brokerService).getAuthorizationService();
         doReturn(true).when(brokerService).isAuthenticationEnabled();
         doReturn(true).when(brokerService).isAuthorizationEnabled();
@@ -346,7 +351,8 @@ public class PulsarGrpcServiceTest {
         ConfigurationCacheService configCacheService = mock(ConfigurationCacheService.class);
         doReturn(configCacheService).when(pulsar).getConfigurationCache();
         doReturn(zkDataCache).when(configCacheService).policiesCache();
-        doReturn(CompletableFuture.completedFuture(Optional.empty())).when(zkDataCache).getAsync(matches(".*nonexistent.*"));
+        doReturn(CompletableFuture.completedFuture(Optional.empty())).when(zkDataCache)
+                .getAsync(matches(".*nonexistent.*"));
 
         AuthorizationService authorizationService = spy(new AuthorizationService(svcConfig, configCacheService));
         doReturn(authorizationService).when(brokerService).getAuthorizationService();
@@ -354,12 +360,15 @@ public class PulsarGrpcServiceTest {
         svcConfig.setAuthorizationEnabled(true);
         Field providerField = AuthorizationService.class.getDeclaredField("provider");
         providerField.setAccessible(true);
-        PulsarAuthorizationProvider authorizationProvider = spy(new PulsarAuthorizationProvider(svcConfig, configCacheService));
+        PulsarAuthorizationProvider authorizationProvider =
+                spy(new PulsarAuthorizationProvider(svcConfig, configCacheService));
         providerField.set(authorizationService, authorizationProvider);
-        doReturn(CompletableFuture.completedFuture(false)).when(authorizationProvider).isSuperUser(Mockito.anyString(), Mockito.any(), Mockito.any());
+        doReturn(CompletableFuture.completedFuture(false)).when(authorizationProvider)
+                .isSuperUser(Mockito.anyString(), Mockito.any(), Mockito.any());
 
         // Test producer creation
-        CommandProducer producerParams = Commands.newProducer(nonExistentTopicName, "prod-name", Collections.emptyMap());
+        CommandProducer producerParams =
+                Commands.newProducer(nonExistentTopicName, "prod-name", Collections.emptyMap());
         verifyProduceFails(producerParams, Status.PERMISSION_DENIED, ServerError.AuthorizationError);
 
         // Test consumer creation
@@ -374,13 +383,16 @@ public class PulsarGrpcServiceTest {
         AuthorizationService authorizationService = spy(new AuthorizationService(svcConfig, configCacheService));
         Field providerField = AuthorizationService.class.getDeclaredField("provider");
         providerField.setAccessible(true);
-        PulsarAuthorizationProvider authorizationProvider = spy(new PulsarAuthorizationProvider(svcConfig, configCacheService));
+        PulsarAuthorizationProvider authorizationProvider =
+                spy(new PulsarAuthorizationProvider(svcConfig, configCacheService));
         providerField.set(authorizationService, authorizationProvider);
         doReturn(authorizationService).when(brokerService).getAuthorizationService();
         doReturn(true).when(brokerService).isAuthorizationEnabled();
-        doReturn(CompletableFuture.completedFuture(false)).when(authorizationProvider).isSuperUser(Mockito.anyString(), Mockito.any(), Mockito.any());
-        doReturn(CompletableFuture.completedFuture(true)).when(authorizationProvider).checkPermission(any(TopicName.class), Mockito.any(),
-                any(AuthAction.class));
+        doReturn(CompletableFuture.completedFuture(false)).when(authorizationProvider)
+                .isSuperUser(Mockito.anyString(), Mockito.any(), Mockito.any());
+        doReturn(CompletableFuture.completedFuture(true)).when(authorizationProvider)
+                .checkPermission(any(TopicName.class), Mockito.any(),
+                        any(AuthAction.class));
 
         CommandProducer producerParams = Commands.newProducer(successTopicName, "prod-name", Collections.emptyMap());
         PulsarGrpc.PulsarStub producerStub = Commands.attachProducerParams(stub, producerParams);
@@ -404,12 +416,15 @@ public class PulsarGrpcServiceTest {
         doReturn(true).when(brokerService).isAuthorizationEnabled();
         Field providerField = AuthorizationService.class.getDeclaredField("provider");
         providerField.setAccessible(true);
-        PulsarAuthorizationProvider authorizationProvider = spy(new PulsarAuthorizationProvider(svcConfig, configCacheService));
+        PulsarAuthorizationProvider authorizationProvider =
+                spy(new PulsarAuthorizationProvider(svcConfig, configCacheService));
         providerField.set(authorizationService, authorizationProvider);
-        doReturn(CompletableFuture.completedFuture(true)).when(authorizationProvider).isSuperUser(Mockito.anyString(), Mockito.any(), Mockito.any());
+        doReturn(CompletableFuture.completedFuture(true)).when(authorizationProvider)
+                .isSuperUser(Mockito.anyString(), Mockito.any(), Mockito.any());
 
         // Test producer creation
-        CommandProducer producerParams = Commands.newProducer(nonExistentTopicName, "prod-name", Collections.emptyMap());
+        CommandProducer producerParams =
+                Commands.newProducer(nonExistentTopicName, "prod-name", Collections.emptyMap());
         PulsarGrpc.PulsarStub producerStub = Commands.attachProducerParams(stub, producerParams);
         TestStreamObserver<SendResult> observer = new TestStreamObserver<>();
         StreamObserver<CommandSend> request = producerStub.produce(observer);
@@ -449,8 +464,9 @@ public class PulsarGrpcServiceTest {
     @Test
     public void testProducerCommandWithAuthorizationNegative() throws Exception {
         AuthorizationService authorizationService = mock(AuthorizationService.class);
-        doReturn(CompletableFuture.completedFuture(false)).when(authorizationService).allowTopicOperationAsync(Mockito.any(),
-                Mockito.any(), Mockito.any(), Mockito.any());
+        doReturn(CompletableFuture.completedFuture(false)).when(authorizationService)
+                .allowTopicOperationAsync(Mockito.any(),
+                        Mockito.any(), Mockito.any(), Mockito.any());
         doReturn(authorizationService).when(brokerService).getAuthorizationService();
         doReturn(true).when(brokerService).isAuthenticationEnabled();
         doReturn(true).when(brokerService).isAuthorizationEnabled();
@@ -513,7 +529,8 @@ public class PulsarGrpcServiceTest {
         CompletableFuture<Runnable> openTopicFuture = new CompletableFuture<>();
         doAnswer(invocationOnMock -> {
             openTopicFuture.complete(() -> {
-                ((AsyncCallbacks.OpenLedgerCallback) invocationOnMock.getArguments()[2]).openLedgerComplete(ledgerMock, null);
+                ((AsyncCallbacks.OpenLedgerCallback) invocationOnMock.getArguments()[2])
+                        .openLedgerComplete(ledgerMock, null);
             });
             return null;
         }).when(mlFactoryMock).asyncOpen(matches(".*success.*"), any(ManagedLedgerConfig.class),
@@ -564,7 +581,8 @@ public class PulsarGrpcServiceTest {
         CompletableFuture<Runnable> openFailedTopic = new CompletableFuture<>();
         doAnswer(invocationOnMock -> {
             openFailedTopic.complete(() -> {
-                ((AsyncCallbacks.OpenLedgerCallback) invocationOnMock.getArguments()[2]).openLedgerComplete(ledgerMock, null);
+                ((AsyncCallbacks.OpenLedgerCallback) invocationOnMock.getArguments()[2])
+                        .openLedgerComplete(ledgerMock, null);
             });
             return null;
         }).when(mlFactoryMock).asyncOpen(matches(".*fail.*"), any(ManagedLedgerConfig.class),
@@ -623,7 +641,8 @@ public class PulsarGrpcServiceTest {
         CompletableFuture<Runnable> openTopicTask = new CompletableFuture<>();
         doAnswer(invocationOnMock -> {
             openTopicTask.complete(() -> {
-                ((AsyncCallbacks.OpenLedgerCallback) invocationOnMock.getArguments()[2]).openLedgerComplete(ledgerMock, null);
+                ((AsyncCallbacks.OpenLedgerCallback) invocationOnMock.getArguments()[2])
+                        .openLedgerComplete(ledgerMock, null);
             });
 
             return null;
@@ -673,7 +692,8 @@ public class PulsarGrpcServiceTest {
         CompletableFuture<Runnable> openTopicSuccess = new CompletableFuture<>();
         doAnswer(invocationOnMock -> {
             openTopicSuccess.complete(() -> {
-                ((AsyncCallbacks.OpenLedgerCallback) invocationOnMock.getArguments()[2]).openLedgerComplete(ledgerMock, null);
+                ((AsyncCallbacks.OpenLedgerCallback) invocationOnMock.getArguments()[2])
+                        .openLedgerComplete(ledgerMock, null);
             });
             return null;
         }).when(mlFactoryMock).asyncOpen(matches(".*success.*"), any(ManagedLedgerConfig.class),
@@ -769,8 +789,9 @@ public class PulsarGrpcServiceTest {
     @Test
     public void testSubscribeCommandWithAuthorizationPositive() throws Exception {
         AuthorizationService authorizationService = mock(AuthorizationService.class);
-        doReturn(CompletableFuture.completedFuture(true)).when(authorizationService).allowTopicOperationAsync(Mockito.any(),
-                Mockito.any(), Mockito.any(), Mockito.any());
+        doReturn(CompletableFuture.completedFuture(true)).when(authorizationService)
+                .allowTopicOperationAsync(Mockito.any(),
+                        Mockito.any(), Mockito.any(), Mockito.any());
         doReturn(authorizationService).when(brokerService).getAuthorizationService();
         doReturn(true).when(brokerService).isAuthenticationEnabled();
         doReturn(true).when(brokerService).isAuthorizationEnabled();
@@ -791,8 +812,9 @@ public class PulsarGrpcServiceTest {
     @Test
     public void testSubscribeCommandWithAuthorizationNegative() throws Exception {
         AuthorizationService authorizationService = mock(AuthorizationService.class);
-        doReturn(CompletableFuture.completedFuture(false)).when(authorizationService).allowTopicOperationAsync(Mockito.any(),
-                Mockito.any(), Mockito.any(), Mockito.any());
+        doReturn(CompletableFuture.completedFuture(false)).when(authorizationService)
+                .allowTopicOperationAsync(Mockito.any(),
+                        Mockito.any(), Mockito.any(), Mockito.any());
         doReturn(authorizationService).when(brokerService).getAuthorizationService();
         doReturn(true).when(brokerService).isAuthenticationEnabled();
         doReturn(true).when(brokerService).isAuthorizationEnabled();
@@ -878,8 +900,10 @@ public class PulsarGrpcServiceTest {
         policies.encryption_required = true;
         policies.topicDispatchRate = Maps.newHashMap();
         policies.clusterDispatchRate = Maps.newHashMap();
-        doReturn(Optional.of(policies)).when(zkDataCache).get(AdminResource.path(POLICIES, TopicName.get(encryptionRequiredTopicName).getNamespace()));
-        doReturn(CompletableFuture.completedFuture(Optional.of(policies))).when(zkDataCache).getAsync(AdminResource.path(POLICIES, TopicName.get(encryptionRequiredTopicName).getNamespace()));
+        doReturn(Optional.of(policies)).when(zkDataCache)
+                .get(AdminResource.path(POLICIES, TopicName.get(encryptionRequiredTopicName).getNamespace()));
+        doReturn(CompletableFuture.completedFuture(Optional.of(policies))).when(zkDataCache)
+                .getAsync(AdminResource.path(POLICIES, TopicName.get(encryptionRequiredTopicName).getNamespace()));
         doReturn(zkDataCache).when(configCacheService).policiesCache();
 
         // test success case: encrypted producer can connect
@@ -909,8 +933,10 @@ public class PulsarGrpcServiceTest {
         policies.encryption_required = true;
         policies.topicDispatchRate = Maps.newHashMap();
         policies.clusterDispatchRate = Maps.newHashMap();
-        doReturn(Optional.of(policies)).when(zkDataCache).get(AdminResource.path(POLICIES, TopicName.get(encryptionRequiredTopicName).getNamespace()));
-        doReturn(CompletableFuture.completedFuture(Optional.of(policies))).when(zkDataCache).getAsync(AdminResource.path(POLICIES, TopicName.get(encryptionRequiredTopicName).getNamespace()));
+        doReturn(Optional.of(policies)).when(zkDataCache)
+                .get(AdminResource.path(POLICIES, TopicName.get(encryptionRequiredTopicName).getNamespace()));
+        doReturn(CompletableFuture.completedFuture(Optional.of(policies))).when(zkDataCache)
+                .getAsync(AdminResource.path(POLICIES, TopicName.get(encryptionRequiredTopicName).getNamespace()));
         doReturn(zkDataCache).when(configCacheService).policiesCache();
 
         // test success case: encrypted producer can connect
@@ -933,8 +959,10 @@ public class PulsarGrpcServiceTest {
         policies.encryption_required = false;
         policies.topicDispatchRate = Maps.newHashMap();
         policies.clusterDispatchRate = Maps.newHashMap();
-        doReturn(Optional.of(policies)).when(zkDataCache).get(AdminResource.path(POLICIES, TopicName.get(encryptionRequiredTopicName).getNamespace()));
-        doReturn(CompletableFuture.completedFuture(Optional.of(policies))).when(zkDataCache).getAsync(AdminResource.path(POLICIES, TopicName.get(encryptionRequiredTopicName).getNamespace()));
+        doReturn(Optional.of(policies)).when(zkDataCache)
+                .get(AdminResource.path(POLICIES, TopicName.get(encryptionRequiredTopicName).getNamespace()));
+        doReturn(CompletableFuture.completedFuture(Optional.of(policies))).when(zkDataCache)
+                .getAsync(AdminResource.path(POLICIES, TopicName.get(encryptionRequiredTopicName).getNamespace()));
         doReturn(zkDataCache).when(configCacheService).policiesCache();
 
         // test success case: encrypted producer can connect
@@ -954,8 +982,10 @@ public class PulsarGrpcServiceTest {
         policies.encryption_required = true;
         policies.topicDispatchRate = Maps.newHashMap();
         policies.clusterDispatchRate = Maps.newHashMap();
-        doReturn(Optional.of(policies)).when(zkDataCache).get(AdminResource.path(POLICIES, TopicName.get(encryptionRequiredTopicName).getNamespace()));
-        doReturn(CompletableFuture.completedFuture(Optional.of(policies))).when(zkDataCache).getAsync(AdminResource.path(POLICIES, TopicName.get(encryptionRequiredTopicName).getNamespace()));
+        doReturn(Optional.of(policies)).when(zkDataCache)
+                .get(AdminResource.path(POLICIES, TopicName.get(encryptionRequiredTopicName).getNamespace()));
+        doReturn(CompletableFuture.completedFuture(Optional.of(policies))).when(zkDataCache)
+                .getAsync(AdminResource.path(POLICIES, TopicName.get(encryptionRequiredTopicName).getNamespace()));
         doReturn(zkDataCache).when(configCacheService).policiesCache();
 
         CommandProducer producerParams = Commands.newProducer(encryptionRequiredTopicName,
@@ -973,7 +1003,8 @@ public class PulsarGrpcServiceTest {
                 .setPublishTime(System.currentTimeMillis())
                 .setProducerName("prod-name")
                 .setSequenceId(0)
-                .addEncryptionKeys(PulsarApi.EncryptionKeys.newBuilder().setKey("testKey").setValue(ByteString.copyFrom("testVal".getBytes())))
+                .addEncryptionKeys(PulsarApi.EncryptionKeys.newBuilder().setKey("testKey")
+                        .setValue(ByteString.copyFrom("testVal".getBytes())))
                 .build();
         ByteBuf data = Unpooled.buffer(1024);
 
@@ -994,8 +1025,10 @@ public class PulsarGrpcServiceTest {
         policies.encryption_required = true;
         policies.topicDispatchRate = Maps.newHashMap();
         policies.clusterDispatchRate = Maps.newHashMap();
-        doReturn(Optional.of(policies)).when(zkDataCache).get(AdminResource.path(POLICIES, TopicName.get(encryptionRequiredTopicName).getNamespace()));
-        doReturn(CompletableFuture.completedFuture(Optional.of(policies))).when(zkDataCache).getAsync(AdminResource.path(POLICIES, TopicName.get(encryptionRequiredTopicName).getNamespace()));
+        doReturn(Optional.of(policies)).when(zkDataCache)
+                .get(AdminResource.path(POLICIES, TopicName.get(encryptionRequiredTopicName).getNamespace()));
+        doReturn(CompletableFuture.completedFuture(Optional.of(policies))).when(zkDataCache)
+                .getAsync(AdminResource.path(POLICIES, TopicName.get(encryptionRequiredTopicName).getNamespace()));
         doReturn(zkDataCache).when(configCacheService).policiesCache();
 
         CommandProducer producerParams = Commands.newProducer(encryptionRequiredTopicName,
@@ -1032,8 +1065,9 @@ public class PulsarGrpcServiceTest {
     @Test
     public void testUnauthorizedTopicOnLookup() throws Exception {
         AuthorizationService authorizationService = mock(AuthorizationService.class);
-        doReturn(CompletableFuture.completedFuture(false)).when(authorizationService).allowTopicOperationAsync(Mockito.any(),
-                Mockito.any(), Mockito.any(), Mockito.any());
+        doReturn(CompletableFuture.completedFuture(false)).when(authorizationService)
+                .allowTopicOperationAsync(Mockito.any(),
+                        Mockito.any(), Mockito.any(), Mockito.any());
         doReturn(authorizationService).when(brokerService).getAuthorizationService();
         doReturn(true).when(brokerService).isAuthenticationEnabled();
         doReturn(true).when(brokerService).isAuthorizationEnabled();
@@ -1064,8 +1098,9 @@ public class PulsarGrpcServiceTest {
     @Test
     public void testUnauthorizedTopicOnGetPartitionMetadata() throws Exception {
         AuthorizationService authorizationService = mock(AuthorizationService.class);
-        doReturn(CompletableFuture.completedFuture(false)).when(authorizationService).allowTopicOperationAsync(Mockito.any(),
-                Mockito.any(), Mockito.any(), Mockito.any());
+        doReturn(CompletableFuture.completedFuture(false)).when(authorizationService)
+                .allowTopicOperationAsync(Mockito.any(),
+                        Mockito.any(), Mockito.any(), Mockito.any());
         doReturn(authorizationService).when(brokerService).getAuthorizationService();
         doReturn(true).when(brokerService).isAuthenticationEnabled();
         doReturn(true).when(brokerService).isAuthorizationEnabled();
@@ -1112,7 +1147,8 @@ public class PulsarGrpcServiceTest {
     public void testDelayedClosedProducer() throws Exception {
         CompletableFuture<Topic> delayFuture = new CompletableFuture<>();
         Topic topic = spy(new NonPersistentTopic(successTopicName, brokerService));
-        doReturn(delayFuture, CompletableFuture.completedFuture(topic)).when(brokerService).getOrCreateTopic(any(String.class));
+        doReturn(delayFuture, CompletableFuture.completedFuture(topic)).when(brokerService)
+                .getOrCreateTopic(any(String.class));
         // Create producer first time
         CommandProducer createProducer1 = Commands.newProducer(successTopicName, "prod-name", Collections.emptyMap());
         PulsarGrpc.PulsarStub produceStub = Commands.attachProducerParams(stub, createProducer1);
@@ -1151,7 +1187,8 @@ public class PulsarGrpcServiceTest {
     public void testProducerProducerBlockedQuotaExceededErrorOnBacklogQuotaExceeded() throws Exception {
         Topic spyTopic = spy(new PersistentTopic(successTopicName, ledgerMock, brokerService));
         doReturn(true).when(spyTopic).isBacklogQuotaExceeded("exceeded-producer");
-        doReturn(new BacklogQuota(0, BacklogQuota.RetentionPolicy.producer_request_hold)).when(spyTopic).getBacklogQuota();
+        doReturn(new BacklogQuota(0, BacklogQuota.RetentionPolicy.producer_request_hold)).when(spyTopic)
+                .getBacklogQuota();
         doReturn(CompletableFuture.completedFuture(spyTopic)).when(brokerService).getOrCreateTopic(successTopicName);
 
         // test success case: encrypted producer can connect
@@ -1170,7 +1207,8 @@ public class PulsarGrpcServiceTest {
         // test success case: encrypted producer can connect
         CommandProducer producerParams = Commands.newProducer(successTopicName,
                 "exceeded-producer", true, null);
-        verifyProduceFails(producerParams, Status.FAILED_PRECONDITION, ServerError.ProducerBlockedQuotaExceededException);
+        verifyProduceFails(producerParams, Status.FAILED_PRECONDITION,
+                ServerError.ProducerBlockedQuotaExceededException);
     }
 
     @Test
@@ -1292,7 +1330,8 @@ public class PulsarGrpcServiceTest {
         CompletableFuture<Runnable> openTopicTask = new CompletableFuture<>();
         doAnswer(invocationOnMock -> {
             openTopicTask.complete(() -> {
-                ((AsyncCallbacks.OpenLedgerCallback) invocationOnMock.getArguments()[2]).openLedgerComplete(ledgerMock, null);
+                ((AsyncCallbacks.OpenLedgerCallback) invocationOnMock.getArguments()[2])
+                        .openLedgerComplete(ledgerMock, null);
             });
 
             return null;
@@ -1388,9 +1427,10 @@ public class PulsarGrpcServiceTest {
 
         CommandNewTxnResponse txn = blockingStub.createTransaction(Commands.newTxn(tcId));
 
-        TxnStatus txnStatus = transactionMetadataStoreService.getTxnMeta(new TxnID(txn.getTxnidMostBits(), txn.getTxnidLeastBits()))
-                .thenApply(TxnMeta::status)
-                .getNow(null);
+        TxnStatus txnStatus =
+                transactionMetadataStoreService.getTxnMeta(new TxnID(txn.getTxnidMostBits(), txn.getTxnidLeastBits()))
+                        .thenApply(TxnMeta::status)
+                        .getNow(null);
 
         assertEquals(txnStatus, TxnStatus.OPEN);
         assertEquals(txn.getTxnidMostBits(), tcId);
@@ -1419,9 +1459,10 @@ public class PulsarGrpcServiceTest {
         blockingStub.addPartitionsToTransaction(
                 Commands.newAddPartitionToTxn(txn.getTxnidLeastBits(), txn.getTxnidMostBits(), partitions));
 
-        List<String> txnPartitions = transactionMetadataStoreService.getTxnMeta(new TxnID(txn.getTxnidMostBits(), txn.getTxnidLeastBits()))
-                .thenApply(TxnMeta::producedPartitions)
-                .getNow(null);
+        List<String> txnPartitions =
+                transactionMetadataStoreService.getTxnMeta(new TxnID(txn.getTxnidMostBits(), txn.getTxnidLeastBits()))
+                        .thenApply(TxnMeta::producedPartitions)
+                        .getNow(null);
 
         assertEquals(txnPartitions, partitions);
     }
@@ -1669,8 +1710,10 @@ public class PulsarGrpcServiceTest {
         policies.encryption_required = true;
         policies.topicDispatchRate = Maps.newHashMap();
         policies.clusterDispatchRate = Maps.newHashMap();
-        doReturn(Optional.of(policies)).when(zkDataCache).get(AdminResource.path(POLICIES, TopicName.get(encryptionRequiredTopicName).getNamespace()));
-        doReturn(CompletableFuture.completedFuture(Optional.of(policies))).when(zkDataCache).getAsync(AdminResource.path(POLICIES, TopicName.get(encryptionRequiredTopicName).getNamespace()));
+        doReturn(Optional.of(policies)).when(zkDataCache)
+                .get(AdminResource.path(POLICIES, TopicName.get(encryptionRequiredTopicName).getNamespace()));
+        doReturn(CompletableFuture.completedFuture(Optional.of(policies))).when(zkDataCache)
+                .getAsync(AdminResource.path(POLICIES, TopicName.get(encryptionRequiredTopicName).getNamespace()));
         doReturn(zkDataCache).when(configCacheService).policiesCache();
 
         CommandProducer producerParams = Commands.newProducer(encryptionRequiredTopicName,
@@ -1722,10 +1765,10 @@ public class PulsarGrpcServiceTest {
             return new TestStreamObserver<T>();
         }
 
-        private LinkedBlockingQueue<T> queue = new LinkedBlockingQueue<>();
-        private CompletableFuture<Throwable> error = new CompletableFuture<>();
-        private CountDownLatch complete = new CountDownLatch(1);
-        private CountDownLatch errorOrComplete = new CountDownLatch(1);
+        private final LinkedBlockingQueue<T> queue = new LinkedBlockingQueue<>();
+        private final CompletableFuture<Throwable> error = new CompletableFuture<>();
+        private final CountDownLatch complete = new CountDownLatch(1);
+        private final CountDownLatch errorOrComplete = new CountDownLatch(1);
 
         private TestStreamObserver() {
         }
@@ -1772,13 +1815,15 @@ public class PulsarGrpcServiceTest {
         }
     }
 
-    private static void assertErrorIsStatusExceptionWithServerError(Throwable actualException, Status expectedStatus, ServerError expectedCode) {
+    private static void assertErrorIsStatusExceptionWithServerError(Throwable actualException, Status expectedStatus,
+            ServerError expectedCode) {
         Status actualStatus = Status.fromThrowable(actualException);
         assertEquals(actualStatus.getCode(), expectedStatus.getCode());
 
         Metadata actualMetadata = Status.trailersFromThrowable(actualException);
         assertNotNull(actualMetadata);
-        assertEquals(ServerError.forNumber(Integer.parseInt(actualMetadata.get(ERROR_CODE_METADATA_KEY))), expectedCode);
+        assertEquals(ServerError.forNumber(Integer.parseInt(actualMetadata.get(ERROR_CODE_METADATA_KEY))),
+                expectedCode);
     }
 
     public static MockZooKeeper createMockZooKeeper() throws Exception {
@@ -1799,7 +1844,7 @@ public class PulsarGrpcServiceTest {
     }
 
     // Prevent the MockBookKeeper instance from being closed when the broker is restarted within a test
-    public static class NonClosableMockBookKeeper extends PulsarMockBookKeeper {
+    private static class NonClosableMockBookKeeper extends PulsarMockBookKeeper {
 
         public NonClosableMockBookKeeper(ZooKeeper zk, ExecutorService executor) throws Exception {
             super(zk, executor);
@@ -1829,7 +1874,8 @@ public class PulsarGrpcServiceTest {
             @Override
             public Object answer(InvocationOnMock invocationOnMock) throws Throwable {
                 Thread.sleep(300);
-                ((AsyncCallbacks.OpenLedgerCallback) invocationOnMock.getArguments()[2]).openLedgerComplete(ledgerMock, null);
+                ((AsyncCallbacks.OpenLedgerCallback) invocationOnMock.getArguments()[2])
+                        .openLedgerComplete(ledgerMock, null);
                 return null;
             }
         }).when(mlFactoryMock).asyncOpen(matches(".*success.*"), any(ManagedLedgerConfig.class),
@@ -1854,8 +1900,9 @@ public class PulsarGrpcServiceTest {
         doAnswer(new Answer<Object>() {
             @Override
             public Object answer(InvocationOnMock invocationOnMock) throws Throwable {
-                ((AsyncCallbacks.AddEntryCallback) invocationOnMock.getArguments()[1]).addComplete(new PositionImpl(-1, -1),
-                        invocationOnMock.getArguments()[2]);
+                ((AsyncCallbacks.AddEntryCallback) invocationOnMock.getArguments()[1])
+                        .addComplete(new PositionImpl(-1, -1),
+                                invocationOnMock.getArguments()[2]);
                 return null;
             }
         }).when(ledgerMock).asyncAddEntry(any(ByteBuf.class), any(AsyncCallbacks.AddEntryCallback.class), any());
@@ -1864,20 +1911,26 @@ public class PulsarGrpcServiceTest {
             @Override
             public Object answer(InvocationOnMock invocationOnMock) throws Throwable {
                 Thread.sleep(300);
-                ((AsyncCallbacks.OpenCursorCallback) invocationOnMock.getArguments()[2]).openCursorComplete(cursorMock, null);
+                ((AsyncCallbacks.OpenCursorCallback) invocationOnMock.getArguments()[2])
+                        .openCursorComplete(cursorMock, null);
                 return null;
             }
-        }).when(ledgerMock).asyncOpenCursor(matches(".*success.*"), any(PulsarApi.CommandSubscribe.InitialPosition.class), any(AsyncCallbacks.OpenCursorCallback.class), any());
+        }).when(ledgerMock)
+                .asyncOpenCursor(matches(".*success.*"), any(PulsarApi.CommandSubscribe.InitialPosition.class),
+                        any(AsyncCallbacks.OpenCursorCallback.class), any());
 
         doAnswer(new Answer<Object>() {
             @Override
             public Object answer(InvocationOnMock invocationOnMock) throws Throwable {
                 Thread.sleep(300);
-                ((AsyncCallbacks.OpenCursorCallback) invocationOnMock.getArguments()[3]).openCursorComplete(cursorMock, null);
+                ((AsyncCallbacks.OpenCursorCallback) invocationOnMock.getArguments()[3])
+                        .openCursorComplete(cursorMock, null);
                 return null;
             }
-        }).when(ledgerMock).asyncOpenCursor(matches(".*success.*"), any(PulsarApi.CommandSubscribe.InitialPosition.class), any(Map.class),
-                any(AsyncCallbacks.OpenCursorCallback.class), any());
+        }).when(ledgerMock)
+                .asyncOpenCursor(matches(".*success.*"), any(PulsarApi.CommandSubscribe.InitialPosition.class),
+                        any(Map.class),
+                        any(AsyncCallbacks.OpenCursorCallback.class), any());
 
         doAnswer(new Answer<Object>() {
             @Override
@@ -1887,7 +1940,8 @@ public class PulsarGrpcServiceTest {
                         .openCursorFailed(new ManagedLedgerException("Managed ledger failure"), null);
                 return null;
             }
-        }).when(ledgerMock).asyncOpenCursor(matches(".*fail.*"), any(PulsarApi.CommandSubscribe.InitialPosition.class), any(AsyncCallbacks.OpenCursorCallback.class), any());
+        }).when(ledgerMock).asyncOpenCursor(matches(".*fail.*"), any(PulsarApi.CommandSubscribe.InitialPosition.class),
+                any(AsyncCallbacks.OpenCursorCallback.class), any());
 
         doAnswer(new Answer<Object>() {
             @Override
@@ -1897,7 +1951,8 @@ public class PulsarGrpcServiceTest {
                         .openCursorFailed(new ManagedLedgerException("Managed ledger failure"), null);
                 return null;
             }
-        }).when(ledgerMock).asyncOpenCursor(matches(".*fail.*"), any(PulsarApi.CommandSubscribe.InitialPosition.class), any(Map.class),
+        }).when(ledgerMock).asyncOpenCursor(matches(".*fail.*"), any(PulsarApi.CommandSubscribe.InitialPosition.class),
+                any(Map.class),
                 any(AsyncCallbacks.OpenCursorCallback.class), any());
 
         doAnswer(new Answer<Object>() {
@@ -1906,7 +1961,8 @@ public class PulsarGrpcServiceTest {
                 ((AsyncCallbacks.DeleteCursorCallback) invocationOnMock.getArguments()[1]).deleteCursorComplete(null);
                 return null;
             }
-        }).when(ledgerMock).asyncDeleteCursor(matches(".*success.*"), any(AsyncCallbacks.DeleteCursorCallback.class), any());
+        }).when(ledgerMock)
+                .asyncDeleteCursor(matches(".*success.*"), any(AsyncCallbacks.DeleteCursorCallback.class), any());
 
         doAnswer(new Answer<Object>() {
             @Override
@@ -1915,7 +1971,8 @@ public class PulsarGrpcServiceTest {
                         .deleteCursorFailed(new ManagedLedgerException("Managed ledger failure"), null);
                 return null;
             }
-        }).when(ledgerMock).asyncDeleteCursor(matches(".*fail.*"), any(AsyncCallbacks.DeleteCursorCallback.class), any());
+        }).when(ledgerMock)
+                .asyncDeleteCursor(matches(".*fail.*"), any(AsyncCallbacks.DeleteCursorCallback.class), any());
 
         doAnswer(new Answer<Object>() {
             @Override

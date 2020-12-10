@@ -36,7 +36,7 @@ import java.util.Optional;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-public class MockedBookKeeperClientFactory implements BookKeeperClientFactory {
+class MockedBookKeeperClientFactory implements BookKeeperClientFactory {
     private static final Logger log = LoggerFactory.getLogger(MockedBookKeeperClientFactory.class);
 
     private final BookKeeper mockedBk;

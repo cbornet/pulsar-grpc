@@ -54,7 +54,9 @@ import static org.apache.pulsar.protocols.grpc.Constants.AUTH_METADATA_KEY;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.spy;
 
-
+/**
+ * Tests for {@link GrpcService}.
+ */
 public class GrpcServiceTest {
 
     private PulsarService pulsar;
@@ -110,8 +112,8 @@ public class GrpcServiceTest {
     }
 
     /**
-     * Test that if enableAuth option and allowInsecure option are enabled, GrpcService requires trusted/untrusted client
-     * certificate.
+     * Test that if enableAuth option and allowInsecure option are enabled, GrpcService requires trusted/untrusted
+     * client certificate.
      *
      * @throws Exception
      */
@@ -171,7 +173,8 @@ public class GrpcServiceTest {
                     .sslContext(sslContext);
             if (useAuth) {
                 Metadata authHeaders = new Metadata();
-                authHeaders.put(AUTH_METADATA_KEY, CommandConnect.newBuilder().setAuthMethodName("tls").build().toByteArray());
+                authHeaders.put(AUTH_METADATA_KEY,
+                        CommandConnect.newBuilder().setAuthMethodName("tls").build().toByteArray());
                 channelBuilder.intercept(newAttachHeadersInterceptor(authHeaders));
             }
         } else {
@@ -183,7 +186,9 @@ public class GrpcServiceTest {
         PulsarGrpc.PulsarBlockingStub stub = PulsarGrpc.newBlockingStub(channel);
         String result;
         try {
-            CommandLookupTopicResponse response = stub.lookupTopic(CommandLookupTopic.newBuilder().setTopic("persistent://my-property/local/my-namespace/my-topic").build());
+            CommandLookupTopicResponse response = stub.lookupTopic(
+                    CommandLookupTopic.newBuilder().setTopic("persistent://my-property/local/my-namespace/my-topic")
+                            .build());
             result = response.getGrpcServiceHost();
         } finally {
             channel.shutdown();
@@ -227,13 +232,13 @@ public class GrpcServiceTest {
         doReturn(new MockedBookKeeperClientFactory()).when(pulsar).newBookKeeperClientFactory();
         pulsar.start();
 
-        String BROKER_URL_BASE = "http://localhost:" + pulsar.getListenPortHTTP().get();
-        String BROKER_URL_BASE_TLS = "https://localhost:" + pulsar.getListenPortHTTPS().orElse(-1);
-        String serviceUrl = BROKER_URL_BASE;
+        String brokerUrlBase = "http://localhost:" + pulsar.getListenPortHTTP().get();
+        String brokerUrlBaseTls = "https://localhost:" + pulsar.getListenPortHTTPS().orElse(-1);
+        String serviceUrl = brokerUrlBase;
 
         PulsarAdminBuilder adminBuilder = PulsarAdmin.builder();
         if (enableTls && enableAuth) {
-            serviceUrl = BROKER_URL_BASE_TLS;
+            serviceUrl = brokerUrlBaseTls;
 
             Map<String, String> authParams = new HashMap<>();
             authParams.put("tlsCertFile", TLS_CLIENT_CERT_FILE_PATH);

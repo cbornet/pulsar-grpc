@@ -20,8 +20,13 @@ package org.apache.pulsar.protocols.grpc;
 
 import org.testng.annotations.Test;
 
-import static org.testng.Assert.*;
+import static org.testng.Assert.assertEquals;
+import static org.testng.Assert.assertNotEquals;
+import static org.testng.Assert.assertThrows;
 
+/**
+ * Tests for {@link HmacSigner}.
+ */
 public class HmacSignerTest {
 
     @Test

@@ -29,12 +29,27 @@
     <name>Pulsar Protocol Handler :: gRPC Parent</name>
     <description>Parent for Pulsar gRPC Protocol Handler.</description>
 
+    <licenses>
+        <license>
+            <name>Apache License, Version 2.0</name>
+            <url>http://www.apache.org/licenses/LICENSE-2.0.txt</url>
+            <distribution>repo</distribution>
+        </license>
+    </licenses>
+
     <properties>
         <javac.target>1.8</javac.target>
         <redirectTestOutputToFile>true</redirectTestOutputToFile>
 
+        <!-- plugin dependencies -->
+        <dockerfile-maven.version>1.4.9</dockerfile-maven.version>
+        <license-maven-plugin.version>3.0.rc1</license-maven-plugin.version>
+        <maven-checkstyle-plugin.version>3.0.0</maven-checkstyle-plugin.version>
         <maven-compiler-plugin.version>3.8.0</maven-compiler-plugin.version>
         <maven-surefire-plugin.version>3.0.0-M1</maven-surefire-plugin.version>
+        <os-maven-plugin.version>1.4.1.Final</os-maven-plugin.version>
+        <puppycrawl.checkstyle.version>6.19</puppycrawl.checkstyle.version>
+        <spotbugs-maven-plugin.version>3.1.8</spotbugs-maven-plugin.version>
     </properties>
 
     <modules>
@@ -42,6 +57,40 @@
     </modules>
 
     <build>
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-checkstyle-plugin</artifactId>
+                    <version>${maven-checkstyle-plugin.version}</version>
+                    <dependencies>
+                        <dependency>
+                            <groupId>com.puppycrawl.tools</groupId>
+                            <artifactId>checkstyle</artifactId>
+                            <version>${puppycrawl.checkstyle.version}</version>
+                        </dependency>
+                    </dependencies>
+                    <configuration>
+                        <configLocation>resources/checkstyle.xml</configLocation>
+                        <suppressionsLocation>resources/suppressions.xml</suppressionsLocation>
+                        <encoding>UTF-8</encoding>
+                        <consoleOutput>true</consoleOutput>
+                        <failOnViolation>true</failOnViolation>
+                        <includeResources>false</includeResources>
+                        <includeTestSourceDirectory>true</includeTestSourceDirectory>
+                    </configuration>
+                    <executions>
+                        <execution>
+                            <id>checkstyle</id>
+                            <phase>validate</phase>
+                            <goals>
+                                <goal>check</goal>
+                            </goals>
+                        </execution>
+                    </executions>
+                </plugin>
+            </plugins>
+        </pluginManagement>
         <plugins>
             <plugin>
                 <artifactId>maven-compiler-plugin</artifactId>

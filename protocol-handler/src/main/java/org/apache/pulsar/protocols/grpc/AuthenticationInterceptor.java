@@ -43,6 +43,7 @@ import org.slf4j.LoggerFactory;
 
 import javax.naming.AuthenticationException;
 import javax.net.ssl.SSLSession;
+
 import java.net.SocketAddress;
 import java.util.Arrays;
 import java.util.Map;
@@ -55,15 +56,13 @@ import static org.apache.pulsar.protocols.grpc.Constants.AUTH_METADATA_KEY;
 import static org.apache.pulsar.protocols.grpc.Constants.AUTH_ROLE_CTX_KEY;
 import static org.apache.pulsar.protocols.grpc.Constants.AUTH_ROLE_TOKEN_METADATA_KEY;
 
-public class AuthenticationInterceptor implements ServerInterceptor {
+class AuthenticationInterceptor implements ServerInterceptor {
 
     private static final Logger log = LoggerFactory.getLogger(AuthenticationInterceptor.class);
-
+    private static final long SASL_ROLE_TOKEN_LIVE_SECONDS = 3600;
     private final BrokerService service;
     private final HmacSigner signer;
     private final Map<String, Map<Long, AuthenticationState>> authStates = new ConcurrentHashMap<>();
-
-    private static final long SASL_ROLE_TOKEN_LIVE_SECONDS = 3600;
     // A signer for role token, with random secret.
 
     public AuthenticationInterceptor(BrokerService service) {
@@ -76,7 +75,8 @@ public class AuthenticationInterceptor implements ServerInterceptor {
     }
 
     @Override
-    public <ReqT, RespT> ServerCall.Listener<ReqT> interceptCall(ServerCall<ReqT, RespT> serverCall, Metadata metadata, ServerCallHandler<ReqT, RespT> serverCallHandler) {
+    public <ReqT, RespT> ServerCall.Listener<ReqT> interceptCall(ServerCall<ReqT, RespT> serverCall, Metadata metadata,
+            ServerCallHandler<ReqT, RespT> serverCallHandler) {
         Context ctx = Context.current();
 
         if (service.isAuthenticationEnabled()) {
@@ -97,11 +97,12 @@ public class AuthenticationInterceptor implements ServerInterceptor {
                     }
                     // role token OK to use
                     ctx = ctx.withValue(AUTH_ROLE_CTX_KEY, token.getRoleInfo().getRole());
-                    ctx = ctx.withValue(AUTH_DATA_CTX_KEY, new AuthenticationDataCommand(null, remoteAddress, sslSession));
+                    ctx = ctx.withValue(AUTH_DATA_CTX_KEY,
+                            new AuthenticationDataCommand(null, remoteAddress, sslSession));
                 } else if (metadata.containsKey(AUTH_METADATA_KEY)) {
                     CommandAuth auth = CommandAuth.parseFrom(metadata.get(AUTH_METADATA_KEY));
                     AuthData clientData = AuthData.of(auth.getAuthData().toByteArray());
-                    String authMethod = auth.hasAuthMethod() ?  auth.getAuthMethod() : "none";
+                    String authMethod = auth.hasAuthMethod() ? auth.getAuthMethod() : "none";
                     AuthenticationProvider authenticationProvider = service.getAuthenticationService()
                             .getAuthenticationProvider(authMethod);
 
@@ -110,10 +111,12 @@ public class AuthenticationInterceptor implements ServerInterceptor {
                     if (authenticationProvider == null) {
                         String authRole = service.getAuthenticationService().getAnonymousUserRole()
                                 .orElseThrow(() ->
-                                        new AuthenticationException("No anonymous role, and no authentication provider configured"));
+                                        new AuthenticationException(
+                                                "No anonymous role, and no authentication provider configured"));
                         ctx = ctx.withValue(AUTH_ROLE_CTX_KEY, authRole);
                     } else {
-                        AuthenticationState authState = authenticationProvider.newAuthState(clientData, remoteAddress, sslSession);
+                        AuthenticationState authState =
+                                authenticationProvider.newAuthState(clientData, remoteAddress, sslSession);
                         AuthData brokerData = authState.authenticate(clientData);
                         if (authState.isComplete()) {
                             String authRole = authState.getAuthRole();
@@ -124,17 +127,21 @@ public class AuthenticationInterceptor implements ServerInterceptor {
                             ctx = ctx.withValue(AUTH_ROLE_CTX_KEY, authRole);
                             ctx = ctx.withValue(AUTH_DATA_CTX_KEY, authState.getAuthDataSource());
                         } else {
-                            Map<Long, AuthenticationState> authMethodStates = authStates.putIfAbsent(authMethod, new ConcurrentHashMap<>());
+                            Map<Long, AuthenticationState> authMethodStates =
+                                    authStates.putIfAbsent(authMethod, new ConcurrentHashMap<>());
                             if (authMethodStates == null) {
                                 authMethodStates = authStates.get(authMethod);
                             }
                             authMethodStates.put(authState.getStateId(), authState);
-                            CommandAuthChallenge challenge = Commands.newAuthChallenge(authMethod, brokerData, authState.getStateId());
-                            return closeWithSingleHeader(serverCall, AUTHCHALLENGE_METADATA_KEY, challenge.toByteArray());
+                            CommandAuthChallenge challenge =
+                                    Commands.newAuthChallenge(authMethod, brokerData, authState.getStateId());
+                            return closeWithSingleHeader(serverCall, AUTHCHALLENGE_METADATA_KEY,
+                                    challenge.toByteArray());
                         }
                     }
                 } else if (metadata.containsKey(AUTHRESPONSE_METADATA_KEY)) {
-                    CommandAuthResponse authResponse = CommandAuthResponse.parseFrom(metadata.get(AUTHRESPONSE_METADATA_KEY));
+                    CommandAuthResponse authResponse =
+                            CommandAuthResponse.parseFrom(metadata.get(AUTHRESPONSE_METADATA_KEY));
                     String authMethod = authResponse.getResponse().getAuthMethodName();
                     long authStateId = authResponse.getResponse().getAuthStateId();
                     AuthenticationState authState = null;
@@ -162,10 +169,13 @@ public class AuthenticationInterceptor implements ServerInterceptor {
 
                             // auth completed, no need to keep authState
                             authStates.get(authMethod).remove(authState.getStateId());
-                            return closeWithSingleHeader(serverCall, AUTH_ROLE_TOKEN_METADATA_KEY, authToken.toByteArray());
+                            return closeWithSingleHeader(serverCall, AUTH_ROLE_TOKEN_METADATA_KEY,
+                                    authToken.toByteArray());
                         } else {
-                            CommandAuthChallenge challenge = Commands.newAuthChallenge(authMethod, brokerData, authState.getStateId());
-                            return closeWithSingleHeader(serverCall, AUTHCHALLENGE_METADATA_KEY, challenge.toByteArray());
+                            CommandAuthChallenge challenge =
+                                    Commands.newAuthChallenge(authMethod, brokerData, authState.getStateId());
+                            return closeWithSingleHeader(serverCall, AUTHCHALLENGE_METADATA_KEY,
+                                    challenge.toByteArray());
                         }
 
                     } catch (Exception e) {
@@ -178,7 +188,8 @@ public class AuthenticationInterceptor implements ServerInterceptor {
                 }
             } catch (AuthenticationException | InvalidProtocolBufferException e) {
                 serverCall.close(Status.UNAUTHENTICATED.withDescription(e.getMessage()), new Metadata());
-                return new ServerCall.Listener<ReqT>() {};
+                return new ServerCall.Listener<ReqT>() {
+                };
             }
 
             // TODO: handle original principal
@@ -192,7 +203,8 @@ public class AuthenticationInterceptor implements ServerInterceptor {
         Metadata metadata = new Metadata();
         metadata.put(key, bytes);
         serverCall.close(Status.UNAUTHENTICATED, metadata);
-        return new ServerCall.Listener<ReqT>() { };
+        return new ServerCall.Listener<ReqT>() {
+        };
     }
 
     private AuthRoleToken createAuthRoleToken(String role, long sessionId) {

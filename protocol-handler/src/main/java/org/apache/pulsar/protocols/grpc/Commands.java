@@ -116,11 +116,12 @@ import static org.apache.pulsar.protocols.grpc.Constants.CONSUMER_PARAMS_METADAT
 import static org.apache.pulsar.protocols.grpc.Constants.ERROR_CODE_METADATA_KEY;
 import static org.apache.pulsar.protocols.grpc.Constants.PRODUCER_PARAMS_METADATA_KEY;
 
-public class Commands {
+class Commands {
 
     public static final short MAGIC_CRC_32_C = 0x0e01;
 
-    public static StatusRuntimeException newStatusException(Status status, String message, Throwable exception, ServerError code) {
+    public static StatusRuntimeException newStatusException(Status status, String message, Throwable exception,
+            ServerError code) {
         Metadata metadata = new Metadata();
         metadata.put(ERROR_CODE_METADATA_KEY, String.valueOf(code.getNumber()));
         return status.withDescription(message)
@@ -132,7 +133,8 @@ public class Commands {
         return newStatusException(status, exception.getMessage(), exception, code);
     }
 
-    public static CommandAuthChallenge newAuthChallenge(String authMethod, org.apache.pulsar.common.api.AuthData brokerData, long stateId) {
+    public static CommandAuthChallenge newAuthChallenge(String authMethod,
+            org.apache.pulsar.common.api.AuthData brokerData, long stateId) {
         CommandAuthChallenge.Builder challengeBuilder = CommandAuthChallenge.newBuilder();
         challengeBuilder.setChallenge(AuthData.newBuilder()
                 .setAuthData(ByteString.copyFrom(brokerData.getBytes()))
@@ -157,7 +159,8 @@ public class Commands {
         return newSend(sequenceId, numMessages,
                 messageMetadata.hasTxnidLeastBits() ? messageMetadata.getTxnidLeastBits() : -1,
                 messageMetadata.hasTxnidMostBits() ? messageMetadata.getTxnidMostBits() : -1,
-                messageMetadata, payload);    }
+                messageMetadata, payload);
+    }
 
     public static CommandSend newSend(long lowestSequenceId, long highestSequenceId, int numMessages,
             PulsarApi.MessageMetadata messageMetadata, ByteBuf payload) {
@@ -397,7 +400,8 @@ public class Commands {
             SubType subType, int priorityLevel, String consumerName, boolean isDurable, MessageIdData startMessageId,
             Map<String, String> metadata, boolean readCompacted, boolean isReplicated,
             InitialPosition subscriptionInitialPosition, long startMessageRollbackDurationInSec,
-            SchemaInfo schemaInfo, boolean createTopicIfDoesNotExist, KeySharedPolicy keySharedPolicy, PayloadType payloadType) {
+            SchemaInfo schemaInfo, boolean createTopicIfDoesNotExist, KeySharedPolicy keySharedPolicy,
+            PayloadType payloadType) {
         CommandSubscribe.Builder subscribeBuilder = CommandSubscribe.newBuilder();
         subscribeBuilder.setTopic(topic);
         subscribeBuilder.setSubscription(subscription);
@@ -577,7 +581,8 @@ public class Commands {
             if (preferedPayloadType != PayloadType.METADATA_AND_PAYLOAD
                     && metadata.getCompression() != CompressionType.NONE
                     && metadata.getEncryptionKeysCount() == 0) {
-                CompressionCodec compressor = CompressionCodecProvider.getCompressionCodec(convertCompressionType(metadata.getCompression()));
+                CompressionCodec compressor =
+                        CompressionCodecProvider.getCompressionCodec(convertCompressionType(metadata.getCompression()));
                 uncompressedPayload = compressor.decode(metadataAndPayload, metadata.getUncompressedSize());
             }
             if (preferedPayloadType == PayloadType.MESSAGES && metadata.getEncryptionKeysCount() == 0) {
@@ -672,7 +677,8 @@ public class Commands {
 
         int readerIndex = uncompressedPayload.readerIndex();
         //ByteBuf singleMessagePayload = uncompressedPayload.retainedSlice(readerIndex, singleMessagePayloadSize);
-        ByteString singleMessagePayload = ByteString.copyFrom(uncompressedPayload.nioBuffer(readerIndex, singleMessagePayloadSize));
+        ByteString singleMessagePayload =
+                ByteString.copyFrom(uncompressedPayload.nioBuffer(readerIndex, singleMessagePayloadSize));
         uncompressedPayload.writerIndex(writerIndex);
 
         // reader now points to beginning of payload read; so move it past message payload just read
@@ -762,7 +768,8 @@ public class Commands {
         return ConsumeInput.newBuilder().setSeek(seekBuilder).build();
     }
 
-    public static CommandGetTopicsOfNamespace newGetTopicsOfNamespaceRequest(String namespace, CommandGetTopicsOfNamespace.Mode mode) {
+    public static CommandGetTopicsOfNamespace newGetTopicsOfNamespaceRequest(String namespace,
+            CommandGetTopicsOfNamespace.Mode mode) {
         CommandGetTopicsOfNamespace.Builder topicsBuilder = CommandGetTopicsOfNamespace.newBuilder();
         topicsBuilder.setNamespace(namespace).setMode(mode);
 
@@ -800,7 +807,8 @@ public class Commands {
                 .build();
     }
 
-    public static CommandAddPartitionToTxnResponse newAddPartitionToTxnResponse(long txnIdLeastBits, long txnIdMostBits) {
+    public static CommandAddPartitionToTxnResponse newAddPartitionToTxnResponse(long txnIdLeastBits,
+            long txnIdMostBits) {
         return CommandAddPartitionToTxnResponse.newBuilder()
                 .setTxnidLeastBits(txnIdLeastBits)
                 .setTxnidMostBits(txnIdMostBits)
@@ -832,45 +840,51 @@ public class Commands {
                 .build();
     }
 
-    public static CommandEndTxnOnPartitionResponse newEndTxnOnPartitionResponse(long txnIdLeastBits, long txnIdMostBits) {
+    public static CommandEndTxnOnPartitionResponse newEndTxnOnPartitionResponse(long txnIdLeastBits,
+            long txnIdMostBits) {
         return CommandEndTxnOnPartitionResponse.newBuilder()
                 .setTxnidLeastBits(txnIdLeastBits)
                 .setTxnidMostBits(txnIdMostBits)
                 .build();
     }
 
-    public static CommandEndTxnOnSubscription newEndTxnOnSubscription(long txnIdLeastBits, long txnIdMostBits, String topic,
+    public static CommandEndTxnOnSubscription newEndTxnOnSubscription(long txnIdLeastBits, long txnIdMostBits,
+            String topic,
             String subscription, TxnAction txnAction) {
-        org.apache.pulsar.protocols.grpc.api.Subscription sub = org.apache.pulsar.protocols.grpc.api.Subscription.newBuilder()
-                .setTopic(topic)
-                .setSubscription(subscription)
-                .build();
+        org.apache.pulsar.protocols.grpc.api.Subscription sub =
+                org.apache.pulsar.protocols.grpc.api.Subscription.newBuilder()
+                        .setTopic(topic)
+                        .setSubscription(subscription)
+                        .build();
         return newEndTxnOnSubscription(txnIdLeastBits, txnIdMostBits, sub, txnAction);
     }
 
     public static CommandEndTxnOnSubscription newEndTxnOnSubscription(long txnIdLeastBits, long txnIdMostBits,
             org.apache.pulsar.protocols.grpc.api.Subscription subscription, TxnAction txnAction) {
         return CommandEndTxnOnSubscription.newBuilder()
-                        .setTxnidLeastBits(txnIdLeastBits)
-                        .setTxnidMostBits(txnIdMostBits)
-                        .setSubscription(subscription)
-                        .setTxnAction(txnAction)
-                        .build();
+                .setTxnidLeastBits(txnIdLeastBits)
+                .setTxnidMostBits(txnIdMostBits)
+                .setSubscription(subscription)
+                .setTxnAction(txnAction)
+                .build();
     }
 
-    public static CommandEndTxnOnSubscriptionResponse newEndTxnOnSubscriptionResponse(long txnIdLeastBits, long txnIdMostBits) {
+    public static CommandEndTxnOnSubscriptionResponse newEndTxnOnSubscriptionResponse(long txnIdLeastBits,
+            long txnIdMostBits) {
         return CommandEndTxnOnSubscriptionResponse.newBuilder()
                 .setTxnidLeastBits(txnIdLeastBits)
                 .setTxnidMostBits(txnIdMostBits).build();
     }
 
-    public static PulsarGrpc.PulsarStub attachProducerParams(PulsarGrpc.PulsarStub stub, CommandProducer producerParams) {
+    public static PulsarGrpc.PulsarStub attachProducerParams(PulsarGrpc.PulsarStub stub,
+            CommandProducer producerParams) {
         Metadata headers = new Metadata();
         headers.put(PRODUCER_PARAMS_METADATA_KEY, producerParams.toByteArray());
         return MetadataUtils.attachHeaders(stub, headers);
     }
 
-    public static PulsarGrpc.PulsarStub attachConsumerParams(PulsarGrpc.PulsarStub stub, CommandSubscribe consumerParams) {
+    public static PulsarGrpc.PulsarStub attachConsumerParams(PulsarGrpc.PulsarStub stub,
+            CommandSubscribe consumerParams) {
         Metadata headers = new Metadata();
         headers.put(CONSUMER_PARAMS_METADATA_KEY, consumerParams.toByteArray());
         return MetadataUtils.attachHeaders(stub, headers);
@@ -951,7 +965,8 @@ public class Commands {
         }
     }
 
-    public static PulsarApi.CommandSubscribe.InitialPosition convertSubscribeInitialPosition(InitialPosition initialPosition) {
+    public static PulsarApi.CommandSubscribe.InitialPosition convertSubscribeInitialPosition(
+            InitialPosition initialPosition) {
         if (initialPosition == null) {
             return null;
         }
@@ -1048,9 +1063,9 @@ public class Commands {
         if (messageIdData.hasBatchSize()) {
             builder.setBatchSize(messageIdData.getBatchSize());
         }
-        PulsarApi.MessageIdData messageIdData_ = builder.build();
+        PulsarApi.MessageIdData result = builder.build();
         builder.recycle();
-        return messageIdData_;
+        return result;
     }
 
     public static PulsarApi.CommandAck convertCommandAck(CommandAck ack) {
@@ -1083,12 +1098,13 @@ public class Commands {
             PulsarApi.MessageIdData idData = convertMessageIdData(messageIdData);
             builder.addMessageId(idData);
         }
-        PulsarApi.CommandAck ack_ = builder.build();
+        PulsarApi.CommandAck result = builder.build();
         builder.recycle();
-        return ack_;
+        return result;
     }
 
-    public static PulsarApi.CommandGetTopicsOfNamespace.Mode convertGetTopicsOfNamespaceMode(CommandGetTopicsOfNamespace.Mode mode) {
+    public static PulsarApi.CommandGetTopicsOfNamespace.Mode convertGetTopicsOfNamespaceMode(
+            CommandGetTopicsOfNamespace.Mode mode) {
         if (mode == null) {
             return null;
         }
@@ -1144,7 +1160,8 @@ public class Commands {
         }
     }
 
-    public static PulsarApi.SingleMessageMetadata.Builder convertSingleMessageMetadata(SingleMessageMetadata messageMetadata) {
+    public static PulsarApi.SingleMessageMetadata.Builder convertSingleMessageMetadata(
+            SingleMessageMetadata messageMetadata) {
         PulsarApi.SingleMessageMetadata.Builder builder = PulsarApi.SingleMessageMetadata.newBuilder();
 
         if (messageMetadata.hasPartitionKey()) {
@@ -1160,7 +1177,8 @@ public class Commands {
             builder.setPartitionKeyB64Encoded(messageMetadata.getPartitionKeyB64Encoded());
         }
         if (messageMetadata.hasOrderingKey()) {
-            builder.setOrderingKey(org.apache.pulsar.shaded.com.google.protobuf.v241.ByteString.copyFrom(messageMetadata.getOrderingKey().asReadOnlyByteBuffer()));
+            builder.setOrderingKey(org.apache.pulsar.shaded.com.google.protobuf.v241.ByteString
+                    .copyFrom(messageMetadata.getOrderingKey().asReadOnlyByteBuffer()));
         }
         if (messageMetadata.hasSequenceId()) {
             builder.setSequenceId(messageMetadata.getSequenceId());

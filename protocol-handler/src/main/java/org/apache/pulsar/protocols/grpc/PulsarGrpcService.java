@@ -129,7 +129,7 @@ import static org.apache.pulsar.protocols.grpc.Constants.PRODUCER_PARAMS_CTX_KEY
 import static org.apache.pulsar.protocols.grpc.Constants.REMOTE_ADDRESS_CTX_KEY;
 import static org.apache.pulsar.protocols.grpc.TopicLookup.lookupTopicAsync;
 
-public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
+class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
 
     private static final Logger log = LoggerFactory.getLogger(PulsarGrpcService.class);
 
@@ -143,6 +143,54 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
         this.schemaService = service.pulsar().getSchemaRegistryService();
         this.eventLoopGroup = eventLoopGroup;
         this.configuration = configuration;
+    }
+
+    private static void closeProduce(CompletableFuture<Producer> producerFuture, SocketAddress remoteAddress) {
+        if (!producerFuture.isDone() && producerFuture
+                .completeExceptionally(new IllegalStateException("Closed producer before creation was complete"))) {
+            // We have received a request to close the producer before it was actually completed, we have marked the
+            // producer future as failed and we can tell the client the close operation was successful.
+            log.info("[{}] Closed producer before its creation was completed", remoteAddress);
+            return;
+        } else if (producerFuture.isCompletedExceptionally()) {
+            log.info("[{}] Closed producer that already failed to be created", remoteAddress);
+            return;
+        }
+
+        // Proceed with normal close, the producer
+        Producer producer = producerFuture.getNow(null);
+        log.info("[{}][{}] Closing producer on cnx {}", producer.getTopic(), producer.getProducerName(), remoteAddress);
+        producer.close(true);
+    }
+
+    private static void closeConsume(CompletableFuture<Consumer> consumerFuture, SocketAddress remoteAddress,
+            StreamObserver<ConsumeOutput> responseObserver) {
+
+        if (!consumerFuture.isDone() && consumerFuture
+                .completeExceptionally(new IllegalStateException("Closed consumer before creation was complete"))) {
+            // We have received a request to close the consumer before it was actually completed, we have marked the
+            // consumer future as failed and we can tell the client the close operation was successful. When the actual
+            // create operation will complete, the new consumer will be discarded.
+            log.info("[{}] Closed consumer before its creation was completed", remoteAddress);
+            return;
+        }
+
+        if (consumerFuture.isCompletedExceptionally()) {
+            log.info("[{}] Closed consumer that already failed to be created", remoteAddress);
+            return;
+        }
+
+        // Proceed with normal consumer close
+        Consumer consumer = consumerFuture.getNow(null);
+        try {
+            consumer.close();
+            log.info("[{}] Closed consumer {}", remoteAddress, consumer);
+            responseObserver.onCompleted();
+        } catch (BrokerServiceException e) {
+            log.warn("[{]] Error closing consumer {} : {}", remoteAddress, consumer, e);
+            responseObserver.onError(newStatusException(Status.INTERNAL, e,
+                    convertServerError(BrokerServiceException.getClientErrorCode(e))));
+        }
     }
 
     private CompletableFuture<Boolean> isTopicOperationAllowed(TopicName topicName, TopicOperation operation,
@@ -185,7 +233,6 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
         });
     }
 
-
     @Override
     public void lookupTopic(CommandLookupTopic lookup, StreamObserver<CommandLookupTopicResponse> responseObserver) {
         final SocketAddress remoteAddress = REMOTE_ADDRESS_CTX_KEY.get();
@@ -212,30 +259,34 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
 
         final Semaphore lookupSemaphore = service.getLookupRequestSemaphore();
         if (lookupSemaphore.tryAcquire()) {
-            isTopicOperationAllowed(topicName, TopicOperation.LOOKUP, authRole, authenticationData).thenApply(isAuthorized -> {
-                if (isAuthorized) {
-                    lookupTopicAsync(service.pulsar(), topicName, authoritative, authRole, authenticationData, advertisedListenerName)
-                            .handle((lookupResponse, ex) -> {
-                                if (ex == null) {
-                                    responseObserver.onNext(lookupResponse);
-                                    responseObserver.onCompleted();
-                                } else {
-                                    responseObserver.onError(ex);
-                                }
-                                lookupSemaphore.release();
-                                return null;
-                            });
-                } else {
-                    final String msg = "Client is not authorized to Lookup";
-                    log.warn("[{}] {} with role {} on topic {}", remoteAddress, msg, authRole, topicName);
-                    responseObserver.onError(newStatusException(Status.PERMISSION_DENIED, msg, null, ServerError.AuthorizationError));
-                    lookupSemaphore.release();
-                }
-                return null;
-            }).exceptionally(ex -> {
+            isTopicOperationAllowed(topicName, TopicOperation.LOOKUP, authRole, authenticationData)
+                    .thenApply(isAuthorized -> {
+                        if (isAuthorized) {
+                            lookupTopicAsync(service.pulsar(), topicName, authoritative, authRole, authenticationData,
+                                    advertisedListenerName)
+                                    .handle((lookupResponse, ex) -> {
+                                        if (ex == null) {
+                                            responseObserver.onNext(lookupResponse);
+                                            responseObserver.onCompleted();
+                                        } else {
+                                            responseObserver.onError(ex);
+                                        }
+                                        lookupSemaphore.release();
+                                        return null;
+                                    });
+                        } else {
+                            final String msg = "Client is not authorized to Lookup";
+                            log.warn("[{}] {} with role {} on topic {}", remoteAddress, msg, authRole, topicName);
+                            responseObserver.onError(newStatusException(Status.PERMISSION_DENIED, msg, null,
+                                    ServerError.AuthorizationError));
+                            lookupSemaphore.release();
+                        }
+                        return null;
+                    }).exceptionally(ex -> {
                 final String msg = "Exception occured while trying to authorize lookup";
                 log.warn("[{}] {} with role {} on topic {}", remoteAddress, msg, authRole, topicName, ex);
-                responseObserver.onError(newStatusException(Status.PERMISSION_DENIED, msg, ex, ServerError.AuthorizationError));
+                responseObserver
+                        .onError(newStatusException(Status.PERMISSION_DENIED, msg, ex, ServerError.AuthorizationError));
                 lookupSemaphore.release();
                 return null;
             });
@@ -249,7 +300,8 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
     }
 
     @Override
-    public void getSchema(CommandGetSchema commandGetSchema, StreamObserver<CommandGetSchemaResponse> responseObserver) {
+    public void getSchema(CommandGetSchema commandGetSchema,
+            StreamObserver<CommandGetSchemaResponse> responseObserver) {
         SocketAddress remoteAddress = REMOTE_ADDRESS_CTX_KEY.get();
         if (log.isDebugEnabled()) {
             log.debug("Received CommandGetSchema call from {}, schemaVersion: {}, topic: {}",
@@ -286,7 +338,8 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
     }
 
     @Override
-    public void getOrCreateSchema(CommandGetOrCreateSchema commandGetOrCreateSchema, StreamObserver<CommandGetOrCreateSchemaResponse> responseObserver) {
+    public void getOrCreateSchema(CommandGetOrCreateSchema commandGetOrCreateSchema,
+            StreamObserver<CommandGetOrCreateSchemaResponse> responseObserver) {
         SocketAddress remoteAddress = REMOTE_ADDRESS_CTX_KEY.get();
         if (log.isDebugEnabled()) {
             log.debug("Received CommandGetOrCreateSchema call from {}", remoteAddress);
@@ -343,44 +396,51 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
 
         final Semaphore lookupSemaphore = service.getLookupRequestSemaphore();
         if (lookupSemaphore.tryAcquire()) {
-            isTopicOperationAllowed(topicName, TopicOperation.LOOKUP, authRole, authenticationData).thenApply(isAuthorized -> {
-                if (isAuthorized) {
-                    unsafeGetPartitionedTopicMetadataAsync(service.pulsar(), topicName)
-                            .handle((metadata, ex) -> {
-                                if (ex == null) {
-                                    int partitions = metadata.partitions;
-                                    responseObserver.onNext(Commands.newPartitionMetadataResponse(partitions));
-                                    responseObserver.onCompleted();
-                                } else {
-                                    if (ex instanceof PulsarClientException) {
-                                        log.warn("Failed to authorize {} at [{}] on topic {} : {}", authRole,
-                                                remoteAddress, topicName, ex.getMessage());
-                                        responseObserver.onError(Commands.newStatusException(Status.PERMISSION_DENIED, ex,
-                                                ServerError.AuthorizationError));
-                                    } else {
-                                        log.warn("Failed to get Partitioned Metadata [{}] {}: {}", remoteAddress,
-                                                topicName, ex.getMessage(), ex);
-                                        ServerError error = (ex instanceof RestException)
-                                                && ((RestException) ex).getResponse().getStatus() < 500
-                                                ? ServerError.MetadataError
-                                                : ServerError.ServiceNotReady;
-                                        responseObserver.onError(Commands.newStatusException(Status.FAILED_PRECONDITION, ex, error));
-                                    }
-                                }
-                                lookupSemaphore.release();
-                                return null;
-                            });
-                } else {
-                    final String msg = "Client is not authorized to Get Partition Metadata";
-                    log.warn("[{}] {} with role {} on topic {}", remoteAddress, msg, authRole, topicName);
-                    responseObserver.onError(newStatusException(Status.PERMISSION_DENIED, msg, null, ServerError.AuthorizationError));
-                    lookupSemaphore.release();
-                }
-                return null;
-            }).exceptionally(ex -> {
+            isTopicOperationAllowed(topicName, TopicOperation.LOOKUP, authRole, authenticationData)
+                    .thenApply(isAuthorized -> {
+                        if (isAuthorized) {
+                            unsafeGetPartitionedTopicMetadataAsync(service.pulsar(), topicName)
+                                    .handle((metadata, ex) -> {
+                                        if (ex == null) {
+                                            int partitions = metadata.partitions;
+                                            responseObserver.onNext(Commands.newPartitionMetadataResponse(partitions));
+                                            responseObserver.onCompleted();
+                                        } else {
+                                            if (ex instanceof PulsarClientException) {
+                                                log.warn("Failed to authorize {} at [{}] on topic {} : {}", authRole,
+                                                        remoteAddress, topicName, ex.getMessage());
+                                                responseObserver.onError(
+                                                        Commands.newStatusException(Status.PERMISSION_DENIED, ex,
+                                                                ServerError.AuthorizationError));
+                                            } else {
+                                                log.warn("Failed to get Partitioned Metadata [{}] {}: {}",
+                                                        remoteAddress,
+                                                        topicName, ex.getMessage(), ex);
+                                                ServerError error = (ex instanceof RestException)
+                                                        && ((RestException) ex).getResponse().getStatus() < 500
+                                                        ? ServerError.MetadataError
+                                                        : ServerError.ServiceNotReady;
+                                                responseObserver.onError(
+                                                        Commands.newStatusException(Status.FAILED_PRECONDITION, ex,
+                                                                error));
+                                            }
+                                        }
+                                        lookupSemaphore.release();
+                                        return null;
+                                    });
+                        } else {
+                            final String msg = "Client is not authorized to Get Partition Metadata";
+                            log.warn("[{}] {} with role {} on topic {}", remoteAddress, msg, authRole, topicName);
+                            responseObserver.onError(newStatusException(Status.PERMISSION_DENIED, msg, null,
+                                    ServerError.AuthorizationError));
+                            lookupSemaphore.release();
+                        }
+                        return null;
+                    }).exceptionally(ex -> {
                 final String msg = "Exception occured while trying to authorize get Partition Metadata";
                 log.warn("[{}] {} with role {} on topic {}", remoteAddress, msg, authRole, topicName);
-                responseObserver.onError(newStatusException(Status.PERMISSION_DENIED, msg, ex, ServerError.AuthorizationError));
+                responseObserver
+                        .onError(newStatusException(Status.PERMISSION_DENIED, msg, ex, ServerError.AuthorizationError));
                 lookupSemaphore.release();
                 return null;
             });
@@ -416,7 +476,8 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
                     log.warn("[{}] Error GetTopicsOfNamespace for namespace [//{}]",
                             remoteAddress, namespace);
                     responseObserver.onError(Commands.newStatusException(Status.INTERNAL, ex,
-                            convertServerError(BrokerServiceException.getClientErrorCode(new BrokerServiceException.ServerMetadataException(ex)))));
+                            convertServerError(BrokerServiceException
+                                    .getClientErrorCode(new BrokerServiceException.ServerMetadataException(ex)))));
                     return null;
                 });
     }
@@ -424,7 +485,8 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
     @Override
     public void createTransaction(CommandNewTxn command, StreamObserver<CommandNewTxnResponse> responseObserver) {
         if (log.isDebugEnabled()) {
-            log.debug("Receive new txn request to transaction meta store {} from {}.", command.getTcId(), REMOTE_ADDRESS_CTX_KEY.get());
+            log.debug("Receive new txn request to transaction meta store {} from {}.", command.getTcId(),
+                    REMOTE_ADDRESS_CTX_KEY.get());
         }
         TransactionCoordinatorID tcId = TransactionCoordinatorID.get(command.getTcId());
         service.pulsar().getTransactionMetadataStoreService().newTransaction(tcId, command.getTxnTtlSeconds())
@@ -433,7 +495,8 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
                         if (log.isDebugEnabled()) {
                             log.debug("Send response {} for new txn", tcId.getId());
                         }
-                        responseObserver.onNext(Commands.newTxnResponse(txnID.getLeastSigBits(), txnID.getMostSigBits()));
+                        responseObserver
+                                .onNext(Commands.newTxnResponse(txnID.getLeastSigBits(), txnID.getMostSigBits()));
                         responseObserver.onCompleted();
                     } else {
                         if (log.isDebugEnabled()) {
@@ -446,13 +509,15 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
     }
 
     @Override
-    public void addPartitionsToTransaction(CommandAddPartitionToTxn command, StreamObserver<CommandAddPartitionToTxnResponse> responseObserver) {
+    public void addPartitionsToTransaction(CommandAddPartitionToTxn command,
+            StreamObserver<CommandAddPartitionToTxnResponse> responseObserver) {
         SocketAddress remoteAddress = REMOTE_ADDRESS_CTX_KEY.get();
         TxnID txnID = new TxnID(command.getTxnidMostBits(), command.getTxnidLeastBits());
         if (log.isDebugEnabled()) {
             log.debug("Receive add published partition to txn request from {} with txnId {}", remoteAddress, txnID);
         }
-        service.pulsar().getTransactionMetadataStoreService().addProducedPartitionToTxn(txnID, command.getPartitionsList())
+        service.pulsar().getTransactionMetadataStoreService()
+                .addProducedPartitionToTxn(txnID, command.getPartitionsList())
                 .whenComplete(((v, ex) -> {
                     if (ex == null) {
                         if (log.isDebugEnabled()) {
@@ -495,7 +560,8 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
     }
 
     @Override
-    public void endTransactionOnPartition(CommandEndTxnOnPartition command, StreamObserver<CommandEndTxnOnPartitionResponse> responseObserver) {
+    public void endTransactionOnPartition(CommandEndTxnOnPartition command,
+            StreamObserver<CommandEndTxnOnPartitionResponse> responseObserver) {
         final int txnAction = command.getTxnAction().getNumber();
         TxnID txnID = new TxnID(command.getTxnidMostBits(), command.getTxnidLeastBits());
 
@@ -526,7 +592,8 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
     }
 
     @Override
-    public void endTransactionOnSubscription(CommandEndTxnOnSubscription command, StreamObserver<CommandEndTxnOnSubscriptionResponse> responseObserver) {
+    public void endTransactionOnSubscription(CommandEndTxnOnSubscription command,
+            StreamObserver<CommandEndTxnOnSubscriptionResponse> responseObserver) {
         final long txnidMostBits = command.getTxnidMostBits();
         final long txnidLeastBits = command.getTxnidLeastBits();
         final String topic = command.getSubscription().getTopic();
@@ -547,7 +614,8 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
                     if (subscription == null) {
                         log.error("Topic {} subscription {} does not exist.", optionalTopic.get().getName(), subName);
                         responseObserver.onError(Commands.newStatusException(Status.UNKNOWN,
-                                "Topic " + optionalTopic.get().getName() + " subscription " + subName + " does not exist.",
+                                "Topic " + optionalTopic.get().getName() + " subscription " + subName
+                                        + " does not exist.",
                                 null, ServerError.SubscriptionNotFound));
                         return;
                     }
@@ -633,7 +701,8 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
     public StreamObserver<CommandSend> produce(StreamObserver<SendResult> responseObserver) {
         final CommandProducer cmdProducer = PRODUCER_PARAMS_CTX_KEY.get();
         if (cmdProducer == null) {
-            responseObserver.onError(Status.INVALID_ARGUMENT.withDescription("Missing CommandProducer header").asException());
+            responseObserver
+                    .onError(Status.INVALID_ARGUMENT.withDescription("Missing CommandProducer header").asException());
             return NoOpStreamObserver.create();
         }
 
@@ -692,7 +761,8 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
                     }
 
                     // Check whether the producer will publish encrypted messages or not
-                    if ((topic.isEncryptionRequired() || configuration.isEncryptionRequireOnProducer()) && !isEncrypted) {
+                    if ((topic.isEncryptionRequired() || configuration.isEncryptionRequireOnProducer())
+                            && !isEncrypted) {
                         String msg = String.format("Encryption is required in %s", topicName);
                         log.warn("[{}] {}", remoteAddress, msg);
                         responseObserver.onError(newStatusException(Status.INVALID_ARGUMENT, msg, null,
@@ -798,7 +868,8 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
         final SocketAddress remoteAddress = REMOTE_ADDRESS_CTX_KEY.get();
 
         if (subscribe == null) {
-            responseObserver.onError(Status.INVALID_ARGUMENT.withDescription("Missing CommandSubscribe header").asException());
+            responseObserver
+                    .onError(Status.INVALID_ARGUMENT.withDescription("Missing CommandSubscribe header").asException());
             return NoOpStreamObserver.create();
         }
 
@@ -830,7 +901,8 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
                 ? subscribe.getStartMessageRollbackDurationSec()
                 : -1;
         final SchemaData schema = subscribe.hasSchema() ? getSchema(subscribe.getSchema()) : null;
-        final boolean isReplicated = subscribe.hasReplicateSubscriptionState() && subscribe.getReplicateSubscriptionState();
+        final boolean isReplicated =
+                subscribe.hasReplicateSubscriptionState() && subscribe.getReplicateSubscriptionState();
         final boolean forceTopicCreation = subscribe.getForceTopicCreation();
         final KeySharedMeta keySharedMeta = subscribe.hasKeySharedMeta() ? subscribe.getKeySharedMeta() : null;
 
@@ -839,7 +911,8 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
             //consumer.flowPermits(1);
         });
 
-        CallStreamObserver<ConsumeOutput> consumerResponseObserver = (CallStreamObserver<ConsumeOutput>) responseObserver;
+        CallStreamObserver<ConsumeOutput> consumerResponseObserver =
+                (CallStreamObserver<ConsumeOutput>) responseObserver;
         consumerResponseObserver.disableAutoInboundFlowControl();
 
         class OnReadyHandler implements Runnable {
@@ -872,8 +945,9 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
             }
         };
 
-        ConsumerCnx cnx = new ConsumerCnx(service, remoteAddress, authRole, authenticationData, consumerResponseObserver,
-                subscribe.getPreferedPayloadType(), cb);
+        ConsumerCnx cnx =
+                new ConsumerCnx(service, remoteAddress, authRole, authenticationData, consumerResponseObserver,
+                        subscribe.getPreferedPayloadType(), cb);
 
         CompletableFuture<Boolean> isAuthorizedFuture = isTopicOperationAllowed(
                 topicName,
@@ -905,7 +979,8 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
                         .thenCompose(optTopic -> {
                             if (!optTopic.isPresent()) {
                                 return FutureUtil
-                                        .failedFuture(new BrokerServiceException.TopicNotFoundException("Topic does not exist"));
+                                        .failedFuture(new BrokerServiceException.TopicNotFoundException(
+                                                "Topic does not exist"));
                             }
 
                             Topic topic = optTopic.get();
@@ -916,7 +991,8 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
 
                             if (rejectSubscriptionIfDoesNotExist) {
                                 return FutureUtil
-                                        .failedFuture(new BrokerServiceException.SubscriptionNotFoundException("Subscription does not exist"));
+                                        .failedFuture(new BrokerServiceException.SubscriptionNotFoundException(
+                                                "Subscription does not exist"));
                             }
 
                             if (schema != null) {
@@ -959,7 +1035,8 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
                             if (exception.getCause() instanceof BrokerServiceException.ConsumerBusyException) {
                                 if (log.isDebugEnabled()) {
                                     log.debug(
-                                            "[{}][{}][{}] Failed to create consumer because exclusive consumer is already connected: {}",
+                                            "[{}][{}][{}] Failed to create consumer because exclusive consumer is "
+                                                    + "already connected: {}",
                                             remoteAddress, topicName, subscriptionName,
                                             exception.getCause().getMessage());
                                 }
@@ -971,21 +1048,24 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
                                         subscriptionName, exception.getCause().getMessage(), exception);
                             }
 
-                            responseObserver.onError(newStatusException(Status.FAILED_PRECONDITION, exception.getCause(),
-                                    convertServerError(BrokerServiceException.getClientErrorCode(exception))));
+                            responseObserver
+                                    .onError(newStatusException(Status.FAILED_PRECONDITION, exception.getCause(),
+                                            convertServerError(BrokerServiceException.getClientErrorCode(exception))));
                             consumerFuture.completeExceptionally(exception);
                             return null;
                         });
             } else {
                 String msg = "Client is not authorized to subscribe";
                 log.warn("[{}] {} with role {}", remoteAddress, msg, authRole);
-                responseObserver.onError(newStatusException(Status.PERMISSION_DENIED, msg, null, ServerError.AuthorizationError));
+                responseObserver.onError(
+                        newStatusException(Status.PERMISSION_DENIED, msg, null, ServerError.AuthorizationError));
             }
             return null;
         }).exceptionally(e -> {
             String msg = String.format("[%s] %s with role %s", remoteAddress, e.getMessage(), authRole);
             log.warn(msg);
-            responseObserver.onError(newStatusException(Status.PERMISSION_DENIED, msg, e, ServerError.AuthorizationError));
+            responseObserver
+                    .onError(newStatusException(Status.PERMISSION_DENIED, msg, e, ServerError.AuthorizationError));
             return null;
         });
 
@@ -1047,7 +1127,8 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
 
                         if (consumer == null) {
                             log.error(
-                                    "Failed to get consumer-stats response - Consumer not found for CommandConsumerStats[remoteAddress = {}, requestId = {}]",
+                                    "Failed to get consumer-stats response - Consumer not found for "
+                                            + "CommandConsumerStats[remoteAddress = {}, requestId = {}]",
                                     remoteAddress, requestId);
                             responseObserver.onNext(Commands.newError(requestId, ServerError.ConsumerNotFound,
                                     "Consumer not found"));
@@ -1060,12 +1141,14 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
                         }
                         break;
                     case REDELIVERUNACKNOWLEDGEDMESSAGES:
-                        CommandRedeliverUnacknowledgedMessages redeliver = consumeInput.getRedeliverUnacknowledgedMessages();
+                        CommandRedeliverUnacknowledgedMessages redeliver =
+                                consumeInput.getRedeliverUnacknowledgedMessages();
                         if (log.isDebugEnabled()) {
                             log.debug("[{}] Received Resend Command from consumer", remoteAddress);
                         }
                         if (consumer != null) {
-                            if (redeliver.getMessageIdsCount() > 0 && Subscription.isIndividualAckMode(consumer.subType())) {
+                            if (redeliver.getMessageIdsCount() > 0
+                                    && Subscription.isIndividualAckMode(consumer.subType())) {
                                 List<PulsarApi.MessageIdData> messageIdDataList = redeliver.getMessageIdsList().stream()
                                         .map(Commands::convertMessageIdData)
                                         .collect(Collectors.toList());
@@ -1099,7 +1182,8 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
                         requestId = seek.getRequestId();
 
                         if (consumer == null) {
-                            responseObserver.onNext(Commands.newError(requestId, ServerError.MetadataError, "Consumer not found"));
+                            responseObserver.onNext(Commands
+                                    .newError(requestId, ServerError.MetadataError, "Consumer not found"));
                             return;
                         }
                         if (!seek.hasMessageId() && !seek.hasMessagePublishTime()) {
@@ -1127,7 +1211,8 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
                                 // See https://github.com/apache/pulsar/issues/5073
                                 // responseObserver.onNext(Commands.newSuccess(requestId));
                             }).exceptionally(ex -> {
-                                log.warn("[{}][{}] Failed to reset subscription: {}", remoteAddress, subscription, ex.getMessage(), ex);
+                                log.warn("[{}][{}] Failed to reset subscription: {}", remoteAddress, subscription,
+                                        ex.getMessage(), ex);
                                 responseObserver.onNext(Commands.newError(requestId, ServerError.UnknownError,
                                         "Error when resetting subscription: " + ex.getCause().getMessage()));
                                 return null;
@@ -1140,9 +1225,11 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
                                         subscription.getTopic().getName(), subscription.getName(), timestamp);
                                 responseObserver.onNext(Commands.newSuccess(requestId));
                             }).exceptionally(ex -> {
-                                log.warn("[{}][{}] Failed to reset subscription: {}", remoteAddress, subscription, ex.getMessage(), ex);
+                                log.warn("[{}][{}] Failed to reset subscription: {}", remoteAddress, subscription,
+                                        ex.getMessage(), ex);
                                 responseObserver.onNext(Commands.newError(requestId, ServerError.UnknownError,
-                                        "Reset subscription to publish time error: " + ex.getCause().getMessage()));
+                                        "Reset subscription to publish time error: "
+                                                + ex.getCause().getMessage()));
                                 return null;
                             });
                         }
@@ -1263,61 +1350,13 @@ public class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
         }
     }
 
-    private static void closeProduce(CompletableFuture<Producer> producerFuture, SocketAddress remoteAddress) {
-        if (!producerFuture.isDone() && producerFuture
-                .completeExceptionally(new IllegalStateException("Closed producer before creation was complete"))) {
-            // We have received a request to close the producer before it was actually completed, we have marked the
-            // producer future as failed and we can tell the client the close operation was successful.
-            log.info("[{}] Closed producer before its creation was completed", remoteAddress);
-            return;
-        } else if (producerFuture.isCompletedExceptionally()) {
-            log.info("[{}] Closed producer that already failed to be created", remoteAddress);
-            return;
-        }
-
-        // Proceed with normal close, the producer
-        Producer producer = producerFuture.getNow(null);
-        log.info("[{}][{}] Closing producer on cnx {}", producer.getTopic(), producer.getProducerName(), remoteAddress);
-        producer.close(true);
-    }
-
-    private static void closeConsume(CompletableFuture<Consumer> consumerFuture, SocketAddress remoteAddress,
-            StreamObserver<ConsumeOutput> responseObserver) {
-
-        if (!consumerFuture.isDone() && consumerFuture
-                .completeExceptionally(new IllegalStateException("Closed consumer before creation was complete"))) {
-            // We have received a request to close the consumer before it was actually completed, we have marked the
-            // consumer future as failed and we can tell the client the close operation was successful. When the actual
-            // create operation will complete, the new consumer will be discarded.
-            log.info("[{}] Closed consumer before its creation was completed", remoteAddress);
-            return;
-        }
-
-        if (consumerFuture.isCompletedExceptionally()) {
-            log.info("[{}] Closed consumer that already failed to be created", remoteAddress);
-            return;
-        }
-
-        // Proceed with normal consumer close
-        Consumer consumer = consumerFuture.getNow(null);
-        try {
-            consumer.close();
-            log.info("[{}] Closed consumer {}", remoteAddress, consumer);
-            responseObserver.onCompleted();
-        } catch (BrokerServiceException e) {
-            log.warn("[{]] Error closing consumer {} : {}", remoteAddress, consumer, e);
-            responseObserver.onError(newStatusException(Status.INTERNAL, e,
-                    convertServerError(BrokerServiceException.getClientErrorCode(e))));
-        }
-    }
-
     private static class NoOpStreamObserver<T> implements StreamObserver<T> {
+
+        private NoOpStreamObserver() {
+        }
 
         public static <T> NoOpStreamObserver<T> create() {
             return new NoOpStreamObserver<>();
-        }
-
-        private NoOpStreamObserver() {
         }
 
         @Override
