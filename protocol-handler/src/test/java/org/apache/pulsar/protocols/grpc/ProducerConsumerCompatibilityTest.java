@@ -100,6 +100,7 @@ public class ProducerConsumerCompatibilityTest extends ProducerConsumerBase {
 
     private GrpcService grpcService;
     private PulsarGrpc.PulsarStub stub;
+    private PulsarGrpc.PulsarBlockingStub blockingStub;
     private ManagedChannel channel;
 
     @BeforeMethod
@@ -124,9 +125,10 @@ public class ProducerConsumerCompatibilityTest extends ProducerConsumerBase {
                 .negotiationType(NegotiationType.PLAINTEXT);
         channel = channelBuilder.build();
         stub = PulsarGrpc.newStub(channel);
+        blockingStub = PulsarGrpc.newBlockingStub(channel);
     }
 
-    @AfterMethod
+    @AfterMethod(alwaysRun = true)
     @Override
     protected void cleanup() throws Exception {
         grpcService.close();
@@ -151,9 +153,6 @@ public class ProducerConsumerCompatibilityTest extends ProducerConsumerBase {
         StreamObserver<ConsumeInput> consumeInput = consumerStub.consume(consumeOutput);
 
         assertTrue(consumeOutput.takeOneMessage().hasSubscribeSuccess());
-
-        // Send flow permits
-        //consumeInput.onNext(Commands.newFlow(100));
 
         ProducerBuilder<byte[]> producerBuilder = pulsarClient.newProducer()
                 .enableBatching(false)
@@ -203,9 +202,6 @@ public class ProducerConsumerCompatibilityTest extends ProducerConsumerBase {
 
         assertTrue(consumeOutput.takeOneMessage().hasSubscribeSuccess());
 
-        // Send flow permits
-        //consumeInput.onNext(Commands.newFlow(100));
-
         ProducerBuilder<byte[]> producerBuilder = pulsarClient.newProducer()
                 .enableBatching(false)
                 .topic("persistent://my-property/my-ns/my-topic1");
@@ -250,9 +246,6 @@ public class ProducerConsumerCompatibilityTest extends ProducerConsumerBase {
         StreamObserver<ConsumeInput> consumeInput = consumerStub.consume(consumeOutput);
 
         assertTrue(consumeOutput.takeOneMessage().hasSubscribeSuccess());
-
-        // Send flow permits
-        //consumeInput.onNext(Commands.newFlow(100));
 
         ProducerBuilder<byte[]> producerBuilder = pulsarClient.newProducer()
                 .enableBatching(false)
@@ -299,9 +292,6 @@ public class ProducerConsumerCompatibilityTest extends ProducerConsumerBase {
         StreamObserver<ConsumeInput> consumeInput = consumerStub.consume(consumeOutput);
 
         assertTrue(consumeOutput.takeOneMessage().hasSubscribeSuccess());
-
-        // Send flow permits
-        //consumeInput.onNext(Commands.newFlow(100));
 
         ProducerBuilder<byte[]> producerBuilder = pulsarClient.newProducer()
                 .enableBatching(false)
@@ -403,9 +393,6 @@ public class ProducerConsumerCompatibilityTest extends ProducerConsumerBase {
         StreamObserver<ConsumeInput> consumeInput = consumerStub.consume(consumeOutput);
 
         assertTrue(consumeOutput.takeOneMessage().hasSubscribeSuccess());
-
-        // Send flow permits
-        //consumeInput.onNext(Commands.newFlow(100));
 
         EncKeyReader reader = new EncKeyReader();
 
@@ -748,9 +735,6 @@ public class ProducerConsumerCompatibilityTest extends ProducerConsumerBase {
 
         assertTrue(consumeOutput.takeOneMessage().hasSubscribeSuccess());
 
-        // Send flow permits
-        //consumeInput.onNext(Commands.newFlow(100));
-
         ProducerBuilder<byte[]> producerBuilder = pulsarClient.newProducer()
                 .enableBatching(false)
                 .topic("persistent://my-property/my-ns/my-topic1");
@@ -807,9 +791,6 @@ public class ProducerConsumerCompatibilityTest extends ProducerConsumerBase {
 
         assertTrue(consumeOutput.takeOneMessage().hasSubscribeSuccess());
 
-        // Send flow permits
-        //consumeInput.onNext(Commands.newFlow(100));
-
         ProducerBuilder<byte[]> producerBuilder = pulsarClient.newProducer()
                 .enableBatching(false)
                 .topic("persistent://my-property/my-ns/my-topic1");
@@ -863,9 +844,6 @@ public class ProducerConsumerCompatibilityTest extends ProducerConsumerBase {
         StreamObserver<ConsumeInput> consumeInput = consumerStub.consume(consumeOutput);
 
         assertTrue(consumeOutput.takeOneMessage().hasSubscribeSuccess());
-
-        // Send flow permits
-        //consumeInput.onNext(Commands.newFlow(100));
 
         ProducerBuilder<byte[]> producerBuilder = pulsarClient.newProducer()
                 .enableBatching(false)
@@ -1163,16 +1141,12 @@ public class ProducerConsumerCompatibilityTest extends ProducerConsumerBase {
         admin.topics().createNonPartitionedTopic(topic);
 
         CommandLookupTopic lookupTopic = CommandLookupTopic.newBuilder().setTopic(topic).build();
-        TestStreamObserver<CommandLookupTopicResponse> response = TestStreamObserver.create();
 
-        stub.lookupTopic(lookupTopic, response);
+        CommandLookupTopicResponse topicResponse = blockingStub.lookupTopic(lookupTopic);
 
-        CommandLookupTopicResponse topicResponse = response.takeOneMessage();
         assertEquals(topicResponse.getGrpcServiceHost(), "localhost");
         assertEquals(topicResponse.getGrpcServicePort(), (int) grpcService.getListenPort().orElse(null));
         assertEquals(topicResponse.getResponse(), LookupType.Connect);
-
-        response.waitForCompletion();
     }
 
     @Test
@@ -1184,13 +1158,11 @@ public class ProducerConsumerCompatibilityTest extends ProducerConsumerBase {
 
         CommandPartitionedTopicMetadata commandPartitionedTopicMetadata =
                 CommandPartitionedTopicMetadata.newBuilder().setTopic(topic).build();
-        TestStreamObserver<CommandPartitionedTopicMetadataResponse> response = TestStreamObserver.create();
 
-        stub.getPartitionMetadata(commandPartitionedTopicMetadata, response);
+        CommandPartitionedTopicMetadataResponse response =
+                blockingStub.getPartitionMetadata(commandPartitionedTopicMetadata);
 
-        assertEquals(response.takeOneMessage().getPartitions(), numPartitions);
-
-        response.waitForCompletion();
+        assertEquals(response.getPartitions(), numPartitions);
     }
 
     @Test
@@ -1202,13 +1174,12 @@ public class ProducerConsumerCompatibilityTest extends ProducerConsumerBase {
         pulsarClient.newProducer(org.apache.pulsar.client.api.Schema.AVRO(V2Data.class))
                 .topic("persistent://my-property/my-ns/my-topic1")
                 .create();
-        TestStreamObserver<CommandGetSchemaResponse> response = TestStreamObserver.create();
+
         CommandGetSchema commandGetSchema = CommandGetSchema.newBuilder()
                 .setTopic("persistent://my-property/my-ns/my-topic1")
                 .build();
 
-        stub.getSchema(commandGetSchema, response);
-        CommandGetSchemaResponse schemaResponse = response.takeOneMessage();
+        CommandGetSchemaResponse schemaResponse = blockingStub.getSchema(commandGetSchema);
 
         assertEquals(schemaResponse.getSchema().getType(), Schema.Type.Avro);
         SchemaVersion schemaVersion = pulsar.getSchemaRegistryService()
@@ -1226,12 +1197,10 @@ public class ProducerConsumerCompatibilityTest extends ProducerConsumerBase {
                 .topic("persistent://my-property/my-ns/my-topic1")
                 .create();
 
-        TestStreamObserver<CommandGetSchemaResponse> response = TestStreamObserver.create();
         CommandGetSchema commandGetSchema =
                 Commands.newGetSchema("persistent://my-property/my-ns/my-topic1", new LongSchemaVersion(0));
 
-        stub.getSchema(commandGetSchema, response);
-        CommandGetSchemaResponse schemaResponse = response.takeOneMessage();
+        CommandGetSchemaResponse schemaResponse = blockingStub.getSchema(commandGetSchema);
 
         assertEquals(schemaResponse.getSchema().getType(), Schema.Type.Avro);
         SchemaVersion schemaVersion = pulsar.getSchemaRegistryService()
@@ -1242,15 +1211,14 @@ public class ProducerConsumerCompatibilityTest extends ProducerConsumerBase {
     @Test
     public void testGetOrCreateSchema() throws Exception {
         admin.topics().createNonPartitionedTopic("persistent://my-property/my-ns/my-topic1");
-        TestStreamObserver<CommandGetOrCreateSchemaResponse> response = TestStreamObserver.create();
         CommandGetOrCreateSchema getOrCreateSchema = Commands.newGetOrCreateSchema(
                 "persistent://my-property/my-ns/my-topic1",
                 org.apache.pulsar.client.api.Schema.STRING.getSchemaInfo());
 
-        stub.getOrCreateSchema(getOrCreateSchema, response);
+        CommandGetOrCreateSchemaResponse response = blockingStub.getOrCreateSchema(getOrCreateSchema);
 
         SchemaVersion schemaVersion = pulsar.getSchemaRegistryService()
-                .versionFromBytes(response.takeOneMessage().getSchemaVersion().toByteArray());
+                .versionFromBytes(response.getSchemaVersion().toByteArray());
         assertEquals(schemaVersion, new LongSchemaVersion(0));
     }
 
