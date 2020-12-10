@@ -33,7 +33,7 @@ jobs:
         run: mvn spotbugs:check
 
       - name: test after build
-        run: mvn test -DfailIfNoTests=false
+        run: mvn test -DfailIfNoTests=false '-Dtest=!MessagePublishThrottlingTest'
 
       #- name: KafkaIntegrationTest
       #  run: mvn test '-Dtest=KafkaIntegrationTest' -pl tests
