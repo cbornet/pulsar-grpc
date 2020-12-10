@@ -32,7 +32,9 @@ import org.apache.pulsar.broker.service.BrokerService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.security.GeneralSecurityException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -144,7 +146,7 @@ class GrpcService implements ProtocolHandler {
                 }
                 System.err.println("gRPC server shut down");
             }));
-        } catch (Exception e) {
+        } catch (RuntimeException | IOException | GeneralSecurityException e) {
             log.error("Couldn't start gRPC server", e);
         }
     }

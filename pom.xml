@@ -40,6 +40,7 @@
     <properties>
         <javac.target>1.8</javac.target>
         <redirectTestOutputToFile>true</redirectTestOutputToFile>
+        <spotbugs-annotations.version>3.1.8</spotbugs-annotations.version>
 
         <!-- plugin dependencies -->
         <dockerfile-maven.version>1.4.9</dockerfile-maven.version>
@@ -55,6 +56,27 @@
     <modules>
         <module>protocol-handler</module>
     </modules>
+
+    <!-- dependency definitions -->
+    <dependencyManagement>
+        <dependencies>
+            <!-- provided dependencies -->
+            <dependency>
+                <groupId>com.github.spotbugs</groupId>
+                <artifactId>spotbugs-annotations</artifactId>
+                <version>${spotbugs-annotations.version}</version>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <dependencies>
+        <!-- provided dependencies (available at compilation and test classpths and *NOT* packaged) -->
+        <dependency>
+            <groupId>com.github.spotbugs</groupId>
+            <artifactId>spotbugs-annotations</artifactId>
+            <scope>provided</scope>
+        </dependency>
+    </dependencies>
 
     <build>
         <pluginManagement>
@@ -92,6 +114,14 @@
             </plugins>
         </pluginManagement>
         <plugins>
+            <plugin>
+                <groupId>com.github.spotbugs</groupId>
+                <artifactId>spotbugs-maven-plugin</artifactId>
+                <version>${spotbugs-maven-plugin.version}</version>
+                <configuration>
+                    <excludeFilterFile>resources/findbugsExclude.xml</excludeFilterFile>
+                </configuration>
+            </plugin>
             <plugin>
                 <artifactId>maven-compiler-plugin</artifactId>
                 <version>${maven-compiler-plugin.version}</version>

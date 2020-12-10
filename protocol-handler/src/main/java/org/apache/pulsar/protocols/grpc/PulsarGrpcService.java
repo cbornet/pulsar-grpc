@@ -105,6 +105,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.net.SocketAddress;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
@@ -145,6 +146,7 @@ class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
         this.configuration = configuration;
     }
 
+
     private static void closeProduce(CompletableFuture<Producer> producerFuture, SocketAddress remoteAddress) {
         if (!producerFuture.isDone() && producerFuture
                 .completeExceptionally(new IllegalStateException("Closed producer before creation was complete"))) {
@@ -158,7 +160,7 @@ class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
         }
 
         // Proceed with normal close, the producer
-        Producer producer = producerFuture.getNow(null);
+        Producer producer = producerFuture.join();
         log.info("[{}][{}] Closing producer on cnx {}", producer.getTopic(), producer.getProducerName(), remoteAddress);
         producer.close(true);
     }
@@ -181,7 +183,7 @@ class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
         }
 
         // Proceed with normal consumer close
-        Consumer consumer = consumerFuture.getNow(null);
+        Consumer consumer = consumerFuture.join();
         try {
             consumer.close();
             log.info("[{}] Closed consumer {}", remoteAddress, consumer);
@@ -305,7 +307,8 @@ class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
         SocketAddress remoteAddress = REMOTE_ADDRESS_CTX_KEY.get();
         if (log.isDebugEnabled()) {
             log.debug("Received CommandGetSchema call from {}, schemaVersion: {}, topic: {}",
-                    remoteAddress, new String(commandGetSchema.getSchemaVersion().toByteArray()),
+                    remoteAddress,
+                    new String(commandGetSchema.getSchemaVersion().toByteArray(), StandardCharsets.UTF_8),
                     commandGetSchema.getTopic());
         }
 
@@ -842,7 +845,7 @@ class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
                     log.warn("[{}] Producer unavailable", remoteAddress);
                     return;
                 }
-                Producer producer = producerFuture.getNow(null);
+                Producer producer = producerFuture.join();
                 cnx.execute(() -> cnx.handleSend(cmd, producer));
             }
 
@@ -1075,7 +1078,7 @@ class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
                 Consumer consumer = null;
 
                 if (consumerFuture.isDone() && !consumerFuture.isCompletedExceptionally()) {
-                    consumer = consumerFuture.getNow(null);
+                    consumer = consumerFuture.join();
                 }
                 long requestId;
                 switch (consumeInput.getConsumerInputOneofCase()) {
@@ -1112,7 +1115,7 @@ class PulsarGrpcService extends PulsarGrpc.PulsarImplBase {
                     case UNSUBSCRIBE:
                         CommandUnsubscribe unsubscribe = consumeInput.getUnsubscribe();
                         if (consumer != null) {
-                            consumerFuture.getNow(null).doUnsubscribe(unsubscribe.getRequestId());
+                            consumer.doUnsubscribe(unsubscribe.getRequestId());
                         } else {
                             responseObserver.onNext(Commands.newError(unsubscribe.getRequestId(),
                                     ServerError.MetadataError, "Consumer not found"));
