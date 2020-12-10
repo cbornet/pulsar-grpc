@@ -62,11 +62,6 @@ public class ConsumerThrottleTest extends ProducerConsumerBase {
         conf.getProperties().setProperty("grpcServicePort", "0");
         grpcService.initialize(conf);
         grpcService.start(pulsar.getBrokerService());
-        Map<String, String> protocolDataToAdvertise = new HashMap<>();
-        protocolDataToAdvertise.put(grpcService.protocolName(), grpcService.getProtocolDataToAdvertise());
-        doReturn(protocolDataToAdvertise).when(pulsar).getProtocolDataToAdvertise();
-        pulsar.getLoadManager().get().stop();
-        pulsar.getLoadManager().get().start();
 
         NettyChannelBuilder channelBuilder = NettyChannelBuilder
                 .forAddress("localhost", grpcService.getListenPort().orElse(-1))
