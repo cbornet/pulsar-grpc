@@ -15,6 +15,11 @@ package io.github.cbornet.pulsar.handlers.grpc;
 
 import com.google.protobuf.ByteString;
 import com.google.protobuf.InvalidProtocolBufferException;
+import io.github.cbornet.pulsar.handlers.grpc.api.AuthRoleToken;
+import io.github.cbornet.pulsar.handlers.grpc.api.AuthRoleTokenInfo;
+import io.github.cbornet.pulsar.handlers.grpc.api.CommandAuth;
+import io.github.cbornet.pulsar.handlers.grpc.api.CommandAuthChallenge;
+import io.github.cbornet.pulsar.handlers.grpc.api.CommandAuthResponse;
 import io.grpc.Context;
 import io.grpc.Contexts;
 import io.grpc.Grpc;
@@ -28,11 +33,6 @@ import org.apache.pulsar.broker.authentication.AuthenticationProvider;
 import org.apache.pulsar.broker.authentication.AuthenticationState;
 import org.apache.pulsar.broker.service.BrokerService;
 import org.apache.pulsar.common.api.AuthData;
-import io.github.cbornet.pulsar.handlers.grpc.api.AuthRoleToken;
-import io.github.cbornet.pulsar.handlers.grpc.api.AuthRoleTokenInfo;
-import io.github.cbornet.pulsar.handlers.grpc.api.CommandAuth;
-import io.github.cbornet.pulsar.handlers.grpc.api.CommandAuthChallenge;
-import io.github.cbornet.pulsar.handlers.grpc.api.CommandAuthResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 

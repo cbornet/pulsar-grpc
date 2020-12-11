@@ -14,6 +14,8 @@
 package io.github.cbornet.pulsar.handlers.grpc;
 
 import com.google.protobuf.InvalidProtocolBufferException;
+import io.github.cbornet.pulsar.handlers.grpc.api.CommandProducer;
+import io.github.cbornet.pulsar.handlers.grpc.api.CommandSubscribe;
 import io.grpc.Context;
 import io.grpc.Contexts;
 import io.grpc.Grpc;
@@ -22,8 +24,6 @@ import io.grpc.ServerCall;
 import io.grpc.ServerCallHandler;
 import io.grpc.ServerInterceptor;
 import io.grpc.Status;
-import io.github.cbornet.pulsar.handlers.grpc.api.CommandProducer;
-import io.github.cbornet.pulsar.handlers.grpc.api.CommandSubscribe;
 
 import java.net.SocketAddress;
 

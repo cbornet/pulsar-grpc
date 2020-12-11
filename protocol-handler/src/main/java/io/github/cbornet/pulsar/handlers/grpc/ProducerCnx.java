@@ -16,6 +16,13 @@ package io.github.cbornet.pulsar.handlers.grpc;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.protobuf.CodedOutputStream;
 import com.scurrilous.circe.checksum.Crc32cIntChecksum;
+import io.github.cbornet.pulsar.handlers.grpc.api.CommandSend;
+import io.github.cbornet.pulsar.handlers.grpc.api.CompressionType;
+import io.github.cbornet.pulsar.handlers.grpc.api.MessageMetadata;
+import io.github.cbornet.pulsar.handlers.grpc.api.Messages;
+import io.github.cbornet.pulsar.handlers.grpc.api.MetadataAndPayload;
+import io.github.cbornet.pulsar.handlers.grpc.api.SendResult;
+import io.github.cbornet.pulsar.handlers.grpc.api.SingleMessage;
 import io.grpc.stub.CallStreamObserver;
 import io.grpc.stub.StreamObserver;
 import io.netty.buffer.ByteBuf;
@@ -31,13 +38,6 @@ import org.apache.pulsar.common.allocator.PulsarByteBufAllocator;
 import org.apache.pulsar.common.api.proto.PulsarApi;
 import org.apache.pulsar.common.compression.CompressionCodec;
 import org.apache.pulsar.common.compression.CompressionCodecProvider;
-import io.github.cbornet.pulsar.handlers.grpc.api.CommandSend;
-import io.github.cbornet.pulsar.handlers.grpc.api.CompressionType;
-import io.github.cbornet.pulsar.handlers.grpc.api.MessageMetadata;
-import io.github.cbornet.pulsar.handlers.grpc.api.Messages;
-import io.github.cbornet.pulsar.handlers.grpc.api.MetadataAndPayload;
-import io.github.cbornet.pulsar.handlers.grpc.api.SendResult;
-import io.github.cbornet.pulsar.handlers.grpc.api.SingleMessage;
 
 import java.io.IOException;
 import java.net.SocketAddress;
@@ -45,9 +45,9 @@ import java.nio.ByteBuffer;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicLongFieldUpdater;
 
-import static org.apache.pulsar.common.protocol.Commands.serializeSingleMessageInBatchWithPayload;
 import static io.github.cbornet.pulsar.handlers.grpc.Commands.convertCompressionType;
 import static io.github.cbornet.pulsar.handlers.grpc.Commands.convertSingleMessageMetadata;
+import static org.apache.pulsar.common.protocol.Commands.serializeSingleMessageInBatchWithPayload;
 
 class ProducerCnx extends AbstractGrpcCnx {
     private static final AtomicLongFieldUpdater<ProducerCnx> MSG_PUBLISH_BUFFER_SIZE_UPDATER =

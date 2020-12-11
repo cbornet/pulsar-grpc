@@ -13,13 +13,13 @@
  */
 package io.github.cbornet.pulsar.handlers.grpc;
 
+import io.github.cbornet.pulsar.handlers.grpc.api.ConsumeOutput;
+import io.github.cbornet.pulsar.handlers.grpc.api.PayloadType;
 import io.grpc.stub.StreamObserver;
 import org.apache.pulsar.broker.authentication.AuthenticationDataSource;
 import org.apache.pulsar.broker.service.BrokerService;
 import org.apache.pulsar.broker.service.Consumer;
 import org.apache.pulsar.broker.service.PulsarCommandSender;
-import io.github.cbornet.pulsar.handlers.grpc.api.ConsumeOutput;
-import io.github.cbornet.pulsar.handlers.grpc.api.PayloadType;
 
 import java.net.SocketAddress;
 

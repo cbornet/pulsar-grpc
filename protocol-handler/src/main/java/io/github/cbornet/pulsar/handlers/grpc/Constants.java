@@ -13,11 +13,11 @@
  */
 package io.github.cbornet.pulsar.handlers.grpc;
 
+import io.github.cbornet.pulsar.handlers.grpc.api.CommandProducer;
+import io.github.cbornet.pulsar.handlers.grpc.api.CommandSubscribe;
 import io.grpc.Context;
 import io.grpc.Metadata;
 import org.apache.pulsar.broker.authentication.AuthenticationDataSource;
-import io.github.cbornet.pulsar.handlers.grpc.api.CommandProducer;
-import io.github.cbornet.pulsar.handlers.grpc.api.CommandSubscribe;
 
 import java.net.SocketAddress;
 

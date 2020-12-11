@@ -13,8 +13,8 @@
  */
 package io.github.cbornet.pulsar.handlers.grpc;
 
-import io.grpc.stub.StreamObserver;
 import io.github.cbornet.pulsar.handlers.grpc.api.SendResult;
+import io.grpc.stub.StreamObserver;
 
 class ProducerCommandSender extends DefaultGrpcCommandSender {
 

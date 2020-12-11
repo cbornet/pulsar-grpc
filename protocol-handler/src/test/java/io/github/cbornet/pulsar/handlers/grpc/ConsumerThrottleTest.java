@@ -13,6 +13,11 @@
  */
 package io.github.cbornet.pulsar.handlers.grpc;
 
+import io.github.cbornet.pulsar.handlers.grpc.api.CommandSubscribe;
+import io.github.cbornet.pulsar.handlers.grpc.api.ConsumeInput;
+import io.github.cbornet.pulsar.handlers.grpc.api.ConsumeOutput;
+import io.github.cbornet.pulsar.handlers.grpc.api.PayloadType;
+import io.github.cbornet.pulsar.handlers.grpc.api.PulsarGrpc;
 import io.grpc.ManagedChannel;
 import io.grpc.netty.NegotiationType;
 import io.grpc.netty.NettyChannelBuilder;
@@ -23,11 +28,6 @@ import org.apache.pulsar.broker.service.persistent.PersistentTopic;
 import org.apache.pulsar.client.api.Producer;
 import org.apache.pulsar.client.api.ProducerBuilder;
 import org.apache.pulsar.client.api.ProducerConsumerBase;
-import io.github.cbornet.pulsar.handlers.grpc.api.CommandSubscribe;
-import io.github.cbornet.pulsar.handlers.grpc.api.ConsumeInput;
-import io.github.cbornet.pulsar.handlers.grpc.api.ConsumeOutput;
-import io.github.cbornet.pulsar.handlers.grpc.api.PayloadType;
-import io.github.cbornet.pulsar.handlers.grpc.api.PulsarGrpc;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.testng.annotations.AfterMethod;

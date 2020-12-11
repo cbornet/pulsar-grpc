@@ -13,6 +13,9 @@
  */
 package io.github.cbornet.pulsar.handlers.grpc;
 
+import io.github.cbornet.pulsar.handlers.grpc.api.ConsumeOutput;
+import io.github.cbornet.pulsar.handlers.grpc.api.MessageIdData;
+import io.github.cbornet.pulsar.handlers.grpc.api.PayloadType;
 import io.grpc.stub.StreamObserver;
 import io.netty.buffer.ByteBuf;
 import io.netty.util.concurrent.Future;
@@ -24,9 +27,6 @@ import org.apache.pulsar.broker.service.EntryBatchSizes;
 import org.apache.pulsar.broker.service.RedeliveryTracker;
 import org.apache.pulsar.broker.service.Subscription;
 import org.apache.pulsar.common.api.proto.PulsarApi;
-import io.github.cbornet.pulsar.handlers.grpc.api.ConsumeOutput;
-import io.github.cbornet.pulsar.handlers.grpc.api.MessageIdData;
-import io.github.cbornet.pulsar.handlers.grpc.api.PayloadType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 

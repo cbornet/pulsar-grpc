@@ -13,6 +13,9 @@
  */
 package io.github.cbornet.pulsar.handlers.grpc;
 
+import io.github.cbornet.pulsar.handlers.grpc.api.CommandLookupTopicResponse;
+import io.github.cbornet.pulsar.handlers.grpc.api.CommandLookupTopicResponse.LookupType;
+import io.github.cbornet.pulsar.handlers.grpc.api.ServerError;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import org.apache.commons.lang3.StringUtils;
@@ -24,9 +27,6 @@ import org.apache.pulsar.broker.web.PulsarWebResource;
 import org.apache.pulsar.broker.web.RestException;
 import org.apache.pulsar.common.lookup.data.LookupData;
 import org.apache.pulsar.common.naming.TopicName;
-import io.github.cbornet.pulsar.handlers.grpc.api.CommandLookupTopicResponse;
-import io.github.cbornet.pulsar.handlers.grpc.api.CommandLookupTopicResponse.LookupType;
-import io.github.cbornet.pulsar.handlers.grpc.api.ServerError;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 

@@ -13,6 +13,10 @@
  */
 package io.github.cbornet.pulsar.handlers.grpc;
 
+import io.github.cbornet.pulsar.handlers.grpc.api.CommandConnect;
+import io.github.cbornet.pulsar.handlers.grpc.api.CommandLookupTopic;
+import io.github.cbornet.pulsar.handlers.grpc.api.CommandLookupTopicResponse;
+import io.github.cbornet.pulsar.handlers.grpc.api.PulsarGrpc;
 import io.grpc.ManagedChannel;
 import io.grpc.Metadata;
 import io.grpc.Status;
@@ -26,10 +30,6 @@ import org.apache.pulsar.client.admin.PulsarAdminBuilder;
 import org.apache.pulsar.client.admin.PulsarAdminException;
 import org.apache.pulsar.client.impl.auth.AuthenticationTls;
 import org.apache.pulsar.common.policies.data.ClusterData;
-import io.github.cbornet.pulsar.handlers.grpc.api.CommandConnect;
-import io.github.cbornet.pulsar.handlers.grpc.api.CommandLookupTopic;
-import io.github.cbornet.pulsar.handlers.grpc.api.CommandLookupTopicResponse;
-import io.github.cbornet.pulsar.handlers.grpc.api.PulsarGrpc;
 import org.apache.pulsar.zookeeper.MockedZooKeeperClientFactoryImpl;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -44,8 +44,8 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
-import static io.grpc.stub.MetadataUtils.newAttachHeadersInterceptor;
 import static io.github.cbornet.pulsar.handlers.grpc.Constants.AUTH_METADATA_KEY;
+import static io.grpc.stub.MetadataUtils.newAttachHeadersInterceptor;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.spy;
 

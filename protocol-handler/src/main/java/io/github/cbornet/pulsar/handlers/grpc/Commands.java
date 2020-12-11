@@ -14,26 +14,6 @@
 package io.github.cbornet.pulsar.handlers.grpc;
 
 import com.google.protobuf.ByteString;
-import io.grpc.Metadata;
-import io.grpc.Status;
-import io.grpc.StatusRuntimeException;
-import io.grpc.stub.MetadataUtils;
-import io.netty.buffer.ByteBuf;
-import io.netty.buffer.ByteBufInputStream;
-import org.apache.commons.lang3.StringUtils;
-import org.apache.pulsar.broker.service.Subscription;
-import org.apache.pulsar.client.api.KeySharedPolicy;
-import org.apache.pulsar.client.api.Range;
-import org.apache.pulsar.common.api.proto.PulsarApi;
-import org.apache.pulsar.common.compression.CompressionCodec;
-import org.apache.pulsar.common.compression.CompressionCodecProvider;
-import org.apache.pulsar.common.policies.data.ConsumerStats;
-import org.apache.pulsar.common.protocol.Commands.ChecksumType;
-import org.apache.pulsar.common.protocol.schema.SchemaVersion;
-import org.apache.pulsar.common.schema.SchemaInfo;
-import org.apache.pulsar.common.schema.SchemaType;
-import org.apache.pulsar.common.util.SafeCollectionUtils;
-import org.apache.pulsar.common.util.collections.BitSetRecyclable;
 import io.github.cbornet.pulsar.handlers.grpc.api.AuthData;
 import io.github.cbornet.pulsar.handlers.grpc.api.CommandAck;
 import io.github.cbornet.pulsar.handlers.grpc.api.CommandAck.AckType;
@@ -100,16 +80,36 @@ import io.github.cbornet.pulsar.handlers.grpc.api.ServerError;
 import io.github.cbornet.pulsar.handlers.grpc.api.SingleMessage;
 import io.github.cbornet.pulsar.handlers.grpc.api.SingleMessageMetadata;
 import io.github.cbornet.pulsar.handlers.grpc.api.TxnAction;
+import io.grpc.Metadata;
+import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
+import io.grpc.stub.MetadataUtils;
+import io.netty.buffer.ByteBuf;
+import io.netty.buffer.ByteBufInputStream;
+import org.apache.commons.lang3.StringUtils;
+import org.apache.pulsar.broker.service.Subscription;
+import org.apache.pulsar.client.api.KeySharedPolicy;
+import org.apache.pulsar.client.api.Range;
+import org.apache.pulsar.common.api.proto.PulsarApi;
+import org.apache.pulsar.common.compression.CompressionCodec;
+import org.apache.pulsar.common.compression.CompressionCodecProvider;
+import org.apache.pulsar.common.policies.data.ConsumerStats;
+import org.apache.pulsar.common.protocol.Commands.ChecksumType;
+import org.apache.pulsar.common.protocol.schema.SchemaVersion;
+import org.apache.pulsar.common.schema.SchemaInfo;
+import org.apache.pulsar.common.schema.SchemaType;
+import org.apache.pulsar.common.util.SafeCollectionUtils;
+import org.apache.pulsar.common.util.collections.BitSetRecyclable;
 
 import java.io.IOException;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 
-import static org.apache.pulsar.common.protocol.Commands.serializeMetadataAndPayload;
 import static io.github.cbornet.pulsar.handlers.grpc.Constants.CONSUMER_PARAMS_METADATA_KEY;
 import static io.github.cbornet.pulsar.handlers.grpc.Constants.ERROR_CODE_METADATA_KEY;
 import static io.github.cbornet.pulsar.handlers.grpc.Constants.PRODUCER_PARAMS_METADATA_KEY;
+import static org.apache.pulsar.common.protocol.Commands.serializeMetadataAndPayload;
 
 class Commands {
 
