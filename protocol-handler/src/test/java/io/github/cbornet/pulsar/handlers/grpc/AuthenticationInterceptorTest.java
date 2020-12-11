@@ -445,7 +445,7 @@ public class AuthenticationInterceptorTest {
     }
 
     private io.github.cbornet.pulsar.handlers.grpc.api.AuthData.Builder getResponseForChallenge(
-            io.github.cbornet.pulsar.handlers.grpc.api.AuthData challenge, byte[] authData) throws AuthenticationException {
+            io.github.cbornet.pulsar.handlers.grpc.api.AuthData challenge, byte[] authData) {
         return io.github.cbornet.pulsar.handlers.grpc.api.AuthData.newBuilder()
                 .setAuthMethodName(challenge.getAuthMethodName())
                 .setAuthStateId(challenge.getAuthStateId())
