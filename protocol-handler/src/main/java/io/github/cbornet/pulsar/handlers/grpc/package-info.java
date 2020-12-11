@@ -11,15 +11,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-syntax = "proto2";
-
-package pulsar.protocols.grpc.test;
-option java_package = "io.github.cbornet.pulsar.handlers.grpc.test";
-option java_multiple_files = true;
-
-import "google/protobuf/empty.proto";
-import "google/protobuf/wrappers.proto";
-
-service Auth {
-  rpc GetPrincipal(google.protobuf.Empty) returns (google.protobuf.StringValue) {}
-}
+/**
+ * gRPC handler related classes.
+ */
+package io.github.cbornet.pulsar.handlers.grpc;

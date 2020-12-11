@@ -15,10 +15,10 @@
 -->
 <FindBugsFilter>
     <Match>
-        <Package name="org.apache.pulsar.protocols.grpc.api"/>
+        <Package name="io.github.cbornet.pulsar.handlers.grpc.api"/>
     </Match>
     <Match>
         <!--   SecurityUtility is copy/pasted from Pulsar core     -->
-        <Class name="org.apache.pulsar.protocols.grpc.SecurityUtility"/>
+        <Class name="io.github.cbornet.pulsar.handlers.grpc.SecurityUtility"/>
     </Match>
 </FindBugsFilter>

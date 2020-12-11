@@ -14,7 +14,7 @@
 syntax = "proto2";
 
 package pulsar.protocols.grpc;
-option java_package = "org.apache.pulsar.protocols.grpc.api";
+option java_package = "io.github.cbornet.pulsar.handlers.grpc.api";
 option java_multiple_files = true;
 // option optimize_for = LITE_RUNTIME;
 
