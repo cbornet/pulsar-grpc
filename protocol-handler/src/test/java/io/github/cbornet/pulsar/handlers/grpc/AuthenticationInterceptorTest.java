@@ -59,7 +59,6 @@ import org.testng.annotations.BeforeClass;
 import org.testng.annotations.BeforeMethod;
 import org.testng.annotations.Test;
 
-import javax.naming.AuthenticationException;
 import javax.security.auth.login.Configuration;
 
 import java.io.File;
