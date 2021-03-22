@@ -41,7 +41,10 @@ import static io.github.cbornet.pulsar.handlers.grpc.Constants.GRPC_SERVICE_HOST
 import static io.github.cbornet.pulsar.handlers.grpc.Constants.GRPC_SERVICE_PORT_PROPERTY_NAME;
 import static io.github.cbornet.pulsar.handlers.grpc.Constants.GRPC_SERVICE_PORT_TLS_PROPERTY_NAME;
 
-class GrpcService implements ProtocolHandler {
+/**
+ * Protocol handler for gRPC.
+ */
+public class GrpcService implements ProtocolHandler {
 
     private static final Logger log = LoggerFactory.getLogger(GrpcService.class);
     private static final String NAME = "grpc";

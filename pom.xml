@@ -50,6 +50,7 @@
 
     <modules>
         <module>protocol-handler</module>
+        <module>benchmark</module>
     </modules>
 
     <!-- dependency definitions -->
@@ -72,6 +73,7 @@
             <scope>provided</scope>
         </dependency>
     </dependencies>
+
 
     <build>
         <pluginManagement>
