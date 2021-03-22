@@ -111,7 +111,10 @@ import static io.github.cbornet.pulsar.handlers.grpc.Constants.ERROR_CODE_METADA
 import static io.github.cbornet.pulsar.handlers.grpc.Constants.PRODUCER_PARAMS_METADATA_KEY;
 import static org.apache.pulsar.common.protocol.Commands.serializeMetadataAndPayload;
 
-class Commands {
+/**
+ * Utility class containing command building helpers.
+ */
+public class Commands {
 
     public static final short MAGIC_CRC_32_C = 0x0e01;
 
