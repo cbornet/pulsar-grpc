@@ -49,7 +49,7 @@
                     </descriptorRefs>
                     <archive>
                         <manifest>
-                            <mainClass>io.github.cbornet.pulsar.handlers.grpc.benchmark.Benchmark</mainClass>
+                            <mainClass>io.github.cbornet.pulsar.handlers.grpc.benchmark.BenchmarkGrpc</mainClass>
                         </manifest>
                     </archive>
                 </configuration>
