@@ -112,6 +112,12 @@ enum CompressionType {
   SNAPPY = 4;
 }
 
+enum ProducerAccessMode {
+  Shared = 0; // By default multiple producers can publish on a topic
+  Exclusive = 1; // Require exclusive access for producer. Fail immediately if there's already a producer connected.
+  WaitForExclusive = 2; // Producer creation is pending until it can acquire exclusive access
+}
+
 message MessageMetadata {
   required string producer_name = 1;
   required uint64 sequence_id = 2;
@@ -425,6 +431,16 @@ message CommandProducer {
   // Indicate the name of the producer is generated or user provided
   // Use default true here is in order to be forward compatible with the client
   optional bool user_provided_producer_name = 7 [default = true];
+
+  // Require that this producers will be the only producer allowed on the topic
+  optional ProducerAccessMode producer_access_mode = 8 [default = Shared];
+
+  // Topic epoch is used to fence off producers that reconnects after a new
+  // exclusive producer has already taken over. This id is assigned by the
+  // broker on the CommandProducerSuccess. The first time, the client will
+  // leave it empty and then it will always carry the same epoch number on
+  // the subsequent reconnections.
+  optional uint64 topic_epoch = 9;
 }
 
 message CommandSend {
@@ -446,6 +462,9 @@ message CommandSend {
     // Messages batched and compressed on broker
     Messages messages = 9;
   }
+
+  // Specify if the message being published is a Pulsar marker or not
+  optional bool marker = 10 [default = false];
 }
 
 message CommandSendReceipt {
@@ -597,6 +616,15 @@ message CommandProducerSuccess {
   // This will only be meaningful if deduplication has been enabled.
   optional int64 last_sequence_id = 2 [default = -1];
   optional bytes schema_version = 3;
+
+  // The topic epoch assigned by the broker. This field will only be set if we
+  // were requiring exclusive access when creating the producer.
+  optional uint64 topic_epoch = 4;
+
+  // If producer is not "ready", the client will avoid to timeout the request
+  // for creating the producer. Instead it will wait indefinitely until it gets
+  // a subsequent  `CommandProducerSuccess` with `producer_ready==true`.
+  optional bool producer_ready = 5 [default = true];
 }
 
 message CommandSubscribeSuccess {
@@ -728,7 +756,6 @@ message Subscription {
   required string topic = 1;
   required string subscription = 2;
 }
-
 message CommandAddSubscriptionToTxn {
   optional uint64 txnid_least_bits = 1 [default = 0];
   optional uint64 txnid_most_bits = 2 [default = 0];
@@ -744,7 +771,6 @@ message CommandEndTxn {
   optional uint64 txnid_least_bits = 1 [default = 0];
   optional uint64 txnid_most_bits = 2 [default = 0];
   optional TxnAction txn_action = 3;
-  repeated MessageIdData message_id = 4;
 }
 
 message CommandEndTxnResponse {
@@ -757,7 +783,7 @@ message CommandEndTxnOnPartition {
   optional uint64 txnid_most_bits = 2 [default = 0];
   optional string topic = 3;
   optional TxnAction txn_action = 4;
-  repeated MessageIdData message_id = 5;
+  optional uint64 txnid_least_bits_of_low_watermark = 5;
 }
 
 message CommandEndTxnOnPartitionResponse {
@@ -770,6 +796,7 @@ message CommandEndTxnOnSubscription {
   optional uint64 txnid_most_bits = 2 [default = 0];
   optional Subscription subscription = 3;
   optional TxnAction txn_action = 4;
+  optional uint64 txnid_least_bits_of_low_watermark = 5;
 }
 
 message CommandEndTxnOnSubscriptionResponse {

@@ -73,6 +73,7 @@ import io.github.cbornet.pulsar.handlers.grpc.api.MessageMetadata;
 import io.github.cbornet.pulsar.handlers.grpc.api.Messages;
 import io.github.cbornet.pulsar.handlers.grpc.api.MetadataAndPayload;
 import io.github.cbornet.pulsar.handlers.grpc.api.PayloadType;
+import io.github.cbornet.pulsar.handlers.grpc.api.ProducerAccessMode;
 import io.github.cbornet.pulsar.handlers.grpc.api.PulsarGrpc;
 import io.github.cbornet.pulsar.handlers.grpc.api.Schema;
 import io.github.cbornet.pulsar.handlers.grpc.api.SendResult;
@@ -86,14 +87,15 @@ import io.grpc.StatusRuntimeException;
 import io.grpc.stub.MetadataUtils;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufInputStream;
+import io.netty.buffer.Unpooled;
+import io.netty.util.concurrent.FastThreadLocal;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.pulsar.broker.service.Subscription;
 import org.apache.pulsar.client.api.KeySharedPolicy;
 import org.apache.pulsar.client.api.Range;
-import org.apache.pulsar.common.api.proto.PulsarApi;
 import org.apache.pulsar.common.compression.CompressionCodec;
 import org.apache.pulsar.common.compression.CompressionCodecProvider;
-import org.apache.pulsar.common.policies.data.ConsumerStats;
+import org.apache.pulsar.common.policies.data.stats.ConsumerStatsImpl;
 import org.apache.pulsar.common.protocol.Commands.ChecksumType;
 import org.apache.pulsar.common.protocol.schema.SchemaVersion;
 import org.apache.pulsar.common.schema.SchemaInfo;
@@ -105,6 +107,7 @@ import java.io.IOException;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import static io.github.cbornet.pulsar.handlers.grpc.Constants.CONSUMER_PARAMS_METADATA_KEY;
 import static io.github.cbornet.pulsar.handlers.grpc.Constants.ERROR_CODE_METADATA_KEY;
@@ -117,6 +120,15 @@ import static org.apache.pulsar.common.protocol.Commands.serializeMetadataAndPay
 public class Commands {
 
     public static final short MAGIC_CRC_32_C = 0x0e01;
+
+    private static final FastThreadLocal<org.apache.pulsar.common.api.proto.SingleMessageMetadata>
+        LOCAL_SINGLE_MESSAGE_METADATA =
+        new FastThreadLocal<org.apache.pulsar.common.api.proto.SingleMessageMetadata>() {
+            @Override
+            protected org.apache.pulsar.common.api.proto.SingleMessageMetadata initialValue() throws Exception {
+                return new org.apache.pulsar.common.api.proto.SingleMessageMetadata();
+            }
+        };
 
     public static StatusRuntimeException newStatusException(Status status, String message, Throwable exception,
             ServerError code) {
@@ -143,17 +155,19 @@ public class Commands {
     }
 
     public static SendResult newProducerSuccess(String producerName, long lastSequenceId,
-            SchemaVersion schemaVersion) {
-        CommandProducerSuccess.Builder producerSuccessBuilder = CommandProducerSuccess.newBuilder();
-        producerSuccessBuilder.setProducerName(producerName);
-        producerSuccessBuilder.setLastSequenceId(lastSequenceId);
-        producerSuccessBuilder.setSchemaVersion(ByteString.copyFrom(schemaVersion.bytes()));
-        CommandProducerSuccess producerSuccess = producerSuccessBuilder.build();
-        return SendResult.newBuilder().setProducerSuccess(producerSuccess).build();
+                                                SchemaVersion schemaVersion, Optional<Long> topicEpoch,
+                                                boolean isProducerReady) {
+        CommandProducerSuccess.Builder producerSuccessBuilder = CommandProducerSuccess.newBuilder()
+            .setProducerName(producerName)
+            .setLastSequenceId(lastSequenceId)
+            .setSchemaVersion(ByteString.copyFrom(schemaVersion.bytes()))
+            .setProducerReady(isProducerReady);
+        topicEpoch.ifPresent(producerSuccessBuilder::setTopicEpoch);
+        return SendResult.newBuilder().setProducerSuccess(producerSuccessBuilder).build();
     }
 
     public static CommandSend newSend(long sequenceId, int numMessages,
-            PulsarApi.MessageMetadata messageMetadata, ByteBuf payload) {
+            org.apache.pulsar.common.api.proto.MessageMetadata messageMetadata, ByteBuf payload) {
         return newSend(sequenceId, numMessages,
                 messageMetadata.hasTxnidLeastBits() ? messageMetadata.getTxnidLeastBits() : -1,
                 messageMetadata.hasTxnidMostBits() ? messageMetadata.getTxnidMostBits() : -1,
@@ -161,7 +175,7 @@ public class Commands {
     }
 
     public static CommandSend newSend(long lowestSequenceId, long highestSequenceId, int numMessages,
-            PulsarApi.MessageMetadata messageMetadata, ByteBuf payload) {
+            org.apache.pulsar.common.api.proto.MessageMetadata messageMetadata, ByteBuf payload) {
         return newSend(lowestSequenceId, highestSequenceId, numMessages,
                 messageMetadata.hasTxnidLeastBits() ? messageMetadata.getTxnidLeastBits() : -1,
                 messageMetadata.hasTxnidMostBits() ? messageMetadata.getTxnidMostBits() : -1,
@@ -170,7 +184,7 @@ public class Commands {
 
     public static CommandSend newSend(long sequenceId, int numMessages,
             long txnIdLeastBits, long txnIdMostBits,
-            PulsarApi.MessageMetadata messageData, ByteBuf payload) {
+            org.apache.pulsar.common.api.proto.MessageMetadata messageData, ByteBuf payload) {
         CommandSend.Builder sendBuilder = CommandSend.newBuilder();
         sendBuilder.setSequenceId(sequenceId);
         if (numMessages > 1) {
@@ -195,7 +209,7 @@ public class Commands {
 
     public static CommandSend newSend(long lowestSequenceId, long highestSequenceId, int numMessages,
             long txnIdLeastBits, long txnIdMostBits,
-            PulsarApi.MessageMetadata messageData, ByteBuf payload) {
+            org.apache.pulsar.common.api.proto.MessageMetadata messageData, ByteBuf payload) {
         CommandSend.Builder sendBuilder = CommandSend.newBuilder();
         sendBuilder.setSequenceId(lowestSequenceId);
         sendBuilder.setHighestSequenceId(highestSequenceId);
@@ -694,7 +708,7 @@ public class Commands {
         return ConsumeInput.newBuilder().setConsumerStats(commandConsumerStatsBuilder).build();
     }
 
-    public static ConsumeOutput newConsumerStatsResponse(long requestId, ConsumerStats consumerStats,
+    public static ConsumeOutput newConsumerStatsResponse(long requestId, ConsumerStatsImpl consumerStats,
             Subscription subscription) {
         CommandConsumerStatsResponse.Builder commandConsumerStatsResponseBuilder = CommandConsumerStatsResponse
                 .newBuilder();
@@ -828,13 +842,13 @@ public class Commands {
     }
 
     public static CommandEndTxnOnPartition newEndTxnOnPartition(long txnIdLeastBits, long txnIdMostBits, String topic,
-            TxnAction txnAction, List<MessageIdData> messageIdDataList) {
+            TxnAction txnAction, long txnidLeastBitsOfLowWatermark) {
         return CommandEndTxnOnPartition.newBuilder()
                 .setTxnidLeastBits(txnIdLeastBits)
                 .setTxnidMostBits(txnIdMostBits)
                 .setTopic(topic)
                 .setTxnAction(txnAction)
-                .addAllMessageId(messageIdDataList)
+                .setTxnidLeastBitsOfLowWatermark(txnidLeastBitsOfLowWatermark)
                 .build();
     }
 
@@ -847,24 +861,18 @@ public class Commands {
     }
 
     public static CommandEndTxnOnSubscription newEndTxnOnSubscription(long txnIdLeastBits, long txnIdMostBits,
-            String topic,
-            String subscription, TxnAction txnAction) {
-        io.github.cbornet.pulsar.handlers.grpc.api.Subscription sub =
-                io.github.cbornet.pulsar.handlers.grpc.api.Subscription.newBuilder()
-                        .setTopic(topic)
-                        .setSubscription(subscription)
-                        .build();
-        return newEndTxnOnSubscription(txnIdLeastBits, txnIdMostBits, sub, txnAction);
-    }
-
-    public static CommandEndTxnOnSubscription newEndTxnOnSubscription(long txnIdLeastBits, long txnIdMostBits,
-            io.github.cbornet.pulsar.handlers.grpc.api.Subscription subscription, TxnAction txnAction) {
+            String topic, String subscription, TxnAction txnAction, long lowWaterMark) {
+        io.github.cbornet.pulsar.handlers.grpc.api.Subscription.Builder sub =
+            io.github.cbornet.pulsar.handlers.grpc.api.Subscription.newBuilder()
+                .setTopic(topic)
+                .setSubscription(subscription);
         return CommandEndTxnOnSubscription.newBuilder()
-                .setTxnidLeastBits(txnIdLeastBits)
-                .setTxnidMostBits(txnIdMostBits)
-                .setSubscription(subscription)
-                .setTxnAction(txnAction)
-                .build();
+            .setTxnidLeastBits(txnIdLeastBits)
+            .setTxnidMostBits(txnIdMostBits)
+            .setSubscription(sub)
+            .setTxnAction(txnAction)
+            .setTxnidLeastBitsOfLowWatermark(lowWaterMark)
+            .build();
     }
 
     public static CommandEndTxnOnSubscriptionResponse newEndTxnOnSubscriptionResponse(long txnIdLeastBits,
@@ -888,7 +896,7 @@ public class Commands {
         return MetadataUtils.attachHeaders(stub, headers);
     }
 
-    public static ServerError convertServerError(PulsarApi.ServerError serverError) {
+    public static ServerError convertServerError(org.apache.pulsar.common.api.proto.ServerError serverError) {
         if (serverError == null) {
             return null;
         }
@@ -945,200 +953,216 @@ public class Commands {
         }
     }
 
-    public static PulsarApi.CommandSubscribe.SubType convertSubscribeSubType(SubType subType) {
+    public static org.apache.pulsar.common.api.proto.CommandSubscribe.SubType convertSubscribeSubType(SubType subType) {
         if (subType == null) {
             return null;
         }
         switch (subType) {
             case Shared:
-                return PulsarApi.CommandSubscribe.SubType.Shared;
+                return org.apache.pulsar.common.api.proto.CommandSubscribe.SubType.Shared;
             case Failover:
-                return PulsarApi.CommandSubscribe.SubType.Failover;
+                return org.apache.pulsar.common.api.proto.CommandSubscribe.SubType.Failover;
             case Exclusive:
-                return PulsarApi.CommandSubscribe.SubType.Exclusive;
+                return org.apache.pulsar.common.api.proto.CommandSubscribe.SubType.Exclusive;
             case Key_Shared:
-                return PulsarApi.CommandSubscribe.SubType.Key_Shared;
+                return org.apache.pulsar.common.api.proto.CommandSubscribe.SubType.Key_Shared;
             default:
                 throw new IllegalStateException("Unexpected subscribe subtype: " + subType);
         }
     }
 
-    public static PulsarApi.CommandSubscribe.InitialPosition convertSubscribeInitialPosition(
+    public static org.apache.pulsar.common.api.proto.CommandSubscribe.InitialPosition convertSubscribeInitialPosition(
             InitialPosition initialPosition) {
         if (initialPosition == null) {
             return null;
         }
         switch (initialPosition) {
             case Latest:
-                return PulsarApi.CommandSubscribe.InitialPosition.Latest;
+                return org.apache.pulsar.common.api.proto.CommandSubscribe.InitialPosition.Latest;
             case Earliest:
-                return PulsarApi.CommandSubscribe.InitialPosition.Earliest;
+                return org.apache.pulsar.common.api.proto.CommandSubscribe.InitialPosition.Earliest;
             default:
                 throw new IllegalStateException("Unexpected subscribe initial position : " + initialPosition);
         }
     }
 
-    public static PulsarApi.KeySharedMode convertKeySharedMode(KeySharedMode mode) {
+    public static org.apache.pulsar.common.api.proto.KeySharedMode convertKeySharedMode(KeySharedMode mode) {
         if (mode == null) {
             return null;
         }
         switch (mode) {
             case STICKY:
-                return PulsarApi.KeySharedMode.STICKY;
+                return org.apache.pulsar.common.api.proto.KeySharedMode.STICKY;
             case AUTO_SPLIT:
-                return PulsarApi.KeySharedMode.AUTO_SPLIT;
+                return org.apache.pulsar.common.api.proto.KeySharedMode.AUTO_SPLIT;
             default:
                 throw new IllegalStateException("Unexpected key shared mode: " + mode);
         }
     }
 
-    public static PulsarApi.KeySharedMeta convertKeySharedMeta(KeySharedMeta meta) {
+    public static org.apache.pulsar.common.api.proto.KeySharedMeta convertKeySharedMeta(KeySharedMeta meta) {
         if (meta == null) {
             return null;
         }
-        PulsarApi.KeySharedMeta.Builder builder = PulsarApi.KeySharedMeta.newBuilder()
-                .setKeySharedMode(convertKeySharedMode(meta.getKeySharedMode()));
-        for (IntRange intRange : meta.getHashRangesList()) {
-            PulsarApi.IntRange.Builder hashRangeBuilder = PulsarApi.IntRange.newBuilder()
-                    .setStart(intRange.getStart())
-                    .setEnd(intRange.getEnd());
-            builder.addHashRanges(hashRangeBuilder);
-            hashRangeBuilder.recycle();
+        org.apache.pulsar.common.api.proto.KeySharedMeta keySharedMeta =
+            new org.apache.pulsar.common.api.proto.KeySharedMeta();
+
+        if (meta.hasKeySharedMode()) {
+            keySharedMeta.setKeySharedMode(convertKeySharedMode(meta.getKeySharedMode()));
         }
-        PulsarApi.KeySharedMeta keySharedMeta = builder.build();
-        builder.recycle();
+        for (int i = 0; i < meta.getHashRangesCount(); i++) {
+            IntRange range = meta.getHashRanges(i);
+            org.apache.pulsar.common.api.proto.IntRange intRange = keySharedMeta.addHashRange();
+            if (range.hasStart()) {
+                intRange.setStart(range.getStart());
+            }
+            if (range.hasEnd()) {
+                intRange.setEnd(range.getEnd());
+            }
+        }
+        if (meta.hasAllowOutOfOrderDelivery()) {
+            keySharedMeta.setAllowOutOfOrderDelivery(meta.getAllowOutOfOrderDelivery());
+        }
         return keySharedMeta;
     }
 
-    public static PulsarApi.CommandAck.AckType convertAckType(AckType type) {
+    public static org.apache.pulsar.common.api.proto.CommandAck.AckType convertAckType(AckType type) {
         if (type == null) {
             return null;
         }
         switch (type) {
             case Individual:
-                return PulsarApi.CommandAck.AckType.Individual;
+                return org.apache.pulsar.common.api.proto.CommandAck.AckType.Individual;
             case Cumulative:
-                return PulsarApi.CommandAck.AckType.Cumulative;
+                return org.apache.pulsar.common.api.proto.CommandAck.AckType.Cumulative;
             default:
                 throw new IllegalStateException("Unexpected ack type: " + type);
         }
     }
 
-    public static PulsarApi.CommandAck.ValidationError convertValidationError(ValidationError error) {
+    public static
+    org.apache.pulsar.common.api.proto.CommandAck.ValidationError convertValidationError(ValidationError error) {
         if (error == null) {
             return null;
         }
         switch (error) {
             case DecryptionError:
-                return PulsarApi.CommandAck.ValidationError.DecryptionError;
+                return org.apache.pulsar.common.api.proto.CommandAck.ValidationError.DecryptionError;
             case ChecksumMismatch:
-                return PulsarApi.CommandAck.ValidationError.ChecksumMismatch;
+                return org.apache.pulsar.common.api.proto.CommandAck.ValidationError.ChecksumMismatch;
             case DecompressionError:
-                return PulsarApi.CommandAck.ValidationError.DecompressionError;
+                return org.apache.pulsar.common.api.proto.CommandAck.ValidationError.DecompressionError;
             case BatchDeSerializeError:
-                return PulsarApi.CommandAck.ValidationError.BatchDeSerializeError;
+                return org.apache.pulsar.common.api.proto.CommandAck.ValidationError.BatchDeSerializeError;
             case UncompressedSizeCorruption:
-                return PulsarApi.CommandAck.ValidationError.UncompressedSizeCorruption;
+                return org.apache.pulsar.common.api.proto.CommandAck.ValidationError.UncompressedSizeCorruption;
             default:
                 throw new IllegalStateException("Unexpected ack validation error: " + error);
         }
     }
 
-    public static PulsarApi.MessageIdData convertMessageIdData(MessageIdData messageIdData) {
+    public static void copyMessageIdData(MessageIdData from, org.apache.pulsar.common.api.proto.MessageIdData to) {
+        if (from.hasLedgerId()) {
+            to.setLedgerId(from.getLedgerId());
+        }
+        if (from.hasEntryId()) {
+            to.setEntryId(from.getEntryId());
+        }
+        if (from.hasPartition()) {
+            to.setPartition(from.getPartition());
+        }
+        if (from.hasBatchIndex()) {
+            to.setBatchIndex(from.getBatchIndex());
+        }
+        for (int i = 0; i < from.getAckSetCount(); i++) {
+            to.addAckSet(from.getAckSet(i));
+        }
+        if (from.hasBatchSize()) {
+            to.setBatchSize(from.getBatchSize());
+        }
+    }
+
+    public static org.apache.pulsar.common.api.proto.MessageIdData convertMessageIdData(MessageIdData messageIdData) {
         if (messageIdData == null) {
             return null;
         }
-        PulsarApi.MessageIdData.Builder builder = PulsarApi.MessageIdData.newBuilder()
-                .setEntryId(messageIdData.getEntryId())
-                .setLedgerId(messageIdData.getLedgerId());
-        if (messageIdData.hasPartition()) {
-            builder.setPartition(messageIdData.getPartition());
-        }
-        if (messageIdData.hasBatchIndex()) {
-            builder.setBatchIndex(messageIdData.getBatchIndex());
-        }
-        builder.addAllAckSet(messageIdData.getAckSetList());
-        if (messageIdData.hasBatchSize()) {
-            builder.setBatchSize(messageIdData.getBatchSize());
-        }
-        PulsarApi.MessageIdData result = builder.build();
-        builder.recycle();
+        org.apache.pulsar.common.api.proto.MessageIdData result =
+            new org.apache.pulsar.common.api.proto.MessageIdData();
+        copyMessageIdData(messageIdData, result);
+
         return result;
     }
 
-    public static PulsarApi.CommandAck convertCommandAck(CommandAck ack) {
+    public static org.apache.pulsar.common.api.proto.CommandAck convertCommandAck(CommandAck ack, long consumerId) {
         if (ack == null) {
             return null;
         }
-        PulsarApi.CommandAck.Builder builder = PulsarApi.CommandAck.newBuilder()
-                .setAckType(convertAckType(ack.getAckType()))
-                .setConsumerId(0L);
-        if (ack.hasValidationError()) {
-            builder.setValidationError(convertValidationError(ack.getValidationError()));
+        org.apache.pulsar.common.api.proto.CommandAck result = new org.apache.pulsar.common.api.proto.CommandAck()
+            .setConsumerId(consumerId);
+
+        if (ack.hasAckType()) {
+            result.setAckType(convertAckType(ack.getAckType()));
         }
+        for (int i = 0; i < ack.getMessageIdCount(); i++) {
+            org.apache.pulsar.common.api.proto.MessageIdData messageIdData = result.addMessageId();
+            copyMessageIdData(ack.getMessageId(i), messageIdData);
+        }
+        if (ack.hasValidationError()) {
+            result.setValidationError(convertValidationError(ack.getValidationError()));
+        }
+        ack.getPropertiesMap().forEach(
+            (k, v) -> result.addProperty().setKey(k).setValue(v)
+        );
         if (ack.hasTxnidLeastBits()) {
-            builder.setTxnidLeastBits(ack.getTxnidLeastBits());
+            result.setTxnidLeastBits(ack.getTxnidLeastBits());
         }
         if (ack.hasTxnidMostBits()) {
-            builder.setTxnidMostBits(ack.getTxnidMostBits());
+            result.setTxnidMostBits(ack.getTxnidMostBits());
         }
         if (ack.hasRequestId()) {
-            builder.setRequestId(ack.getRequestId());
+            result.setRequestId(ack.getRequestId());
         }
-        ack.getPropertiesMap().forEach((k, v) -> {
-            PulsarApi.KeyLongValue.Builder keyLongValue = PulsarApi.KeyLongValue.newBuilder()
-                    .setKey(k)
-                    .setValue(v);
-            builder.addProperties(keyLongValue);
-            keyLongValue.recycle();
-        });
-        for (MessageIdData messageIdData : ack.getMessageIdList()) {
-            PulsarApi.MessageIdData idData = convertMessageIdData(messageIdData);
-            builder.addMessageId(idData);
-        }
-        PulsarApi.CommandAck result = builder.build();
-        builder.recycle();
         return result;
     }
 
-    public static PulsarApi.CommandGetTopicsOfNamespace.Mode convertGetTopicsOfNamespaceMode(
+    public static org.apache.pulsar.common.api.proto.CommandGetTopicsOfNamespace.Mode convertGetTopicsOfNamespaceMode(
             CommandGetTopicsOfNamespace.Mode mode) {
         if (mode == null) {
             return null;
         }
         switch (mode) {
             case NON_PERSISTENT:
-                return PulsarApi.CommandGetTopicsOfNamespace.Mode.NON_PERSISTENT;
+                return org.apache.pulsar.common.api.proto.CommandGetTopicsOfNamespace.Mode.NON_PERSISTENT;
             case PERSISTENT:
-                return PulsarApi.CommandGetTopicsOfNamespace.Mode.PERSISTENT;
+                return org.apache.pulsar.common.api.proto.CommandGetTopicsOfNamespace.Mode.PERSISTENT;
             case ALL:
-                return PulsarApi.CommandGetTopicsOfNamespace.Mode.ALL;
+                return org.apache.pulsar.common.api.proto.CommandGetTopicsOfNamespace.Mode.ALL;
             default:
                 throw new IllegalStateException("Unexpected GetTopicsOfNamespace mode: " + mode);
         }
     }
 
-    public static PulsarApi.CompressionType convertCompressionType(CompressionType type) {
+    public static org.apache.pulsar.common.api.proto.CompressionType convertCompressionType(CompressionType type) {
         if (type == null) {
             return null;
         }
         switch (type) {
             case NONE:
-                return PulsarApi.CompressionType.NONE;
+                return org.apache.pulsar.common.api.proto.CompressionType.NONE;
             case LZ4:
-                return PulsarApi.CompressionType.LZ4;
+                return org.apache.pulsar.common.api.proto.CompressionType.LZ4;
             case ZLIB:
-                return PulsarApi.CompressionType.ZLIB;
+                return org.apache.pulsar.common.api.proto.CompressionType.ZLIB;
             case ZSTD:
-                return PulsarApi.CompressionType.ZSTD;
+                return org.apache.pulsar.common.api.proto.CompressionType.ZSTD;
             case SNAPPY:
-                return PulsarApi.CompressionType.SNAPPY;
+                return org.apache.pulsar.common.api.proto.CompressionType.SNAPPY;
             default:
                 throw new IllegalStateException("Unexpected compression type: " + type);
         }
     }
 
-    public static CompressionType convertCompressionType(PulsarApi.CompressionType type) {
+    public static CompressionType convertCompressionType(org.apache.pulsar.common.api.proto.CompressionType type) {
         if (type == null) {
             return null;
         }
@@ -1158,38 +1182,58 @@ public class Commands {
         }
     }
 
-    public static PulsarApi.SingleMessageMetadata.Builder convertSingleMessageMetadata(
-            SingleMessageMetadata messageMetadata) {
-        PulsarApi.SingleMessageMetadata.Builder builder = PulsarApi.SingleMessageMetadata.newBuilder();
+    public static
+    org.apache.pulsar.common.api.proto.ProducerAccessMode convertProducerAccessMode(ProducerAccessMode mode) {
+        if (mode == null) {
+            return null;
+        }
+        switch (mode) {
+            case Exclusive:
+                return org.apache.pulsar.common.api.proto.ProducerAccessMode.Exclusive;
+            case WaitForExclusive:
+                return org.apache.pulsar.common.api.proto.ProducerAccessMode.WaitForExclusive;
+            case Shared:
+                return org.apache.pulsar.common.api.proto.ProducerAccessMode.Shared;
+            default:
+                throw new IllegalStateException("Unexpected producer access mode: " + mode);
+        }
+    }
 
+    public static org.apache.pulsar.common.api.proto.SingleMessageMetadata convertSingleMessageMetadataRecycled(
+            SingleMessageMetadata messageMetadata) {
+        org.apache.pulsar.common.api.proto.SingleMessageMetadata result = LOCAL_SINGLE_MESSAGE_METADATA.get();
+        result.clear();
+
+        messageMetadata.getPropertiesMap().forEach(
+            (k, v) -> result.addProperty().setKey(k).setValue(v)
+        );
         if (messageMetadata.hasPartitionKey()) {
-            builder.setPartitionKey(messageMetadata.getPartitionKey());
+            result.setPartitionKey(messageMetadata.getPartitionKey());
+        }
+        if (messageMetadata.hasPayloadSize()) {
+            result.setPayloadSize(messageMetadata.getPayloadSize());
         }
         if (messageMetadata.hasCompactedOut()) {
-            builder.setCompactedOut(messageMetadata.getCompactedOut());
+            result.setCompactedOut(messageMetadata.getCompactedOut());
         }
         if (messageMetadata.hasEventTime()) {
-            builder.setEventTime(messageMetadata.getEventTime());
+            result.setEventTime(messageMetadata.getEventTime());
         }
         if (messageMetadata.hasPartitionKeyB64Encoded()) {
-            builder.setPartitionKeyB64Encoded(messageMetadata.getPartitionKeyB64Encoded());
+            result.setPartitionKeyB64Encoded(messageMetadata.getPartitionKeyB64Encoded());
         }
         if (messageMetadata.hasOrderingKey()) {
-            builder.setOrderingKey(org.apache.pulsar.shaded.com.google.protobuf.v241.ByteString
-                    .copyFrom(messageMetadata.getOrderingKey().asReadOnlyByteBuffer()));
+            result.setOrderingKey(Unpooled.wrappedBuffer(messageMetadata.getOrderingKey().asReadOnlyByteBuffer()));
         }
         if (messageMetadata.hasSequenceId()) {
-            builder.setSequenceId(messageMetadata.getSequenceId());
+            result.setSequenceId(messageMetadata.getSequenceId());
         }
         if (messageMetadata.hasNullValue()) {
-            builder.setNullValue(messageMetadata.getNullValue());
+            result.setNullValue(messageMetadata.getNullValue());
         }
         if (messageMetadata.hasNullPartitionKey()) {
-            builder.setNullPartitionKey(messageMetadata.getNullPartitionKey());
+            result.setNullPartitionKey(messageMetadata.getNullPartitionKey());
         }
-        messageMetadata.getPropertiesMap().forEach(
-                (k, v) -> builder.addProperties(PulsarApi.KeyValue.newBuilder().setKey(k).setValue(v))
-        );
-        return builder;
+        return result;
     }
 }

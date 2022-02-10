@@ -24,10 +24,12 @@ import io.grpc.netty.NettyChannelBuilder;
 import io.grpc.stub.StreamObserver;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
+import org.apache.bookkeeper.util.PortManager;
+import org.apache.pulsar.broker.PulsarService;
 import org.apache.pulsar.broker.service.AbstractTopic;
 import org.apache.pulsar.broker.service.BrokerTestBase;
 import org.apache.pulsar.broker.service.Topic;
-import org.apache.pulsar.common.api.proto.PulsarApi;
+import org.apache.pulsar.common.api.proto.MessageMetadata;
 import org.apache.pulsar.common.policies.data.Policies;
 import org.apache.pulsar.common.policies.data.PublishRate;
 import org.testng.Assert;
@@ -54,20 +56,17 @@ public class PreciseTopicPublishRateThrottleTest extends BrokerTestBase {
     private GrpcService grpcService;
     private PulsarGrpc.PulsarStub stub;
     private ManagedChannel channel;
+    int port;
 
     @Override
     protected void setup() throws Exception {
+        port = PortManager.nextFreePort();
         super.baseSetup();
 
         grpcService = new GrpcService();
-        conf.getProperties().setProperty("grpcServicePort", "0");
+        conf.getProperties().setProperty("grpcServicePort", String.valueOf(port));
         grpcService.initialize(conf);
         grpcService.start(pulsar.getBrokerService());
-        Map<String, String> protocolDataToAdvertise = new HashMap<>();
-        protocolDataToAdvertise.put(grpcService.protocolName(), grpcService.getProtocolDataToAdvertise());
-        doReturn(protocolDataToAdvertise).when(pulsar).getProtocolDataToAdvertise();
-        pulsar.getLoadManager().get().stop();
-        pulsar.getLoadManager().get().start();
 
         NettyChannelBuilder channelBuilder = NettyChannelBuilder
                 .forAddress("localhost", grpcService.getListenPort().orElse(-1))
@@ -76,6 +75,12 @@ public class PreciseTopicPublishRateThrottleTest extends BrokerTestBase {
         channel = channelBuilder.build();
         stub = PulsarGrpc.newStub(channel);
 
+    }
+
+    protected void beforePulsarStartMocks(PulsarService pulsar) throws Exception {
+        Map<String, String> protocolDataToAdvertise = new HashMap<>();
+        protocolDataToAdvertise.put("grpc", "grpcServiceHost=localhost;grpcServicePort=" + port);
+        doReturn(protocolDataToAdvertise).when(pulsar).getProtocolDataToAdvertise();
     }
 
     @Override
@@ -278,11 +283,10 @@ public class PreciseTopicPublishRateThrottleTest extends BrokerTestBase {
     private MessageIdData producerSend(int i, StreamObserver<CommandSend> commandSend,
             TestStreamObserver<SendResult> sendResult,
             byte[] bytes, int timeoutMs) throws InterruptedException, TimeoutException {
-        PulsarApi.MessageMetadata messageMetadata = PulsarApi.MessageMetadata.newBuilder()
+        MessageMetadata messageMetadata = new MessageMetadata()
                 .setPublishTime(System.currentTimeMillis())
                 .setProducerName("prod-name")
-                .setSequenceId(i)
-                .build();
+                .setSequenceId(i);
         ByteBuf data = Unpooled.wrappedBuffer(bytes);
         commandSend.onNext(Commands.newSend(i, 1, messageMetadata, data));
         return sendResult.takeOneMessage(timeoutMs).getSendReceipt().getMessageId();

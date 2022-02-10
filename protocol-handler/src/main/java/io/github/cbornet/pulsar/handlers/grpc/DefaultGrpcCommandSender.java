@@ -21,16 +21,18 @@ import org.apache.pulsar.broker.service.EntryBatchSizes;
 import org.apache.pulsar.broker.service.PulsarCommandSender;
 import org.apache.pulsar.broker.service.RedeliveryTracker;
 import org.apache.pulsar.broker.service.Subscription;
-import org.apache.pulsar.common.api.proto.PulsarApi;
+import org.apache.pulsar.common.api.proto.CommandLookupTopicResponse;
+import org.apache.pulsar.common.api.proto.ServerError;
 import org.apache.pulsar.common.protocol.schema.SchemaVersion;
 import org.apache.pulsar.common.schema.SchemaInfo;
 
 import java.util.List;
+import java.util.Optional;
 
 abstract class DefaultGrpcCommandSender implements PulsarCommandSender {
 
     @Override
-    public void sendPartitionMetadataResponse(PulsarApi.ServerError error, String errorMsg, long requestId) {
+    public void sendPartitionMetadataResponse(ServerError error, String errorMsg, long requestId) {
 
     }
 
@@ -45,7 +47,7 @@ abstract class DefaultGrpcCommandSender implements PulsarCommandSender {
     }
 
     @Override
-    public void sendErrorResponse(long requestId, PulsarApi.ServerError error, String message) {
+    public void sendErrorResponse(long requestId, ServerError error, String message) {
 
     }
 
@@ -56,7 +58,7 @@ abstract class DefaultGrpcCommandSender implements PulsarCommandSender {
 
     @Override
     public void sendProducerSuccessResponse(long requestId, String producerName, long lastSequenceId,
-            SchemaVersion schemaVersion) {
+            SchemaVersion schemaVersion, Optional<Long> topicEpoch, boolean isProducerReady) {
 
     }
 
@@ -66,7 +68,7 @@ abstract class DefaultGrpcCommandSender implements PulsarCommandSender {
     }
 
     @Override
-    public void sendSendError(long producerId, long sequenceId, PulsarApi.ServerError error, String errorMsg) {
+    public void sendSendError(long producerId, long sequenceId, ServerError error, String errorMsg) {
 
     }
 
@@ -81,7 +83,7 @@ abstract class DefaultGrpcCommandSender implements PulsarCommandSender {
     }
 
     @Override
-    public void sendGetSchemaErrorResponse(long requestId, PulsarApi.ServerError error, String errorMessage) {
+    public void sendGetSchemaErrorResponse(long requestId, ServerError error, String errorMessage) {
 
     }
 
@@ -91,7 +93,7 @@ abstract class DefaultGrpcCommandSender implements PulsarCommandSender {
     }
 
     @Override
-    public void sendGetOrCreateSchemaErrorResponse(long requestId, PulsarApi.ServerError error, String errorMessage) {
+    public void sendGetOrCreateSchemaErrorResponse(long requestId, ServerError error, String errorMessage) {
 
     }
 
@@ -102,12 +104,13 @@ abstract class DefaultGrpcCommandSender implements PulsarCommandSender {
 
     @Override
     public void sendLookupResponse(String brokerServiceUrl, String brokerServiceUrlTls, boolean authoritative,
-            PulsarApi.CommandLookupTopicResponse.LookupType response, long requestId, boolean proxyThroughServiceUrl) {
+                                   CommandLookupTopicResponse.LookupType response, long requestId,
+                                   boolean proxyThroughServiceUrl) {
 
     }
 
     @Override
-    public void sendLookupResponse(PulsarApi.ServerError error, String errorMsg, long requestId) {
+    public void sendLookupResponse(ServerError error, String errorMsg, long requestId) {
 
     }
 
@@ -122,7 +125,7 @@ abstract class DefaultGrpcCommandSender implements PulsarCommandSender {
     }
 
     @Override
-    public void sendError(long requestId, PulsarApi.ServerError error, String message) {
+    public void sendError(long requestId, ServerError error, String message) {
 
     }
 

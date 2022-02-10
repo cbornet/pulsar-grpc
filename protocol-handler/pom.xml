@@ -29,12 +29,13 @@
     <description>Pulsar gRPC Protocol Handler.</description>
 
     <properties>
-        <pulsar.version>2.7.0</pulsar.version>
+        <pulsar.version>2.8.2</pulsar.version>
         <grpc.version>1.18.0</grpc.version>
         <kerby.version>1.1.1</kerby.version>
         <protobuf-maven-plugin.version>0.6.1</protobuf-maven-plugin.version>
         <protoc3.version>3.5.1-1</protoc3.version>
-        <netty-tc-native.version>2.0.30.Final</netty-tc-native.version>
+        <netty-tc-native.version>2.0.46.Final</netty-tc-native.version>
+        <awaitility.version>4.0.3</awaitility.version>
     </properties>
 
     <dependencies>
@@ -48,6 +49,12 @@
             <artifactId>pulsar-broker</artifactId>
             <version>${pulsar.version}</version>
             <type>test-jar</type>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.pulsar</groupId>
+            <artifactId>buildtools</artifactId>
+            <version>${pulsar.version}</version>
             <scope>test</scope>
         </dependency>
         <dependency>
@@ -149,6 +156,13 @@
             <groupId>org.projectlombok</groupId>
             <artifactId>lombok</artifactId>
             <version>1.18.10</version>
+            <scope>test</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>org.awaitility</groupId>
+            <artifactId>awaitility</artifactId>
+            <version>${awaitility.version}</version>
             <scope>test</scope>
         </dependency>
 

@@ -27,6 +27,8 @@ import org.apache.pulsar.broker.web.PulsarWebResource;
 import org.apache.pulsar.broker.web.RestException;
 import org.apache.pulsar.common.lookup.data.LookupData;
 import org.apache.pulsar.common.naming.TopicName;
+import org.apache.pulsar.metadata.api.MetadataCache;
+import org.apache.pulsar.policies.data.loadbalancer.LocalBrokerData;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -44,9 +46,16 @@ import static io.github.cbornet.pulsar.handlers.grpc.Constants.GRPC_SERVICE_HOST
 import static io.github.cbornet.pulsar.handlers.grpc.Constants.GRPC_SERVICE_PORT_PROPERTY_NAME;
 import static io.github.cbornet.pulsar.handlers.grpc.Constants.GRPC_SERVICE_PORT_TLS_PROPERTY_NAME;
 
-class TopicLookup extends PulsarWebResource {
+class TopicLookupService extends PulsarWebResource {
 
-    private static final Logger log = LoggerFactory.getLogger(TopicLookup.class);
+    private static final Logger log = LoggerFactory.getLogger(TopicLookupService.class);
+    private final PulsarService pulsarService;
+    private final MetadataCache<LocalBrokerData> brokerDataMetadataCache;
+
+    TopicLookupService(PulsarService service) {
+        this.pulsarService = service;
+        this.brokerDataMetadataCache = service.getLocalMetadataStore().getMetadataCache(LocalBrokerData.class);
+    }
 
     /**
      * Lookup broker-service address for a given namespace-bundle which contains given topic.
@@ -57,7 +66,7 @@ class TopicLookup extends PulsarWebResource {
      * bundle and redirects request by returning least-loaded broker. d. If current-broker receives request to own the
      * namespace-bundle then it owns a bundle and returns success(connect) response to client.
      */
-    public static CompletableFuture<CommandLookupTopicResponse> lookupTopicAsync(PulsarService pulsarService,
+    public CompletableFuture<CommandLookupTopicResponse> lookupTopicAsync(
             TopicName topicName,
             boolean authoritative, String clientAppId, AuthenticationDataSource authenticationData,
             final String advertisedListenerName) {
@@ -75,7 +84,7 @@ class TopicLookup extends PulsarWebResource {
                             differentClusterData.getBrokerServiceUrl(), differentClusterData.getBrokerServiceUrlTls(),
                             cluster);
                 }
-                lookupTopicGrpcData(pulsarService, validationFuture, differentClusterData.getServiceUrl(),
+                lookupTopicGrpcData(validationFuture, differentClusterData.getServiceUrl(),
                         differentClusterData.getServiceUrlTls(), true, LookupType.Redirect,
                         false);
             } else {
@@ -112,7 +121,7 @@ class TopicLookup extends PulsarWebResource {
                                 );
                                 return;
                             }
-                            lookupTopicGrpcData(pulsarService, validationFuture, peerClusterData.getServiceUrl(),
+                            lookupTopicGrpcData(validationFuture, peerClusterData.getServiceUrl(),
                                     peerClusterData.getServiceUrlTls(), true, LookupType.Redirect,
                                     false);
 
@@ -155,7 +164,7 @@ class TopicLookup extends PulsarWebResource {
                             LookupData lookupData = lookupResult.get().getLookupData();
                             if (lookupResult.get().isRedirect()) {
                                 boolean newAuthoritative = lookupResult.get().isAuthoritativeRedirect();
-                                lookupTopicGrpcData(pulsarService, lookupfuture, lookupData.getHttpUrl(),
+                                lookupTopicGrpcData(lookupfuture, lookupData.getHttpUrl(),
                                         lookupData.getHttpUrlTls(), newAuthoritative, LookupType.Redirect,
                                         false);
                             } else {
@@ -164,7 +173,7 @@ class TopicLookup extends PulsarWebResource {
                                 boolean redirectThroughServiceUrl = pulsarService.getConfiguration()
                                         .isRunningStandalone();
 
-                                lookupTopicGrpcData(pulsarService, lookupfuture, lookupData.getHttpUrl(),
+                                lookupTopicGrpcData(lookupfuture, lookupData.getHttpUrl(),
                                         lookupData.getHttpUrlTls(), true, LookupType.Connect,
                                         redirectThroughServiceUrl);
                             }
@@ -197,7 +206,7 @@ class TopicLookup extends PulsarWebResource {
         return null;
     }
 
-    private static void lookupTopicGrpcData(PulsarService pulsarService,
+    private void lookupTopicGrpcData(
             CompletableFuture<CommandLookupTopicResponse> lookupfuture, String serviceUrl, String serviceUrlTls,
             boolean authoritative,
             CommandLookupTopicResponse.LookupType type, boolean redirectThroughServiceUrl) {
@@ -206,8 +215,7 @@ class TopicLookup extends PulsarWebResource {
             URI uri = new URI(lookupServiceUrl);
             String path = String.format("%s/%s:%s", LoadManager.LOADBALANCE_BROKERS_ROOT, uri.getHost(),
                     uri.getPort());
-            pulsarService.getLocalZkCache()
-                    .getDataAsync(path, pulsarService.getLoadManager().get().getLoadReportDeserializer())
+            brokerDataMetadataCache.get(path)
                     .thenAccept(reportData -> {
                         Optional<String> grpcData =
                                 reportData.flatMap(serviceLookupData -> serviceLookupData.getProtocol("grpc"));

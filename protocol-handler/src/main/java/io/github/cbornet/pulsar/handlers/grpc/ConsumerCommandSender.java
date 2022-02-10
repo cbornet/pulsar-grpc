@@ -26,7 +26,7 @@ import org.apache.pulsar.broker.service.EntryBatchIndexesAcks;
 import org.apache.pulsar.broker.service.EntryBatchSizes;
 import org.apache.pulsar.broker.service.RedeliveryTracker;
 import org.apache.pulsar.broker.service.Subscription;
-import org.apache.pulsar.common.api.proto.PulsarApi;
+import org.apache.pulsar.common.api.proto.ServerError;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -60,7 +60,7 @@ class ConsumerCommandSender extends DefaultGrpcCommandSender {
     }
 
     @Override
-    public void sendError(long requestId, PulsarApi.ServerError error, String message) {
+    public void sendError(long requestId, ServerError error, String message) {
         responseObserver.onNext(Commands.newError(requestId, Commands.convertServerError(error), message));
     }
 

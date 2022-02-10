@@ -52,6 +52,8 @@ import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+import org.apache.bookkeeper.util.PortManager;
+import org.apache.pulsar.broker.PulsarService;
 import org.apache.pulsar.client.api.Consumer;
 import org.apache.pulsar.client.api.CryptoKeyReader;
 import org.apache.pulsar.client.api.EncryptionKeyInfo;
@@ -59,7 +61,6 @@ import org.apache.pulsar.client.api.Message;
 import org.apache.pulsar.client.api.Producer;
 import org.apache.pulsar.client.api.ProducerBuilder;
 import org.apache.pulsar.client.api.ProducerConsumerBase;
-import org.apache.pulsar.common.api.proto.PulsarApi;
 import org.apache.pulsar.common.protocol.schema.SchemaVersion;
 import org.apache.pulsar.common.schema.LongSchemaVersion;
 import org.slf4j.Logger;
@@ -103,21 +104,20 @@ public class ProducerConsumerCompatibilityTest extends ProducerConsumerBase {
     private PulsarGrpc.PulsarBlockingStub blockingStub;
     private ManagedChannel channel;
 
+    int port;
+
     @BeforeMethod
     @Override
     protected void setup() throws Exception {
+        port = PortManager.nextFreePort();
         super.internalSetup();
         super.producerBaseSetup();
 
         grpcService = new GrpcService();
-        conf.getProperties().setProperty("grpcServicePort", "0");
+
+        conf.getProperties().setProperty("grpcServicePort", String.valueOf(port));
         grpcService.initialize(conf);
         grpcService.start(pulsar.getBrokerService());
-        Map<String, String> protocolDataToAdvertise = new HashMap<>();
-        protocolDataToAdvertise.put(grpcService.protocolName(), grpcService.getProtocolDataToAdvertise());
-        doReturn(protocolDataToAdvertise).when(pulsar).getProtocolDataToAdvertise();
-        pulsar.getLoadManager().get().stop();
-        pulsar.getLoadManager().get().start();
 
         NettyChannelBuilder channelBuilder = NettyChannelBuilder
                 .forAddress("localhost", grpcService.getListenPort().orElse(-1))
@@ -128,9 +128,17 @@ public class ProducerConsumerCompatibilityTest extends ProducerConsumerBase {
         blockingStub = PulsarGrpc.newBlockingStub(channel);
     }
 
+    protected void beforePulsarStartMocks(PulsarService pulsar) throws Exception {
+        Map<String, String> protocolDataToAdvertise = new HashMap<>();
+        protocolDataToAdvertise.put("grpc", "grpcServiceHost=localhost;grpcServicePort=" + port);
+        doReturn(protocolDataToAdvertise).when(pulsar).getProtocolDataToAdvertise();
+    }
+
     @AfterMethod(alwaysRun = true)
     @Override
     protected void cleanup() throws Exception {
+        channel.shutdown();
+        channel.awaitTermination(30, TimeUnit.SECONDS);
         grpcService.close();
         super.internalCleanup();
     }
@@ -476,11 +484,11 @@ public class ProducerConsumerCompatibilityTest extends ProducerConsumerBase {
 
         for (int i = 0; i < 10; i++) {
             String message = "my-message-" + i;
-            PulsarApi.MessageMetadata messageMetadata = PulsarApi.MessageMetadata.newBuilder()
+            org.apache.pulsar.common.api.proto.MessageMetadata messageMetadata =
+                new org.apache.pulsar.common.api.proto.MessageMetadata()
                     .setPublishTime(System.currentTimeMillis())
                     .setProducerName("prod-name")
-                    .setSequenceId(0)
-                    .build();
+                    .setSequenceId(0);
             ByteBuf data = Unpooled.wrappedBuffer(message.getBytes());
             commandSend.onNext(Commands.newSend(i, 1, messageMetadata, data));
         }

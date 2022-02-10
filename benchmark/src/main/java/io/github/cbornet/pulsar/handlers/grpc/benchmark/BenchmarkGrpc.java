@@ -34,7 +34,7 @@ import org.apache.pulsar.client.admin.PulsarAdmin;
 import org.apache.pulsar.client.admin.PulsarAdminBuilder;
 import org.apache.pulsar.client.admin.PulsarAdminException;
 import org.apache.pulsar.client.api.PulsarClientException;
-import org.apache.pulsar.common.api.proto.PulsarApi;
+import org.apache.pulsar.common.api.proto.MessageMetadata;
 import org.apache.pulsar.common.policies.data.BacklogQuota;
 import org.apache.pulsar.common.policies.data.PersistencePolicies;
 import org.apache.pulsar.common.policies.data.TenantInfo;
@@ -91,7 +91,9 @@ public class BenchmarkGrpc {
         if (!adminClient.tenants().getTenants().contains(TENANT)) {
             try {
                 adminClient.tenants().createTenant(TENANT,
-                        new TenantInfo(Collections.emptySet(), Sets.newHashSet(CLUSTER)));
+                    TenantInfo.builder()
+                        .allowedClusters(Sets.newHashSet(CLUSTER))
+                        .build());
             } catch (PulsarAdminException.ConflictException e) {
                 // Ignore. This can happen when multiple workers are initializing at the same time
             }
@@ -105,7 +107,11 @@ public class BenchmarkGrpc {
                 new PersistencePolicies(ENSEMBLE_SIZE, WRITE_QUORUM, ACK_QUORUM, 1.0));
 
         adminClient.namespaces().setBacklogQuota(namespace,
-                new BacklogQuota(Long.MAX_VALUE, BacklogQuota.RetentionPolicy.producer_exception));
+            BacklogQuota.builder()
+                .limitSize(-1L)
+                .limitTime(-1)
+                .retentionPolicy(BacklogQuota.RetentionPolicy.producer_exception)
+                .build());
         adminClient.namespaces().setDeduplicationStatus(namespace, DEDUPLICATION_ENABLED);
 
         String topic = "persistent://" + namespace + "/test-" + UUID.randomUUID();
@@ -216,12 +222,11 @@ public class BenchmarkGrpc {
             long acks = sendAcks.sum();
             long totalMsg = receivedMsg.sum();
             if (sends - acks < PENDING_MESSAGE_BUFFER_SIZE) {
-                org.apache.pulsar.common.api.proto.PulsarApi.MessageMetadata messageMetadata =
-                        PulsarApi.MessageMetadata.newBuilder()
+                MessageMetadata messageMetadata =
+                        new MessageMetadata()
                                 .setPublishTime(System.currentTimeMillis())
                                 .setProducerName("producer-name")
-                                .setSequenceId(sends)
-                                .build();
+                                .setSequenceId(sends);
 
                 CommandSend commandSend = Commands.newSend(sends, 1, messageMetadata, data);
                 data.resetReaderIndex();
