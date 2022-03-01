@@ -40,6 +40,7 @@ import org.apache.pulsar.common.policies.data.PersistencePolicies;
 import org.apache.pulsar.common.policies.data.TenantInfo;
 
 import java.util.Collections;
+import java.util.Random;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -49,7 +50,7 @@ import java.util.concurrent.atomic.LongAdder;
  * Benchmarking utility program.
  * Creates one producer and one consumer on a random topic and tries to max out the throughput of messages.
  */
-public class Benchmark {
+public class BenchmarkGrpc {
 
     public static final String PULSAR_SERVICE_URL = "http://localhost:8080";
     public static final String GRPC_SERVICE_HOST = "localhost";
@@ -87,10 +88,9 @@ public class Benchmark {
         PulsarAdmin adminClient = pulsarAdminBuilder.build();
 
         // Create namespace and set the configuration
-        String tenant = TENANT;
-        if (!adminClient.tenants().getTenants().contains(tenant)) {
+        if (!adminClient.tenants().getTenants().contains(TENANT)) {
             try {
-                adminClient.tenants().createTenant(tenant,
+                adminClient.tenants().createTenant(TENANT,
                         new TenantInfo(Collections.emptySet(), Sets.newHashSet(CLUSTER)));
             } catch (PulsarAdminException.ConflictException e) {
                 // Ignore. This can happen when multiple workers are initializing at the same time
@@ -206,6 +206,12 @@ public class Benchmark {
         long previousReceivedMsg = 0;
         long previousTime = System.currentTimeMillis();
 
+
+        byte[] dataBytes = new byte[messageSize];
+        Random random = new Random();
+        random.nextBytes(dataBytes);
+        ByteBuf data = Unpooled.wrappedBuffer(dataBytes);
+
         while (true) {
             long acks = sendAcks.sum();
             long totalMsg = receivedMsg.sum();
@@ -216,9 +222,9 @@ public class Benchmark {
                                 .setProducerName("producer-name")
                                 .setSequenceId(sends)
                                 .build();
-                ByteBuf data = Unpooled.wrappedBuffer(new byte[messageSize]);
 
                 CommandSend commandSend = Commands.newSend(sends, 1, messageMetadata, data);
+                data.resetReaderIndex();
                 produce.onNext(commandSend);
                 sends++;
             }
