@@ -76,6 +76,8 @@ public class MessagePublishThrottlingTest extends ProducerConsumerBase {
     @Override
     protected void setup() throws Exception {
         port = PortManager.nextFreePort();
+        conf.setTopicPublisherThrottlingTickTimeMillis(1);
+        conf.setBrokerPublisherThrottlingTickTimeMillis(1);
         super.internalSetup();
         super.producerBaseSetup();
 

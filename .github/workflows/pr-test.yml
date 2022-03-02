@@ -32,8 +32,5 @@ jobs:
       - name: Spotbugs check
         run: mvn spotbugs:check
 
-      #- name: test MessagePublishThrottlingTest separately
-      #  run: mvn test -DfailIfNoTests=false -Dtest=MessagePublishThrottlingTest
-
       - name: test after build
-        run: mvn test -DfailIfNoTests=false '-Dtest=!MessagePublishThrottlingTest'
+        run: mvn -B test -DfailIfNoTests=false
