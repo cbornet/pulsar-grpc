@@ -23,14 +23,21 @@ import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import io.grpc.netty.NettyChannelBuilder;
 import io.netty.handler.ssl.SslContext;
+import org.apache.bookkeeper.util.PortManager;
+import org.apache.pulsar.broker.MockedBookKeeperClientFactory;
 import org.apache.pulsar.broker.PulsarService;
 import org.apache.pulsar.broker.ServiceConfiguration;
+import org.apache.pulsar.broker.auth.MockedPulsarServiceBaseTest;
 import org.apache.pulsar.client.admin.PulsarAdmin;
 import org.apache.pulsar.client.admin.PulsarAdminBuilder;
 import org.apache.pulsar.client.admin.PulsarAdminException;
 import org.apache.pulsar.client.impl.auth.AuthenticationTls;
 import org.apache.pulsar.common.policies.data.ClusterData;
+import org.apache.pulsar.metadata.impl.ZKMetadataStore;
 import org.apache.pulsar.zookeeper.MockedZooKeeperClientFactoryImpl;
+import org.apache.pulsar.zookeeper.ZooKeeperClientFactory;
+import org.apache.zookeeper.MockZooKeeper;
+import org.apache.zookeeper.ZooKeeper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.testng.Assert;
@@ -42,6 +49,7 @@ import java.util.HashSet;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
 import static io.github.cbornet.pulsar.handlers.grpc.Constants.AUTH_METADATA_KEY;
@@ -206,10 +214,12 @@ public class GrpcServiceTest {
         config.setAdvertisedAddress("localhost");
         config.setBrokerServicePort(Optional.of(0));
         config.setWebServicePort(Optional.of(0));
-        config.getProperties().setProperty("grpcServicePort", "0");
+        int port = PortManager.nextFreePort();
+        int tlsPort = PortManager.nextFreePort();
+        config.getProperties().setProperty("grpcServicePort", String.valueOf(port));
         if (enableTls) {
             config.setWebServicePortTls(Optional.of(0));
-            config.getProperties().setProperty("grpcServicePortTls", "0");
+            config.getProperties().setProperty("grpcServicePortTls", String.valueOf(tlsPort));
         }
         config.setAuthenticationEnabled(enableAuth);
         config.setAuthenticationProviders(providers);
@@ -223,8 +233,26 @@ public class GrpcServiceTest {
         config.setAdvertisedAddress("localhost"); // TLS certificate expects localhost
         config.setZookeeperServers("localhost:2181");
         pulsar = spy(new PulsarService(config));
-        doReturn(zkFactory).when(pulsar).getZooKeeperClientFactory();
+        // mock zk
+        MockZooKeeper mockZooKeeper = MockedPulsarServiceBaseTest.createMockZooKeeper();
+        ZooKeeperClientFactory mockZooKeeperClientFactory = new ZooKeeperClientFactory() {
+
+            @Override
+            public CompletableFuture<ZooKeeper> create(String serverList, SessionType sessionType,
+                                                       int zkSessionTimeoutMillis) {
+                // Always return the same instance (so that we don't loose the mock ZK content on broker restart
+                return CompletableFuture.completedFuture(mockZooKeeper);
+            }
+        };
+        doReturn(mockZooKeeperClientFactory).when(pulsar).getZooKeeperClientFactory();
+        doReturn(new ZKMetadataStore(mockZooKeeper)).when(pulsar).createConfigurationMetadataStore();
+        doReturn(new ZKMetadataStore(mockZooKeeper)).when(pulsar).createLocalMetadataStore();
         doReturn(new MockedBookKeeperClientFactory()).when(pulsar).newBookKeeperClientFactory();
+
+        Map<String, String> protocolDataToAdvertise = new HashMap<>();
+        protocolDataToAdvertise.put("grpc",
+            "grpcServiceHost=localhost;grpcServicePort=" + port + ";grpcServicePortTls=" + tlsPort);
+        doReturn(protocolDataToAdvertise).when(pulsar).getProtocolDataToAdvertise();
         pulsar.start();
 
         String brokerUrlBase = "http://localhost:" + pulsar.getListenPortHTTP().get();
@@ -246,7 +274,7 @@ public class GrpcServiceTest {
 
         try {
             pulsarAdmin.clusters().createCluster(config.getClusterName(),
-                    new ClusterData(pulsar.getSafeWebServiceAddress()));
+                    ClusterData.builder().serviceUrl(pulsar.getSafeWebServiceAddress()).build());
         } catch (PulsarAdminException.ConflictException ce) {
             // This is OK.
         } finally {
@@ -256,11 +284,6 @@ public class GrpcServiceTest {
         grpcService = new GrpcService();
         grpcService.initialize(config);
         grpcService.start(pulsar.getBrokerService());
-        Map<String, String> protocolDataToAdvertise = new HashMap<>();
-        protocolDataToAdvertise.put(grpcService.protocolName(), grpcService.getProtocolDataToAdvertise());
-        doReturn(protocolDataToAdvertise).when(pulsar).getProtocolDataToAdvertise();
-        pulsar.getLoadManager().get().stop();
-        pulsar.getLoadManager().get().start();
     }
 
     @AfterMethod(alwaysRun = true)

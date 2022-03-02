@@ -26,7 +26,6 @@ import org.apache.pulsar.common.policies.data.BacklogQuota;
 import org.apache.pulsar.common.policies.data.PersistencePolicies;
 import org.apache.pulsar.common.policies.data.TenantInfo;
 
-import java.util.Collections;
 import java.util.Random;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
@@ -71,7 +70,9 @@ public class BenchmarkBinary {
         if (!adminClient.tenants().getTenants().contains(TENANT)) {
             try {
                 adminClient.tenants().createTenant(TENANT,
-                        new TenantInfo(Collections.emptySet(), Sets.newHashSet(CLUSTER)));
+                    TenantInfo.builder()
+                        .allowedClusters(Sets.newHashSet(CLUSTER))
+                        .build());
             } catch (PulsarAdminException.ConflictException e) {
                 // Ignore. This can happen when multiple workers are initializing at the same time
             }
@@ -85,7 +86,11 @@ public class BenchmarkBinary {
                 new PersistencePolicies(ENSEMBLE_SIZE, WRITE_QUORUM, ACK_QUORUM, 1.0));
 
         adminClient.namespaces().setBacklogQuota(namespace,
-                new BacklogQuota(Long.MAX_VALUE, BacklogQuota.RetentionPolicy.producer_exception));
+            BacklogQuota.builder()
+                .limitSize(-1L)
+                .limitTime(-1)
+                .retentionPolicy(BacklogQuota.RetentionPolicy.producer_exception)
+                .build());
         adminClient.namespaces().setDeduplicationStatus(namespace, DEDUPLICATION_ENABLED);
 
         String topic = "persistent://" + namespace + "/test-" + UUID.randomUUID();

@@ -10,8 +10,8 @@ The goal of this handler is to provide an API easier to integrate than the binar
 
 1. clone this project from GitHub to your local.
 ```bash
-git clone https://github.com/streamnative/pulsar-protocol-handler-grpc.git
-cd pulsar-protocol-handler-grpc
+git clone https://github.com/cbornet/pulsar-grpc.git
+cd pulsar-grpc
 ```
 
 2. build the project.

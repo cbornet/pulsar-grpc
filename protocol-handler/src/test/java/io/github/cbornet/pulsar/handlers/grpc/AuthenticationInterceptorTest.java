@@ -350,7 +350,7 @@ public class AuthenticationInterceptorTest {
         AuthenticationDataProvider dataProvider = authSasl.getAuthData(localHostname);
 
         // Init
-        AuthData initData1 = dataProvider.authenticate(AuthData.of(AuthData.INIT_AUTH_DATA));
+        AuthData initData1 = dataProvider.authenticate(AuthData.of(AuthData.INIT_AUTH_DATA_BYTES));
         CommandAuth auth = CommandAuth.newBuilder()
                 .setAuthMethod(provider.getAuthMethodName())
                 .setAuthData(ByteString.copyFrom(initData1.getBytes()))

@@ -26,7 +26,7 @@ class ProducerCommandSender extends DefaultGrpcCommandSender {
 
     @Override
     public void sendSendError(long producerId, long sequenceId,
-            org.apache.pulsar.common.api.proto.PulsarApi.ServerError serverError, String message) {
+            org.apache.pulsar.common.api.proto.ServerError serverError, String message) {
         responseObserver.onNext(Commands.newSendError(sequenceId, Commands.convertServerError(serverError), message));
     }
 

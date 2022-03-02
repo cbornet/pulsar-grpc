@@ -107,6 +107,7 @@ public class GrpcService implements ProtocolHandler {
                 Integer port = grpcServicePort.get();
                 server = NettyServerBuilder.forAddress(new InetSocketAddress(service.pulsar().getBindAddress(), port))
                         .addService(ServerInterceptors.intercept(pulsarGrpcService, interceptors))
+                        .directExecutor()
                         .build()
                         .start();
                 log.info("gRPC Service started, listening on " + server.getPort());

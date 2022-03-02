@@ -13,6 +13,7 @@
  */
 package io.github.cbornet.pulsar.handlers.grpc;
 
+import io.netty.handler.codec.haproxy.HAProxyMessage;
 import io.netty.util.concurrent.ImmediateEventExecutor;
 import io.netty.util.concurrent.Promise;
 import org.apache.pulsar.broker.authentication.AuthenticationDataSource;
@@ -20,6 +21,8 @@ import org.apache.pulsar.broker.service.BrokerService;
 import org.apache.pulsar.broker.service.Consumer;
 import org.apache.pulsar.broker.service.Producer;
 import org.apache.pulsar.broker.service.TransportCnx;
+
+import java.net.InetSocketAddress;
 
 import java.net.SocketAddress;
 
@@ -94,11 +97,6 @@ abstract class AbstractGrpcCnx implements TransportCnx {
     }
 
     @Override
-    public long getMessagePublishBufferSize() {
-        return Long.MAX_VALUE;
-    }
-
-    @Override
     public void cancelPublishRateLimiting() {
 
     }
@@ -141,5 +139,25 @@ abstract class AbstractGrpcCnx implements TransportCnx {
     @Override
     public Promise<Void> newPromise() {
         return ImmediateEventExecutor.INSTANCE.newPromise();
+    }
+
+    @Override
+    public boolean hasHAProxyMessage() {
+        return false;
+    }
+
+    @Override
+    public HAProxyMessage getHAProxyMessage() {
+        return null;
+    }
+
+    @Override
+    public String clientSourceAddress() {
+        if (remoteAddress instanceof InetSocketAddress) {
+            InetSocketAddress inetAddress = (InetSocketAddress) remoteAddress;
+            return inetAddress.getAddress().getHostAddress();
+        } else {
+            return null;
+        }
     }
 }

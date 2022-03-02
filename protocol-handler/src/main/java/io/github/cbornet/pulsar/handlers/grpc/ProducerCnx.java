@@ -28,30 +28,34 @@ import io.grpc.stub.StreamObserver;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.EventLoop;
+import io.netty.util.concurrent.FastThreadLocal;
 import org.apache.bookkeeper.mledger.util.SafeRun;
+import org.apache.commons.lang3.mutable.MutableInt;
+import org.apache.commons.lang3.mutable.MutableLong;
+import org.apache.pulsar.broker.ServiceConfiguration;
 import org.apache.pulsar.broker.authentication.AuthenticationDataSource;
 import org.apache.pulsar.broker.service.BrokerService;
 import org.apache.pulsar.broker.service.Producer;
 import org.apache.pulsar.broker.service.PulsarCommandSender;
 import org.apache.pulsar.client.api.transaction.TxnID;
 import org.apache.pulsar.common.allocator.PulsarByteBufAllocator;
-import org.apache.pulsar.common.api.proto.PulsarApi;
+import org.apache.pulsar.common.api.proto.SingleMessageMetadata;
 import org.apache.pulsar.common.compression.CompressionCodec;
 import org.apache.pulsar.common.compression.CompressionCodecProvider;
 
 import java.io.IOException;
 import java.net.SocketAddress;
 import java.nio.ByteBuffer;
+import java.util.Collections;
+import java.util.IdentityHashMap;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicLongFieldUpdater;
+import java.util.Set;
 
 import static io.github.cbornet.pulsar.handlers.grpc.Commands.convertCompressionType;
-import static io.github.cbornet.pulsar.handlers.grpc.Commands.convertSingleMessageMetadata;
+import static io.github.cbornet.pulsar.handlers.grpc.Commands.convertSingleMessageMetadataRecycled;
 import static org.apache.pulsar.common.protocol.Commands.serializeSingleMessageInBatchWithPayload;
 
 class ProducerCnx extends AbstractGrpcCnx {
-    private static final AtomicLongFieldUpdater<ProducerCnx> MSG_PUBLISH_BUFFER_SIZE_UPDATER =
-            AtomicLongFieldUpdater.newUpdater(ProducerCnx.class, "messagePublishBufferSize");
     private final CallStreamObserver<SendResult> responseObserver;
     private final ProducerCommandSender producerCommandSender;
     private final EventLoop eventLoop;
@@ -66,33 +70,56 @@ class ProducerCnx extends AbstractGrpcCnx {
     private int nonPersistentPendingMessages = 0;
     private volatile boolean isAutoRead = true;
     private volatile boolean autoReadDisabledRateLimiting = false;
+
     // Flag to manage throttling-publish-buffer by atomically enable/disable read-channel.
-    private volatile boolean autoReadDisabledPublishBufferLimiting = false;
-    private volatile long messagePublishBufferSize = 0;
+    private boolean autoReadDisabledPublishBufferLimiting = false;
+    private final long maxPendingBytesPerThread;
+    private final long resumeThresholdPendingBytesPerThread;
+
+    // Number of bytes pending to be published from a single specific IO thread.
+    private static final FastThreadLocal<MutableLong> pendingBytesPerThread = new FastThreadLocal<MutableLong>() {
+        @Override
+        protected MutableLong initialValue() {
+            return new MutableLong();
+        }
+    };
+
+    // A set of producers tied to the current thread
+    private static final FastThreadLocal<Set<ProducerCnx>> cnxsPerThread = new FastThreadLocal<Set<ProducerCnx>>() {
+        @Override
+        protected Set<ProducerCnx> initialValue() {
+            return Collections.newSetFromMap(new IdentityHashMap<>());
+        }
+    };
 
     public ProducerCnx(BrokerService service, SocketAddress remoteAddress, String authRole,
             AuthenticationDataSource authenticationData, StreamObserver<SendResult> responseObserver,
             EventLoop eventLoop) {
         super(service, remoteAddress, authRole, authenticationData);
-        this.maxNonPersistentPendingMessages = service.pulsar().getConfiguration()
-                .getMaxConcurrentNonPersistentMessagePerConnection();
-        this.maxPendingSendRequests = service.pulsar().getConfiguration().getMaxPendingPublishRequestsPerConnection();
+        ServiceConfiguration conf = service.pulsar().getConfiguration();
+        this.maxNonPersistentPendingMessages = conf.getMaxConcurrentNonPersistentMessagePerConnection();
+        this.maxPendingSendRequests = conf.getMaxPendingPublishRequestsPerConnection();
         this.resumeReadsThreshold = maxPendingSendRequests / 2;
-        this.preciseDispatcherFlowControl = service.pulsar().getConfiguration().isPreciseDispatcherFlowControl();
-        this.preciseTopicPublishRateLimitingEnable =
-                service.pulsar().getConfiguration().isPreciseTopicPublishRateLimiterEnable();
+        this.preciseDispatcherFlowControl = conf.isPreciseDispatcherFlowControl();
+        this.preciseTopicPublishRateLimitingEnable = conf.isPreciseTopicPublishRateLimiterEnable();
         this.responseObserver = (CallStreamObserver<SendResult>) responseObserver;
         this.responseObserver.disableAutoInboundFlowControl();
         this.responseObserver.setOnReadyHandler(onReadyHandler);
+        // Assign a portion of max-pending bytes to each IO thread
+        this.maxPendingBytesPerThread = conf.getMaxMessagePublishBufferSizeInMB() * 1024L * 1024L
+            / conf.getNumIOThreads();
+        this.resumeThresholdPendingBytesPerThread = this.maxPendingBytesPerThread / 2;
 
         this.producerCommandSender = new ProducerCommandSender(responseObserver);
         this.eventLoop = eventLoop;
+        cnxsPerThread.get().add(this);
     }
 
     private static ByteBuf compressAndSerialize(MessageMetadata.Builder metadataBuilder, ByteBuf payload) {
         ByteBuf headersAndPayload;
         if (metadataBuilder.getCompression() != CompressionType.NONE) {
-            PulsarApi.CompressionType compressionType = convertCompressionType(metadataBuilder.getCompression());
+            org.apache.pulsar.common.api.proto.CompressionType compressionType =
+                convertCompressionType(metadataBuilder.getCompression());
             CompressionCodec compressor = CompressionCodecProvider.getCompressionCodec(compressionType);
             int uncompressedSize = payload.readableBytes();
             ByteBuf compressedPayload = compressor.encode(payload);
@@ -149,6 +176,7 @@ class ProducerCnx extends AbstractGrpcCnx {
     @Override
     public void closeProducer(Producer producer) {
         responseObserver.onCompleted();
+        cnxsPerThread.get().remove(this);
     }
 
     @Override
@@ -189,15 +217,11 @@ class ProducerCnx extends AbstractGrpcCnx {
                 metadataBuilder.setNumMessagesInBatch(messages.size());
                 ByteBuf batchedMessageMetadataAndPayload = PulsarByteBufAllocator.DEFAULT.buffer(1024);
                 for (SingleMessage message : messages) {
-                    PulsarApi.SingleMessageMetadata.Builder singleMessageMetadata =
-                            convertSingleMessageMetadata(message.getMetadata());
+                    SingleMessageMetadata singleMessageMetadata =
+                            convertSingleMessageMetadataRecycled(message.getMetadata());
                     ByteBuf payload = Unpooled.wrappedBuffer(message.getPayload().asReadOnlyByteBuffer());
-                    try {
-                        serializeSingleMessageInBatchWithPayload(singleMessageMetadata, payload,
-                                batchedMessageMetadataAndPayload);
-                    } finally {
-                        singleMessageMetadata.recycle();
-                    }
+                    serializeSingleMessageInBatchWithPayload(singleMessageMetadata, payload,
+                        batchedMessageMetadataAndPayload);
                 }
                 headersAndPayload = compressAndSerialize(metadataBuilder, batchedMessageMetadataAndPayload);
                 break;
@@ -246,24 +270,24 @@ class ProducerCnx extends AbstractGrpcCnx {
         if (send.hasTxnidMostBits() && send.hasTxnidLeastBits()) {
             TxnID txnID = new TxnID(send.getTxnidMostBits(), send.getTxnidLeastBits());
             producer.publishTxnMessage(txnID, producer.getProducerId(), send.getSequenceId(),
-                    send.getHighestSequenceId(), headersAndPayload, send.getNumMessages(), send.getIsChunk());
+                send.getHighestSequenceId(), headersAndPayload, send.getNumMessages(), send.getIsChunk(),
+                send.getMarker());
             return;
         }
 
         // Persist the message
         if (highestSequenceId != null && sequenceId <= highestSequenceId) {
             producer.publishMessage(producer.getProducerId(), sequenceId, highestSequenceId,
-                    headersAndPayload, numMessages, send.getIsChunk());
+                    headersAndPayload, numMessages, send.getIsChunk(), send.getMarker());
         } else {
             producer.publishMessage(producer.getProducerId(), sequenceId, headersAndPayload,
-                    numMessages, send.getIsChunk());
+                    numMessages, send.getIsChunk(), send.getMarker());
         }
         onMessageHandled();
     }
 
     private void startSendOperation(Producer producer, int msgSize, int numMessages) {
-        MSG_PUBLISH_BUFFER_SIZE_UPDATER.getAndAdd(this, msgSize);
-        boolean isPublishRateExceeded = false;
+        boolean isPublishRateExceeded;
         if (preciseTopicPublishRateLimitingEnable) {
             boolean isPreciseTopicPublishRateExceeded =
                     producer.getTopic().isTopicPublishRateExceeded(numMessages, msgSize);
@@ -283,9 +307,18 @@ class ProducerCnx extends AbstractGrpcCnx {
             autoReadDisabledRateLimiting = isPublishRateExceeded;
         }
 
-        if (getBrokerService().isReachMessagePublishBufferThreshold()) {
-            isAutoRead = false;
-            autoReadDisabledPublishBufferLimiting = true;
+        if (pendingBytesPerThread.get().addAndGet(msgSize) >= maxPendingBytesPerThread
+            && !autoReadDisabledPublishBufferLimiting
+            && maxPendingBytesPerThread > 0) {
+            // Disable reading from all the connections associated with this thread
+            MutableInt pausedConnections = new MutableInt();
+            cnxsPerThread.get().forEach(cnx -> {
+                if (!cnx.autoReadDisabledPublishBufferLimiting) {
+                    cnx.disableCnxAutoRead();
+                    cnx.autoReadDisabledPublishBufferLimiting = true;
+                    pausedConnections.increment();
+                }
+            });
         }
     }
 
@@ -296,13 +329,23 @@ class ProducerCnx extends AbstractGrpcCnx {
 
     @Override
     public void completedSendOperation(boolean isNonPersistentTopic, int msgSize) {
-        MSG_PUBLISH_BUFFER_SIZE_UPDATER.getAndAdd(this, -msgSize);
+        if (pendingBytesPerThread.get().addAndGet(-msgSize) < resumeThresholdPendingBytesPerThread
+            && autoReadDisabledPublishBufferLimiting) {
+            // Re-enable reading on all the blocked connections
+            MutableInt resumedConnections = new MutableInt();
+            cnxsPerThread.get().forEach(cnx -> {
+                if (cnx.autoReadDisabledPublishBufferLimiting) {
+                    cnx.autoReadDisabledPublishBufferLimiting = false;
+                    cnx.enableCnxAutoRead();
+                    resumedConnections.increment();
+                }
+            });
+
+            getBrokerService().resumedConnections(resumedConnections.intValue());
+        }
+
         if (--pendingSendRequest == resumeReadsThreshold) {
-            // Resume producer
-            isAutoRead = true;
-            if (responseObserver.isReady()) {
-                responseObserver.request(1);
-            }
+            enableCnxAutoRead();
         }
         if (isNonPersistentTopic) {
             nonPersistentPendingMessages--;
@@ -338,21 +381,6 @@ class ProducerCnx extends AbstractGrpcCnx {
         if (autoReadDisabledPublishBufferLimiting) {
             autoReadDisabledPublishBufferLimiting = false;
         }
-    }
-
-    @Override
-    public long getMessagePublishBufferSize() {
-        return this.messagePublishBufferSize;
-    }
-
-    @VisibleForTesting
-    void setMessagePublishBufferSize(long bufferSize) {
-        this.messagePublishBufferSize = bufferSize;
-    }
-
-    @VisibleForTesting
-    void setAutoReadDisabledRateLimiting(boolean isLimiting) {
-        this.autoReadDisabledRateLimiting = isLimiting;
     }
 
     public void onMessageHandled() {
