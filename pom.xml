@@ -32,6 +32,13 @@
         </license>
     </licenses>
 
+    <scm>
+        <connection>scm:git:git@github.com:cbornet/pulsar-grpc.git</connection>
+        <developerConnection>scm:git:git@github.com:cbornet/pulsar-grpc.git</developerConnection>
+        <url>https://github.com/cbornet/pulsar-grpc</url>
+        <tag>HEAD</tag>
+    </scm>
+
     <properties>
         <javac.target>1.8</javac.target>
         <redirectTestOutputToFile>true</redirectTestOutputToFile>
