@@ -21,16 +21,16 @@ jobs:
           java-version: 1.8
 
       - name: License check
-        run: mvn license:check
+        run: mvn -B license:check
 
       - name: Build with Maven skipTests
-        run: mvn clean install -DskipTests
+        run: mvn -B clean install -DskipTests
 
       - name: Style check
-        run: mvn checkstyle:check
+        run: mvn -B checkstyle:check
 
       - name: Spotbugs check
-        run: mvn spotbugs:check
+        run: mvn -B spotbugs:check
 
       - name: test after build
         run: mvn -B test -DfailIfNoTests=false

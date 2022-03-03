@@ -28,7 +28,10 @@ mvn clean package -DskipTests
 
 As mentioned previously, the gPRC protocol handler is a plugin that can be installed to the Pulsar brokers.
 
-Version 2.7+ of Apache Pulsar brokers is required for this plugin to work.
+Version 2.7+ of Apache Pulsar brokers is required for this plugin to work. 
+The version of the plugin used should match the one from the broker.
+Releases are numbered after the broker version they are built against. 
+Eg: pulsar-protocol-handler-grpc-2.8.2.1.nar should be used with Pulsar 2.8 brokers.
 
 You need to configure the Pulsar broker to run the gRPC protocol handler as a plugin, that is, add configurations in Pulsar's configuration file, such as `broker.conf` or `standalone.conf`.
 
