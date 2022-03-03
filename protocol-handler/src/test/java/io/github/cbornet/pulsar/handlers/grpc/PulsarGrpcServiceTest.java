@@ -62,13 +62,12 @@ import org.apache.bookkeeper.mledger.impl.PositionImpl;
 import org.apache.pulsar.broker.PulsarService;
 import org.apache.pulsar.broker.ServiceConfiguration;
 import org.apache.pulsar.broker.TransactionMetadataStoreService;
-import org.apache.pulsar.broker.admin.AdminResource;
 import org.apache.pulsar.broker.authorization.AuthorizationService;
 import org.apache.pulsar.broker.authorization.PulsarAuthorizationProvider;
-import org.apache.pulsar.broker.cache.ConfigurationCacheService;
-import org.apache.pulsar.broker.cache.LocalZooKeeperCacheService;
 import org.apache.pulsar.broker.intercept.BrokerInterceptor;
 import org.apache.pulsar.broker.namespace.NamespaceService;
+import org.apache.pulsar.broker.resources.NamespaceResources;
+import org.apache.pulsar.broker.resources.PulsarResources;
 import org.apache.pulsar.broker.service.BrokerService;
 import org.apache.pulsar.broker.service.Subscription;
 import org.apache.pulsar.broker.service.Topic;
@@ -88,13 +87,12 @@ import org.apache.pulsar.common.protocol.schema.SchemaData;
 import org.apache.pulsar.common.schema.LongSchemaVersion;
 import org.apache.pulsar.common.schema.SchemaInfo;
 import org.apache.pulsar.common.schema.SchemaType;
-import org.apache.pulsar.metadata.impl.LocalMemoryMetadataStore;
+import org.apache.pulsar.metadata.api.extended.MetadataStoreExtended;
+import org.apache.pulsar.metadata.impl.ZKMetadataStore;
 import org.apache.pulsar.transaction.coordinator.TransactionCoordinatorID;
 import org.apache.pulsar.transaction.coordinator.TxnMeta;
 import org.apache.pulsar.transaction.coordinator.impl.InMemTransactionMetadataStoreProvider;
 import org.apache.pulsar.transaction.coordinator.proto.TxnStatus;
-import org.apache.pulsar.zookeeper.ZooKeeperCache;
-import org.apache.pulsar.zookeeper.ZooKeeperDataCache;
 import org.apache.zookeeper.ZooKeeper;
 import org.awaitility.Awaitility;
 import org.mockito.ArgumentCaptor;
@@ -126,7 +124,6 @@ import static io.github.cbornet.pulsar.handlers.grpc.Constants.CONSUMER_PARAMS_M
 import static io.github.cbornet.pulsar.handlers.grpc.Constants.ERROR_CODE_METADATA_KEY;
 import static org.apache.pulsar.broker.auth.MockedPulsarServiceBaseTest.createMockBookKeeper;
 import static org.apache.pulsar.broker.auth.MockedPulsarServiceBaseTest.createMockZooKeeper;
-import static org.apache.pulsar.broker.cache.ConfigurationCacheService.POLICIES;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
@@ -150,7 +147,8 @@ public class PulsarGrpcServiceTest {
     protected BrokerService brokerService;
     private ManagedLedgerFactory mlFactoryMock;
     private PulsarService pulsar;
-    private ConfigurationCacheService configCacheService;
+    private MetadataStoreExtended store;
+    private NamespaceResources namespaceResources;
     protected NamespaceService namespaceService;
     private TransactionMetadataStoreService transactionMetadataStoreService;
 
@@ -187,31 +185,21 @@ public class PulsarGrpcServiceTest {
         svcConfig.setKeepAliveIntervalSeconds(inSec(1, TimeUnit.SECONDS));
         svcConfig.setBacklogQuotaCheckEnabled(false);
         doReturn(svcConfig).when(pulsar).getConfiguration();
+        doReturn(mock(PulsarResources.class)).when(pulsar).getPulsarResources();
 
         doReturn("use").when(svcConfig).getClusterName();
 
         mlFactoryMock = mock(ManagedLedgerFactory.class);
         doReturn(mlFactoryMock).when(pulsar).getManagedLedgerFactory();
-        ZooKeeperCache cache = mock(ZooKeeperCache.class);
-        doReturn(30).when(cache).getZkOperationTimeoutSeconds();
-        doReturn(cache).when(pulsar).getLocalZkCache();
 
         ZooKeeper mockZk = createMockZooKeeper();
-        doReturn(mockZk).when(pulsar).getZkClient();
         doReturn(createMockBookKeeper(executor))
-                .when(pulsar).getBookKeeperClient();
+            .when(pulsar).getBookKeeperClient();
 
-        configCacheService = mock(ConfigurationCacheService.class);
-        ZooKeeperDataCache<Policies> zkDataCache = mock(ZooKeeperDataCache.class);
-        doReturn(Optional.empty()).when(zkDataCache).get(any());
-        doReturn(zkDataCache).when(configCacheService).policiesCache();
-        doReturn(configCacheService).when(pulsar).getConfigurationCache();
+        store = new ZKMetadataStore(mockZk);
 
-        LocalZooKeeperCacheService zkCache = mock(LocalZooKeeperCacheService.class);
-        doReturn(CompletableFuture.completedFuture(Optional.empty())).when(zkDataCache).getAsync(any());
-        doReturn(zkDataCache).when(zkCache).policiesCache();
-        doReturn(configCacheService).when(pulsar).getConfigurationCache();
-        doReturn(zkCache).when(pulsar).getLocalZkCacheService();
+        doReturn(store).when(pulsar).getLocalMetadataStore();
+        doReturn(store).when(pulsar).getConfigurationMetadataStore();
 
         brokerService = spy(new BrokerService(pulsar, eventLoopGroup));
         BrokerInterceptor interceptor = mock(BrokerInterceptor.class);
@@ -219,14 +207,17 @@ public class PulsarGrpcServiceTest {
         doReturn(brokerService).when(pulsar).getBrokerService();
         doReturn(executor).when(pulsar).getOrderedExecutor();
 
+        PulsarResources pulsarResources = spy(new PulsarResources(store, store));
+        namespaceResources = spy(new NamespaceResources(store, store, 30));
+        doReturn(namespaceResources).when(pulsarResources).getNamespaceResources();
+        doReturn(pulsarResources).when(pulsar).getPulsarResources();
+
         namespaceService = mock(NamespaceService.class);
         doReturn(CompletableFuture.completedFuture(null)).when(namespaceService).getBundleAsync(any());
         doReturn(namespaceService).when(pulsar).getNamespaceService();
         doReturn(true).when(namespaceService).isServiceUnitOwned(any());
         doReturn(true).when(namespaceService).isServiceUnitActive(any());
         doReturn(CompletableFuture.completedFuture(true)).when(namespaceService).checkTopicOwnership(any());
-
-        doReturn(new LocalMemoryMetadataStore(null, null)).when(pulsar).getLocalMetadataStore();
 
         transactionMetadataStoreService = new TransactionMetadataStoreService(
             new InMemTransactionMetadataStoreProvider(), pulsar, null, null);
@@ -260,6 +251,7 @@ public class PulsarGrpcServiceTest {
         brokerService.close();
         executor.shutdownNow();
         eventLoopGroup.shutdownGracefully().get();
+        store.close();
     }
 
     private int inSec(int time, TimeUnit unit) {
@@ -349,21 +341,15 @@ public class PulsarGrpcServiceTest {
 
     @Test
     public void testNonExistentTopic() throws Exception {
-        ZooKeeperDataCache<Policies> zkDataCache = mock(ZooKeeperDataCache.class);
-        ConfigurationCacheService configCacheService = mock(ConfigurationCacheService.class);
-        doReturn(configCacheService).when(pulsar).getConfigurationCache();
-        doReturn(zkDataCache).when(configCacheService).policiesCache();
-        doReturn(CompletableFuture.completedFuture(Optional.empty())).when(zkDataCache)
-                .getAsync(matches(".*nonexistent.*"));
-
-        AuthorizationService authorizationService = spy(new AuthorizationService(svcConfig, configCacheService));
+        AuthorizationService authorizationService =
+            spy(new AuthorizationService(svcConfig, pulsar.getPulsarResources()));
         doReturn(authorizationService).when(brokerService).getAuthorizationService();
         doReturn(true).when(brokerService).isAuthorizationEnabled();
         svcConfig.setAuthorizationEnabled(true);
         Field providerField = AuthorizationService.class.getDeclaredField("provider");
         providerField.setAccessible(true);
-        PulsarAuthorizationProvider authorizationProvider =
-                spy(new PulsarAuthorizationProvider(svcConfig, configCacheService));
+        PulsarAuthorizationProvider authorizationProvider = spy(new PulsarAuthorizationProvider(svcConfig,
+            pulsar.getPulsarResources()));
         providerField.set(authorizationService, authorizationProvider);
         doReturn(CompletableFuture.completedFuture(false)).when(authorizationProvider)
                 .isSuperUser(Mockito.anyString(), Mockito.any(), Mockito.any());
@@ -382,11 +368,12 @@ public class PulsarGrpcServiceTest {
     @Test
     public void testClusterAccess() throws Exception {
         svcConfig.setAuthorizationEnabled(true);
-        AuthorizationService authorizationService = spy(new AuthorizationService(svcConfig, configCacheService));
+        AuthorizationService authorizationService =
+            spy(new AuthorizationService(svcConfig, pulsar.getPulsarResources()));
         Field providerField = AuthorizationService.class.getDeclaredField("provider");
         providerField.setAccessible(true);
         PulsarAuthorizationProvider authorizationProvider =
-                spy(new PulsarAuthorizationProvider(svcConfig, configCacheService));
+                spy(new PulsarAuthorizationProvider(svcConfig, pulsar.getPulsarResources()));
         providerField.set(authorizationService, authorizationProvider);
         doReturn(authorizationService).when(brokerService).getAuthorizationService();
         doReturn(true).when(brokerService).isAuthorizationEnabled();
@@ -415,13 +402,14 @@ public class PulsarGrpcServiceTest {
 
     @Test
     public void testNonExistentTopicSuperUserAccess() throws Exception {
-        AuthorizationService authorizationService = spy(new AuthorizationService(svcConfig, configCacheService));
+        AuthorizationService authorizationService =
+            spy(new AuthorizationService(svcConfig, pulsar.getPulsarResources()));
         doReturn(authorizationService).when(brokerService).getAuthorizationService();
         doReturn(true).when(brokerService).isAuthorizationEnabled();
         Field providerField = AuthorizationService.class.getDeclaredField("provider");
         providerField.setAccessible(true);
         PulsarAuthorizationProvider authorizationProvider =
-                spy(new PulsarAuthorizationProvider(svcConfig, configCacheService));
+                spy(new PulsarAuthorizationProvider(svcConfig, pulsar.getPulsarResources()));
         providerField.set(authorizationService, authorizationProvider);
         doReturn(CompletableFuture.completedFuture(true)).when(authorizationProvider)
                 .isSuperUser(Mockito.anyString(), Mockito.any(), Mockito.any());
@@ -899,16 +887,12 @@ public class PulsarGrpcServiceTest {
     @Test
     public void testProducerSuccessOnEncryptionRequiredTopic() throws Exception {
         // Set encryption_required to true
-        ZooKeeperDataCache<Policies> zkDataCache = mock(ZooKeeperDataCache.class);
         Policies policies = mock(Policies.class);
         policies.encryption_required = true;
         policies.topicDispatchRate = Maps.newHashMap();
         policies.clusterDispatchRate = Maps.newHashMap();
-        doReturn(Optional.of(policies)).when(zkDataCache)
-                .get(AdminResource.path(POLICIES, TopicName.get(encryptionRequiredTopicName).getNamespace()));
-        doReturn(CompletableFuture.completedFuture(Optional.of(policies))).when(zkDataCache)
-                .getAsync(AdminResource.path(POLICIES, TopicName.get(encryptionRequiredTopicName).getNamespace()));
-        doReturn(zkDataCache).when(configCacheService).policiesCache();
+        doReturn(CompletableFuture.completedFuture(Optional.of(policies))).when(namespaceResources)
+            .getPoliciesAsync(TopicName.get(encryptionRequiredTopicName).getNamespaceObject());
 
         // test success case: encrypted producer can connect
         CommandProducer producerParams = Commands.newProducer(encryptionRequiredTopicName,
@@ -932,16 +916,12 @@ public class PulsarGrpcServiceTest {
     @Test
     public void testProducerFailureOnEncryptionRequiredTopic() throws Exception {
         // Set encryption_required to true
-        ZooKeeperDataCache<Policies> zkDataCache = mock(ZooKeeperDataCache.class);
         Policies policies = mock(Policies.class);
         policies.encryption_required = true;
         policies.topicDispatchRate = Maps.newHashMap();
         policies.clusterDispatchRate = Maps.newHashMap();
-        doReturn(Optional.of(policies)).when(zkDataCache)
-                .get(AdminResource.path(POLICIES, TopicName.get(encryptionRequiredTopicName).getNamespace()));
-        doReturn(CompletableFuture.completedFuture(Optional.of(policies))).when(zkDataCache)
-                .getAsync(AdminResource.path(POLICIES, TopicName.get(encryptionRequiredTopicName).getNamespace()));
-        doReturn(zkDataCache).when(configCacheService).policiesCache();
+        doReturn(CompletableFuture.completedFuture(Optional.of(policies))).when(namespaceResources)
+            .getPoliciesAsync(TopicName.get(encryptionRequiredTopicName).getNamespaceObject());
 
         // test success case: encrypted producer can connect
         CommandProducer producerParams = Commands.newProducer(encryptionRequiredTopicName,
@@ -958,16 +938,13 @@ public class PulsarGrpcServiceTest {
         svcConfig.setEncryptionRequireOnProducer(true);
 
         // (b) Set encryption_required to false on policy
-        ZooKeeperDataCache<Policies> zkDataCache = mock(ZooKeeperDataCache.class);
         Policies policies = mock(Policies.class);
         policies.encryption_required = false;
         policies.topicDispatchRate = Maps.newHashMap();
         policies.clusterDispatchRate = Maps.newHashMap();
-        doReturn(Optional.of(policies)).when(zkDataCache)
-                .get(AdminResource.path(POLICIES, TopicName.get(encryptionRequiredTopicName).getNamespace()));
-        doReturn(CompletableFuture.completedFuture(Optional.of(policies))).when(zkDataCache)
-                .getAsync(AdminResource.path(POLICIES, TopicName.get(encryptionRequiredTopicName).getNamespace()));
-        doReturn(zkDataCache).when(configCacheService).policiesCache();
+        doReturn(CompletableFuture.completedFuture(Optional.of(policies))).when(namespaceResources)
+            .getPoliciesAsync(TopicName.get(encryptionRequiredTopicName).getNamespaceObject());
+
 
         // test success case: encrypted producer can connect
         CommandProducer producerParams = Commands.newProducer(encryptionRequiredTopicName,
@@ -981,16 +958,12 @@ public class PulsarGrpcServiceTest {
     @Test
     public void testSendSuccessOnEncryptionRequiredTopic() throws Exception {
         // Set encryption_required to true
-        ZooKeeperDataCache<Policies> zkDataCache = mock(ZooKeeperDataCache.class);
         Policies policies = mock(Policies.class);
         policies.encryption_required = true;
         policies.topicDispatchRate = Maps.newHashMap();
         policies.clusterDispatchRate = Maps.newHashMap();
-        doReturn(Optional.of(policies)).when(zkDataCache)
-                .get(AdminResource.path(POLICIES, TopicName.get(encryptionRequiredTopicName).getNamespace()));
-        doReturn(CompletableFuture.completedFuture(Optional.of(policies))).when(zkDataCache)
-                .getAsync(AdminResource.path(POLICIES, TopicName.get(encryptionRequiredTopicName).getNamespace()));
-        doReturn(zkDataCache).when(configCacheService).policiesCache();
+        doReturn(CompletableFuture.completedFuture(Optional.of(policies))).when(namespaceResources)
+            .getPoliciesAsync(TopicName.get(encryptionRequiredTopicName).getNamespaceObject());
 
         CommandProducer producerParams = Commands.newProducer(encryptionRequiredTopicName,
                 "prod-name", true, null);
@@ -1024,16 +997,12 @@ public class PulsarGrpcServiceTest {
     @Test
     public void testSendFailureOnEncryptionRequiredTopic() throws Exception {
         // Set encryption_required to true
-        ZooKeeperDataCache<Policies> zkDataCache = mock(ZooKeeperDataCache.class);
         Policies policies = mock(Policies.class);
         policies.encryption_required = true;
         policies.topicDispatchRate = Maps.newHashMap();
         policies.clusterDispatchRate = Maps.newHashMap();
-        doReturn(Optional.of(policies)).when(zkDataCache)
-                .get(AdminResource.path(POLICIES, TopicName.get(encryptionRequiredTopicName).getNamespace()));
-        doReturn(CompletableFuture.completedFuture(Optional.of(policies))).when(zkDataCache)
-                .getAsync(AdminResource.path(POLICIES, TopicName.get(encryptionRequiredTopicName).getNamespace()));
-        doReturn(zkDataCache).when(configCacheService).policiesCache();
+        doReturn(CompletableFuture.completedFuture(Optional.of(policies))).when(namespaceResources)
+            .getPoliciesAsync(TopicName.get(encryptionRequiredTopicName).getNamespaceObject());
 
         CommandProducer producerParams = Commands.newProducer(encryptionRequiredTopicName,
                 "prod-name", true, null);
@@ -1441,7 +1410,7 @@ public class PulsarGrpcServiceTest {
     public void testCreateTransaction() {
         long tcId = 100;
         TransactionCoordinatorID coordinatorID = TransactionCoordinatorID.get(tcId);
-        transactionMetadataStoreService.addTransactionMetadataStore(coordinatorID);
+        transactionMetadataStoreService.handleTcClientConnect(coordinatorID);
 
         Awaitility.await().until(() ->
             transactionMetadataStoreService.getStores().containsKey(coordinatorID));
@@ -1475,7 +1444,7 @@ public class PulsarGrpcServiceTest {
     public void testAddPartitionsToTransaction() {
         long tcId = 100;
         TransactionCoordinatorID coordinatorID = TransactionCoordinatorID.get(tcId);
-        transactionMetadataStoreService.addTransactionMetadataStore(coordinatorID);
+        transactionMetadataStoreService.handleTcClientConnect(coordinatorID);
 
         Awaitility.await().until(() ->
             transactionMetadataStoreService.getStores().containsKey(coordinatorID));
@@ -1512,7 +1481,7 @@ public class PulsarGrpcServiceTest {
     public void testEndTransaction() {
         long tcId = 100;
         TransactionCoordinatorID coordinatorID = TransactionCoordinatorID.get(tcId);
-        transactionMetadataStoreService.addTransactionMetadataStore(coordinatorID);
+        transactionMetadataStoreService.handleTcClientConnect(coordinatorID);
 
         Awaitility.await().until(() ->
             transactionMetadataStoreService.getStores().containsKey(coordinatorID));
@@ -1712,16 +1681,12 @@ public class PulsarGrpcServiceTest {
     @Test
     public void testProduceSingleSendError() throws Exception {
         // Set encryption_required to true
-        ZooKeeperDataCache<Policies> zkDataCache = mock(ZooKeeperDataCache.class);
         Policies policies = mock(Policies.class);
         policies.encryption_required = true;
         policies.topicDispatchRate = Maps.newHashMap();
         policies.clusterDispatchRate = Maps.newHashMap();
-        doReturn(Optional.of(policies)).when(zkDataCache)
-                .get(AdminResource.path(POLICIES, TopicName.get(encryptionRequiredTopicName).getNamespace()));
-        doReturn(CompletableFuture.completedFuture(Optional.of(policies))).when(zkDataCache)
-                .getAsync(AdminResource.path(POLICIES, TopicName.get(encryptionRequiredTopicName).getNamespace()));
-        doReturn(zkDataCache).when(configCacheService).policiesCache();
+        doReturn(CompletableFuture.completedFuture(Optional.of(policies))).when(namespaceResources)
+            .getPoliciesAsync(TopicName.get(encryptionRequiredTopicName).getNamespaceObject());
 
         CommandProducer producerParams = Commands.newProducer(encryptionRequiredTopicName,
                 "prod-name", true, null);

@@ -140,4 +140,14 @@ abstract class DefaultGrpcCommandSender implements PulsarCommandSender {
             RedeliveryTracker redeliveryTracker) {
         return ImmediateEventExecutor.INSTANCE.newSucceededFuture(null);
     }
+
+    @Override
+    public void sendTcClientConnectResponse(long requestId, ServerError error, String message) {
+
+    }
+
+    @Override
+    public void sendTcClientConnectResponse(long requestId) {
+
+    }
 }
