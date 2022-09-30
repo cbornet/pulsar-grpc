@@ -27,7 +27,7 @@
     <description>Pulsar gRPC Protocol Handler.</description>
 
     <properties>
-        <pulsar.version>2.9.1</pulsar.version>
+        <pulsar.version>2.9.3</pulsar.version>
         <grpc.version>1.18.0</grpc.version>
         <kerby.version>1.1.1</kerby.version>
         <protobuf-maven-plugin.version>0.6.1</protobuf-maven-plugin.version>
